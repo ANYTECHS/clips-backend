@@ -283,44 +283,25 @@ describe('NftMintService.verifyNFTOwnership', () => {
     }));
   });
 
-  it('returns owned:false with error when circuit breaker throws', async () => {
-    circuitBreakerMock.execute.mockRejectedValue(new Error('Network error'));
+  it('returns owned:false with error when ownership service returns error', async () => {
+    nftOwnershipMock.verifyNFTOwnership.mockResolvedValue({ isOwner: false, error: 'Network error' });
     const result = await service.verifyNFTOwnership('5', VALID_WALLET);
     expect(result.owned).toBe(false);
     expect(result.error).toBeDefined();
   });
 
-  it('returns owned:false when simulation returns an error field', async () => {
-    circuitBreakerMock.execute.mockResolvedValue({ error: 'contract error' });
+  it('returns owned:false when ownership service returns false without error', async () => {
+    nftOwnershipMock.verifyNFTOwnership.mockResolvedValue({ isOwner: false });
     const result = await service.verifyNFTOwnership('5', VALID_WALLET);
     expect(result.owned).toBe(false);
-    expect(result.error).toContain('Simulation failed');
+    expect(result.error).toBeUndefined();
   });
 
-  it('returns owned:false when simulation returns no results', async () => {
-    circuitBreakerMock.execute.mockResolvedValue({ results: [] });
-    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
-    expect(result.owned).toBe(false);
-  });
-
-  it('returns owned:true when contract returns matching wallet address', async () => {
-    circuitBreakerMock.execute.mockResolvedValue({
-      results: [{ xdr: 'fakeXdr' }],
-    });
-    (StellarSdk.scValToNative as jest.Mock).mockReturnValue(VALID_WALLET);
+  it('returns owned:true when ownership service returns true', async () => {
+    nftOwnershipMock.verifyNFTOwnership.mockResolvedValue({ isOwner: true });
 
     const result = await service.verifyNFTOwnership('5', VALID_WALLET);
     expect(result.owned).toBe(true);
     expect(result.error).toBeUndefined();
-  });
-
-  it('returns owned:false when contract returns different wallet address', async () => {
-    circuitBreakerMock.execute.mockResolvedValue({
-      results: [{ xdr: 'fakeXdr' }],
-    });
-    (StellarSdk.scValToNative as jest.Mock).mockReturnValue('GDIFFERENTADDRESS');
-
-    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
-    expect(result.owned).toBe(false);
   });
 });

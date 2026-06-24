@@ -14,6 +14,7 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { FeeService } from './fee.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { PayoutApprovalService } from './payout-approval.service';
+import { EarningsService } from '../earnings/earnings.service';
 import {
   ConflictException,
   BadRequestException,
@@ -103,6 +104,12 @@ describe('PayoutsService', () => {
         {
           provide: getQueueToken(PAYOUT_RETRY_QUEUE),
           useValue: mockPayoutRetryQueue,
+        },
+        {
+          provide: EarningsService,
+          useValue: {
+            processCreatorEarnings: jest.fn(),
+          },
         },
       ],
     }).compile();

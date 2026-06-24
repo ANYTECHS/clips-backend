@@ -4,7 +4,7 @@ import { CurrencyConversionService } from './currency-conversion.service';
 import { EarningsExportService, EarningsExportOptions, EarningsExportResult } from './earnings-export.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { TaxReportExportService } from '../tax-report/tax-report-export.service';
+import { TaxReportExportService } from './tax-report-export.service';
 export interface LeaderboardEntry {
   rank: number;
   label: string;
@@ -78,6 +78,7 @@ export class EarningsService {
 
     return {
       totalEarned: totalEarnings.total,
+      currency: targetCurrency,
       pendingPayout,
       paidOut,
       breakdown: totalEarnings.breakdown,

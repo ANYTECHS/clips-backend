@@ -19,6 +19,7 @@ const mockMetrics = () => ({
   recordQueueCounts: jest.fn(),
   recordAvgRetryCount: jest.fn(),
   recordFailureReasonCount: jest.fn(),
+  recordWorkerMemoryUsage: jest.fn(),
 });
 
 describe('QueueCollectorService', () => {

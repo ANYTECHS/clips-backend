@@ -1,5 +1,6 @@
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { VideoService } from '../videos/video.service';
 import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -18,7 +19,7 @@ import { ClipsGateway } from './clips.gateway';
 import { ClipsService } from './clips.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type { VideoService } from '../videos/video.service';
+// Removed duplicate type import of VideoService (line 21) and duplicate constructor block (lines 108-114). Updated processUploadedVideo to use injected videoService.
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
@@ -91,6 +92,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   private readonly logger = new Logger(ClipGenerationProcessor.name);
 
   constructor(
+    private readonly videoService: VideoService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly eventEmitter: EventEmitter2,
     private readonly clipsGateway: ClipsGateway,
@@ -105,6 +107,8 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       `Clip generation worker initialized with concurrency: ${config.clipGenerationConcurrency}`,
     );
   }
+
+
 
   onModuleInit(): void {
     // Register with the shutdown coordinator so SIGTERM drains this worker

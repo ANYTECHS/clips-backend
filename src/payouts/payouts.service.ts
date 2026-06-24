@@ -15,6 +15,7 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
 import { PayoutApprovalService } from './payout-approval.service';
+import { FeeService } from './fee.service';
 
 const OPEN_PAYOUT_STATUSES = [
   'pending',
