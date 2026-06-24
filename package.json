@@ -114,6 +114,7 @@
       "node_modules/(?!(cockatiel)/)"
     ],
     "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1",
       "^@prisma/client$": "<rootDir>/__mocks__/@prisma/client.ts",
       "^cockatiel$": "<rootDir>/__mocks__/cockatiel.ts"
     },
@@ -129,6 +130,7 @@
         "statements": 70
       }
     },
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "setupFiles": ["<rootDir>/../test/jest-setup.ts"]
   }
 }

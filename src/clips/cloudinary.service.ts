@@ -3,6 +3,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import * as streamifier from 'streamifier';
 import * as fs from 'fs';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
+import { ServiceUnavailableException } from '../common/exceptions/service-unavailable.exception';
 
 export interface CloudinaryUploadResult {
   secure_url: string;
@@ -17,14 +18,14 @@ export class CloudinaryService {
 
   private readonly circuitBreakerConfig: CircuitBreakerConfig = {
     name: 'cloudinary-upload',
-    failureThreshold: 5,
+    failureThreshold: 3,
     recoveryTimeout: 30000,
     samplingDuration: 60000,
   };
 
   private readonly deleteCircuitBreakerConfig: CircuitBreakerConfig = {
     name: 'cloudinary-delete',
-    failureThreshold: 5,
+    failureThreshold: 3,
     recoveryTimeout: 30000,
     samplingDuration: 60000,
   };
@@ -55,15 +56,10 @@ export class CloudinaryService {
         () => this.performUpload(buffer, publicId, options),
       );
 
-      if (result.error) {
-        this.logger.error(`Cloudinary upload failed for ${publicId}: ${result.error}`);
-        throw new Error(result.error);
-      }
-
       this.logger.log(`Clip uploaded successfully: ${publicId} (${result.secure_url})`);
       return result;
     } catch (error) {
-      if (error.name === 'ServiceUnavailableException') {
+      if (error instanceof ServiceUnavailableException) {
         throw error;
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -81,7 +77,7 @@ export class CloudinaryService {
       autoTagging?: number;
     },
   ): Promise<CloudinaryUploadResult> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const { folder = 'clips', resourceType = 'video', autoTagging = 0.6 } = options;
 
       const uploadStream = cloudinary.uploader.upload_stream(
@@ -94,7 +90,7 @@ export class CloudinaryService {
         },
         (error: any, result: any) => {
           if (error) {
-            resolve({ secure_url: '', public_id: publicId, error: error.message });
+            reject(new Error(error.message));
           } else if (result) {
             resolve({
               secure_url: result.secure_url,
@@ -102,7 +98,7 @@ export class CloudinaryService {
               thumbnail_url: this.generateThumbnailUrl(result.public_id, result.resource_type),
             });
           } else {
-            resolve({ secure_url: '', public_id: publicId, error: 'Unknown error' });
+            reject(new Error('Unknown error'));
           }
         },
       );

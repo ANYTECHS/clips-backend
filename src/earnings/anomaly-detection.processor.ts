@@ -1,5 +1,5 @@
-import { Processor, Process } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { AnomalyDetectionService } from './anomaly-detection.service';
 import { MetricsService } from '../metrics/metrics.service';
@@ -11,17 +11,18 @@ interface AnomalyDetectionJob {
 }
 
 @Processor(ANOMALY_DETECTION_QUEUE)
-export class AnomalyDetectionProcessor {
+export class AnomalyDetectionProcessor extends WorkerHost {
   private readonly logger = new Logger(AnomalyDetectionProcessor.name);
 
   constructor(
     private anomalyDetectionService: AnomalyDetectionService,
     private mailService: MailService,
     private metricsService: MetricsService,
-  ) {}
+  ) {
+    super();
+  }
 
-  @Process('detect-anomaly')
-  async handleAnomalyDetection(job: Job<AnomalyDetectionJob>) {
+  async process(job: Job<AnomalyDetectionJob>): Promise<void> {
     const { earningId } = job.data;
 
     this.logger.log(`Processing anomaly detection for earning ${earningId}`);
@@ -34,18 +35,32 @@ export class AnomalyDetectionProcessor {
         earningId,
       );
 
-      if (result.isAnomaly && result.severity === 'high') {
-        await this.notifyAdmins(result);
+      if (result.isAnomaly && result.severity === 'high' && result.reason) {
+        await this.notifyAdmins({
+          reason: result.reason,
+          severity: result.severity,
+        });
       }
 
-      this.metricsService.recordJobCompletion(jobMetricId, ANOMALY_DETECTION_QUEUE, 'success');
+      this.metricsService.recordJobCompletion(
+        jobMetricId,
+        ANOMALY_DETECTION_QUEUE,
+        'success',
+      );
     } catch (error) {
       this.logger.error(
         `Anomaly detection failed for earning ${earningId}:`,
         error,
       );
-      this.metricsService.recordJobCompletion(jobMetricId, ANOMALY_DETECTION_QUEUE, 'failure');
-      this.metricsService.recordJobFailure(ANOMALY_DETECTION_QUEUE, error instanceof Error ? error.message : String(error));
+      this.metricsService.recordJobCompletion(
+        jobMetricId,
+        ANOMALY_DETECTION_QUEUE,
+        'failure',
+      );
+      this.metricsService.recordJobFailure(
+        ANOMALY_DETECTION_QUEUE,
+        error instanceof Error ? error.message : String(error),
+      );
       throw error;
     }
   }
@@ -66,7 +81,7 @@ export class AnomalyDetectionProcessor {
 
     for (const email of adminEmails) {
       try {
-        await this.mailService.sendMail({
+        await this.mailService.sendEmail({
           to: email.trim(),
           subject,
           text,

@@ -14,7 +14,7 @@ import { BruteForceProtectionService } from './brute-force-protection.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { CsrfModule } from '../csrf/csrf.module';
 import { BullModule } from '@nestjs/bullmq';
-import { EMAIL_DELIVERY_QUEUE } from './email-delivery.queue';
+import { EMAIL_DELIVERY_QUEUE, EMAIL_DELIVERY_QUEUE_PRIORITY } from './email-delivery.queue';
 import { EmailDeliveryService } from './email-delivery.service';
 import { EmailDeliveryProcessor } from './email-delivery.processor';
 import { EncryptionModule } from '../encryption/encryption.module';

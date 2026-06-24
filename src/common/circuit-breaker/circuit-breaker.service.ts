@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   CircuitBreakerPolicy,
-  SamplingBreaker,
+  ConsecutiveBreaker,
   circuitBreaker,
   handleAll,
 } from 'cockatiel';
@@ -40,10 +40,7 @@ export class CircuitBreakerService {
 
     const breaker = circuitBreaker(handleAll, {
       halfOpenAfter: config.recoveryTimeout,
-      breaker: new SamplingBreaker({
-        threshold: config.failureThreshold / 100,
-        duration: config.samplingDuration,
-      }),
+      breaker: new ConsecutiveBreaker(config.failureThreshold),
     });
 
     const m: CircuitBreakerMetrics = { name: config.name, state: 'closed', failures: 0, successes: 0 };
@@ -81,7 +78,13 @@ export class CircuitBreakerService {
       m.failures++;
       m.lastFailure = new Date();
 
-      if (error?.name === 'BrokenCircuitError' || m.state === 'open') {
+      if (
+        error?.name === 'BrokenCircuitError' ||
+        error?.name === 'IsolatedCircuitError' ||
+        error?.isBrokenCircuitError ||
+        error?.isIsolatedCircuitError ||
+        m.state === 'open'
+      ) {
         this.logger.warn(`Circuit breaker '${config.name}' is OPEN - failing fast`);
         throw new ServiceUnavailableException(
           `Service '${config.name}' is temporarily unavailable. Please try again later.`,

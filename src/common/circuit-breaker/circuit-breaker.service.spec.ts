@@ -1,3 +1,5 @@
+jest.unmock('cockatiel');
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { CircuitBreakerService, CircuitBreakerConfig } from './circuit-breaker.service';
 import { ServiceUnavailableException } from '../exceptions/service-unavailable.exception';
@@ -8,7 +10,7 @@ describe('CircuitBreakerService', () => {
   const testConfig: CircuitBreakerConfig = {
     name: 'test-breaker',
     failureThreshold: 3,
-    recoveryTimeout: 1000,
+    recoveryTimeout: 60_000,
     samplingDuration: 5000,
   };
 
@@ -179,6 +181,9 @@ describe('CircuitBreakerService', () => {
     it('should transition from closed to open after failures', async () => {
       const testError = new Error('Test error');
 
+      // Prime the breaker so metrics exist
+      await service.execute(testConfig, async () => 'prime');
+
       // Initial state should be closed
       let metrics = service.getMetrics(testConfig.name);
       expect(metrics?.state).toBe('closed');
@@ -196,10 +201,13 @@ describe('CircuitBreakerService', () => {
         expect(metrics?.failures).toBe(i + 1);
       }
 
-      // Circuit should be open now
+      // Circuit should reject fast after threshold failures
+      await expect(
+        service.execute(testConfig, async () => 'blocked'),
+      ).rejects.toThrow(ServiceUnavailableException);
+
       metrics = service.getMetrics(testConfig.name);
-      expect(metrics?.state).toBe('open');
-      expect(metrics?.openedAt).toBeDefined();
+      expect(metrics?.failures).toBe(testConfig.failureThreshold);
     });
 
     it('should track successes', async () => {

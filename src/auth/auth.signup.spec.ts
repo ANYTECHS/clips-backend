@@ -78,11 +78,6 @@ describe('Auth - Password Strength Validation', () => {
             isTestnet: jest.fn().mockReturnValue(true),
             fundWithFriendbot: jest.fn().mockResolvedValue(undefined),
           },
-          useValue: { queueEmail: jest.fn() },
-        },
-        {
-          provide: EncryptionService,
-          useValue: { encrypt: jest.fn(), decrypt: jest.fn() },
         },
       ],
     }).compile();

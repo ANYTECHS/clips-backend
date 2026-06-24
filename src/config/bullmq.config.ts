@@ -56,9 +56,9 @@ export function validateWorkerConfig(config: BullMQWorkerConfig): void {
       'BULLMQ_CLIP_GENERATION_CONCURRENCY must be at least 1',
     );
   }
-  if (config.clipGenerationConcurrency > 200) {
+  if (config.clipGenerationConcurrency > 20) {
     errors.push(
-      'BULLMQ_CLIP_GENERATION_CONCURRENCY should not exceed 200 (risk of resource exhaustion)',
+      'BULLMQ_CLIP_GENERATION_CONCURRENCY should not exceed 20 (risk of resource exhaustion)',
     );
   }
 

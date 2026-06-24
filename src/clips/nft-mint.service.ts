@@ -11,20 +11,10 @@ import StellarSdk from '@stellar/stellar-sdk';
 import { MetricsService } from '../metrics/metrics.service';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
 import { ConfigService } from '../config/config.service';
+import { IpfsUploadService } from '../nft/ipfs-upload.service';
+import { NftMetadata, NftMetadataAttribute } from '../nft/nft-metadata.types';
 
-interface NftAttribute {
-  trait_type: string;
-  value: string | number;
-}
-
-interface NftMetadata {
-  name: string;
-  description: string;
-  image: string;
-  animation_url: string;
-  external_url?: string;
-  attributes: NftAttribute[];
-}
+interface NftAttribute extends NftMetadataAttribute {}
 
 interface UploadMetadataResult {
   clipId: number;
@@ -49,6 +39,7 @@ export class NftMintService {
     private readonly metricsService: MetricsService,
     private readonly circuitBreakerService: CircuitBreakerService,
     private readonly config: ConfigService,
+    private readonly ipfsUploadService: IpfsUploadService,
   ) {}
 
   private get CONTRACT_ID(): string {
@@ -95,7 +86,10 @@ export class NftMintService {
       royaltyBps: this.CREATOR_ROYALTY_BPS,
     });
 
-    const metadataUri = await this.uploadMetadataToIpfs(metadata, clip.id);
+    const metadataUri = await this.ipfsUploadService.uploadMetadata(
+      metadata,
+      clip.id,
+    );
     const cid = metadataUri.replace('ipfs://', '');
 
     await this.prisma.clip.update({
@@ -326,60 +320,6 @@ export class NftMintService {
     return Object.entries(postStatus as Record<string, unknown>)
       .filter(([, value]) => Boolean(value))
       .map(([platform]) => platform);
-  }
-
-  private async uploadMetadataToIpfs(
-    metadata: NftMetadata,
-    clipId: number,
-  ): Promise<string> {
-    const pinataJwt = process.env.PINATA_JWT ?? process.env.IPFS_JWT;
-    const ipfsApiUrl =
-      process.env.IPFS_API_URL ??
-      'https://api.pinata.cloud/pinning/pinJSONToIPFS';
-
-    if (!pinataJwt) {
-      throw new BadRequestException(
-        'Missing PINATA_JWT or IPFS_JWT for NFT metadata upload',
-      );
-    }
-
-    const body = ipfsApiUrl.includes('pinata.cloud')
-      ? {
-          pinataMetadata: { name: `clip-${clipId}-metadata` },
-          pinataContent: metadata,
-        }
-      : metadata;
-
-    const response = await fetch(ipfsApiUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${pinataJwt}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const message = await response.text();
-      throw new BadRequestException(
-        `IPFS metadata upload failed (${response.status}): ${message.slice(0, 300)}`,
-      );
-    }
-
-    const payload = (await response.json()) as {
-      IpfsHash?: string;
-      cid?: string;
-      hash?: string;
-    };
-
-    const cid = payload.IpfsHash ?? payload.cid ?? payload.hash;
-    if (!cid) {
-      throw new BadRequestException(
-        'IPFS metadata upload response missing CID',
-      );
-    }
-
-    return `ipfs://${cid}`;
   }
 
   /**

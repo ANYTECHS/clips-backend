@@ -26,7 +26,7 @@ describe('EmailDeliveryService', () => {
       expect.any(Object),
       expect.objectContaining({
         attempts: 5,
-        backoff: { type: 'exponential', delay: 1000 },
+        backoff: { type: 'exponential', delay: 500 },
       }),
     );
   });

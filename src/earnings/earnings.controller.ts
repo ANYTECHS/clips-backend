@@ -12,7 +12,7 @@ import {
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { EarningsService } from './earnings.service';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { Currency } from './earnings.types';
 
 interface RequestWithUser extends Request {

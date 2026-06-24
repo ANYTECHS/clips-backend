@@ -34,7 +34,26 @@ export class ConfigService {
 
   readonly sorobanNftContractId = process.env.SOROBAN_NFT_CONTRACT_ID || '';
 
-  readonly platformWallet = process.env.PLATFORM_WALLET || '';
+  readonly redisPassword = process.env.REDIS_PASSWORD;
+
+  readonly ipfsProvider: 'pinata' | 'nftstorage' =
+    (process.env.IPFS_PROVIDER ?? 'pinata').toLowerCase() === 'nftstorage'
+      ? 'nftstorage'
+      : 'pinata';
+
+  readonly pinataJwt =
+    process.env.PINATA_JWT ?? process.env.IPFS_JWT ?? '';
+
+  readonly ipfsApiUrl =
+    process.env.IPFS_API_URL ??
+    'https://api.pinata.cloud/pinning/pinJSONToIPFS';
+
+  readonly nftStorageApiKey = process.env.NFT_STORAGE_API_KEY ?? '';
+
+  readonly platformWallet =
+    process.env.PLATFORM_WALLET_ADDRESS ??
+    process.env.PLATFORM_WALLET ??
+    '';
 
   readonly tiktokWebhookSecret = process.env.TIKTOK_WEBHOOK_SECRET || '';
 
@@ -43,6 +62,4 @@ export class ConfigService {
   readonly redisHost = process.env.REDIS_HOST ?? 'localhost';
 
   readonly redisPort = parseInt(process.env.REDIS_PORT ?? '6379', 10);
-
-  readonly redisPassword = process.env.REDIS_PASSWORD;
 }

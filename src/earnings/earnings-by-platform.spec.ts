@@ -1,39 +1,48 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EarningsService } from './earnings.service';
-import { PrismaService } from '../prisma/prisma.service';
+import { EarningsAggregationService } from './earnings-aggregation.service';
+import { EarningsExportService } from './earnings-export.service';
 
 describe('EarningsService - getEarningsByPlatform', () => {
   let service: EarningsService;
-  let prisma: PrismaService;
+  let aggregationService: EarningsAggregationService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EarningsService,
         {
-          provide: PrismaService,
+          provide: EarningsAggregationService,
           useValue: {
-            earning: {
-              findMany: jest.fn(),
-            },
+            getEarningsByPlatform: jest.fn(),
+          },
+        },
+        {
+          provide: EarningsExportService,
+          useValue: {
+            exportEarningsCsv: jest.fn(),
           },
         },
       ],
     }).compile();
 
     service = module.get<EarningsService>(EarningsService);
-    prisma = module.get<PrismaService>(PrismaService);
+    aggregationService = module.get<EarningsAggregationService>(EarningsAggregationService);
   });
 
   it('should group earnings by platform', async () => {
-    const mockEarnings = [
-      { amount: 100, source: 'tiktok' },
-      { amount: 150, source: 'instagram' },
-      { amount: 200, source: 'tiktok' },
-      { amount: 50, source: 'youtube' },
-    ];
+    const mockResult = {
+      totalEarnings: 500,
+      data: [
+        { platform: 'tiktok', totalEarnings: 300, count: 2 },
+        { platform: 'instagram', totalEarnings: 150, count: 1 },
+        { platform: 'youtube', totalEarnings: 50, count: 1 },
+      ],
+    };
 
-    jest.spyOn(prisma.earning, 'findMany').mockResolvedValue(mockEarnings as any);
+    jest
+      .spyOn(aggregationService, 'getEarningsByPlatform')
+      .mockResolvedValue(mockResult as any);
 
     const result = await service.getEarningsByPlatform(1);
 
@@ -57,17 +66,18 @@ describe('EarningsService - getEarningsByPlatform', () => {
   });
 
   it('should handle unknown platforms', async () => {
-    const mockEarnings = [
-      { amount: 100, source: null },
-      { amount: 50, source: 'tiktok' },
-    ];
-
-    jest.spyOn(prisma.earning, 'findMany').mockResolvedValue(mockEarnings as any);
+    jest.spyOn(aggregationService, 'getEarningsByPlatform').mockResolvedValue({
+      totalEarnings: 150,
+      data: [
+        { platform: 'unknown', totalEarnings: 100, count: 1 },
+        { platform: 'tiktok', totalEarnings: 50, count: 1 },
+      ],
+    } as any);
 
     const result = await service.getEarningsByPlatform(1);
 
     expect(result.data).toHaveLength(2);
-    expect(result.data.find(d => d.platform === 'unknown')).toEqual({
+    expect(result.data.find((d) => d.platform === 'unknown')).toEqual({
       platform: 'unknown',
       totalEarnings: 100,
       count: 1,
@@ -75,7 +85,10 @@ describe('EarningsService - getEarningsByPlatform', () => {
   });
 
   it('should return empty data for user with no earnings', async () => {
-    jest.spyOn(prisma.earning, 'findMany').mockResolvedValue([]);
+    jest.spyOn(aggregationService, 'getEarningsByPlatform').mockResolvedValue({
+      totalEarnings: 0,
+      data: [],
+    } as any);
 
     const result = await service.getEarningsByPlatform(1);
 

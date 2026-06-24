@@ -6,9 +6,35 @@ import {
   IsInt,
   Min,
   Max,
-  ValidateIf,
+  registerDecorator,
+  ValidationOptions,
+  ValidationArguments,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+function IsValidClipEndTime(validationOptions?: ValidationOptions) {
+  return (object: object, propertyName: string) => {
+    registerDecorator({
+      name: 'isValidClipEndTime',
+      target: object.constructor,
+      propertyName,
+      options: validationOptions,
+      validator: {
+        validate(value: number, args: ValidationArguments) {
+          const dto = args.object as CreateClipDto;
+          if (value <= dto.startTime) {
+            return false;
+          }
+          const duration = value - dto.startTime;
+          return duration >= 5 && duration <= 300;
+        },
+        defaultMessage() {
+          return 'endTime must be greater than startTime and clip duration must be between 5 and 300 seconds';
+        },
+      },
+    });
+  };
+}
 
 export class CreateClipDto {
   @IsString()
@@ -36,16 +62,7 @@ export class CreateClipDto {
   @IsNumber()
   @Min(0)
   @Type(() => Number)
-  @ValidateIf((o: CreateClipDto) => {
-    const duration = o.endTime - o.startTime;
-    if (o.endTime <= o.startTime) {
-      throw new Error('endTime must be greater than startTime');
-    }
-    if (duration < 5 || duration > 300) {
-      throw new Error('Clip duration must be between 5 and 300 seconds');
-    }
-    return true;
-  })
+  @IsValidClipEndTime()
   endTime: number;
 
   @IsNumber()
