@@ -1,20 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { EmailDeliveryJobData } from './email-delivery.queue';
+import { AppConfigService } from '../config/app-config.service';
 
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter;
 
-  constructor() {
+  constructor(private readonly appConfig: AppConfigService) {
     this.transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.ethereal.email',
-      port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true',
+      host: appConfig.smtpHost,
+      port: appConfig.smtpPort,
+      secure: appConfig.smtpSecure,
       auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
+        user: appConfig.smtpUser,
+        pass: appConfig.smtpPass,
       },
     });
   }
@@ -22,7 +23,7 @@ export class MailService {
   async sendTemplatedEmail(job: EmailDeliveryJobData): Promise<void> {
     const content = this.buildTemplate(job.template, job.context.token);
     const info = await this.transporter.sendMail({
-      from: process.env.SMTP_FROM || '"Clips App" <noreply@clips.app>',
+      from: this.appConfig.smtpFrom,
       to: job.to,
       subject: job.subject,
       text: content.text,
@@ -41,7 +42,7 @@ export class MailService {
     html?: string;
   }): Promise<void> {
     const info = await this.transporter.sendMail({
-      from: process.env.SMTP_FROM || '"Clips App" <noreply@clips.app>',
+      from: this.appConfig.smtpFrom,
       to: options.to,
       subject: options.subject,
       text: options.text,
@@ -81,7 +82,7 @@ export class MailService {
   }
 
   private buildTemplate(template: EmailDeliveryJobData['template'], token: string) {
-    const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+    const baseUrl = this.appConfig.appBaseUrl;
     if (template === 'magic-link') {
       const link = `${baseUrl}/auth/verify-magic?token=${token}`;
       return {

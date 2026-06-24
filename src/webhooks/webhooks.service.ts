@@ -1,18 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EarningsService } from '../earnings/earnings.service';
+import { AppConfigService } from '../config/app-config.service';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class WebhooksService {
   private readonly logger = new Logger(WebhooksService.name);
-  private readonly tiktokSecret = process.env.TIKTOK_WEBHOOK_SECRET;
-  private readonly youtubeSecret = process.env.YOUTUBE_WEBHOOK_SECRET;
+  private readonly tiktokSecret: string | undefined;
+  private readonly youtubeSecret: string | undefined;
 
   constructor(
     private prisma: PrismaService,
     private earningsService: EarningsService,
-  ) {}
+    appConfig: AppConfigService,
+  ) {
+    this.tiktokSecret = appConfig.tiktokWebhookSecret;
+    this.youtubeSecret = appConfig.youtubeWebhookSecret;
+  }
 
   async validateTikTokSignature(payload: any, signature: string): Promise<boolean> {
     if (!this.tiktokSecret) {

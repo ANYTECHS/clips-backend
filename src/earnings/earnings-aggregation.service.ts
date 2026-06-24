@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Currency, EarningsBreakdown } from './earnings.types';
 import { CurrencyConversionService } from './currency-conversion.service';
 import { RedisService } from '../redis/redis.service';
-import { ConfigService } from '../config/config.service';
+import { AppConfigService } from '../config/app-config.service';
 
 @Injectable()
 export class EarningsAggregationService {
@@ -13,7 +13,7 @@ export class EarningsAggregationService {
     private prisma: PrismaService,
     private currencyConversion: CurrencyConversionService,
     private redisService: RedisService,
-    private config: ConfigService,
+    private config: AppConfigService,
   ) {}
 
   private getCacheKey(userId: number, targetCurrency: Currency): string {

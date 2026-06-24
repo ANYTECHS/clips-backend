@@ -3,6 +3,7 @@ import { v2 as cloudinary } from 'cloudinary';
 import * as streamifier from 'streamifier';
 import * as fs from 'fs';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
+import { AppConfigService } from '../config/app-config.service';
 
 export interface CloudinaryUploadResult {
   secure_url: string;
@@ -14,6 +15,7 @@ export interface CloudinaryUploadResult {
 @Injectable()
 export class CloudinaryService {
   private readonly logger = new Logger(CloudinaryService.name);
+  private readonly cloudName: string | undefined;
 
   private readonly circuitBreakerConfig: CircuitBreakerConfig = {
     name: 'cloudinary-upload',
@@ -29,11 +31,15 @@ export class CloudinaryService {
     samplingDuration: 60000,
   };
 
-  constructor(private readonly circuitBreakerService: CircuitBreakerService) {
+  constructor(
+    private readonly circuitBreakerService: CircuitBreakerService,
+    appConfig: AppConfigService,
+  ) {
+    this.cloudName = appConfig.cloudinaryCloudName;
     cloudinary.config({
-      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-      api_key: process.env.CLOUDINARY_API_KEY,
-      api_secret: process.env.CLOUDINARY_API_SECRET,
+      cloud_name: appConfig.cloudinaryCloudName,
+      api_key: appConfig.cloudinaryApiKey,
+      api_secret: appConfig.cloudinaryApiSecret,
     });
   }
 
@@ -113,7 +119,7 @@ export class CloudinaryService {
 
   private generateThumbnailUrl(publicId: string, resourceType: string, timeRatio = 0.5): string {
     if (resourceType !== 'video') return '';
-    return `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/video/upload/so_${Math.round(timeRatio * 100)}p/${publicId}.jpg`;
+    return `https://res.cloudinary.com/${this.cloudName}/video/upload/so_${Math.round(timeRatio * 100)}p/${publicId}.jpg`;
   }
 
   async deleteClip(publicId: string): Promise<void> {

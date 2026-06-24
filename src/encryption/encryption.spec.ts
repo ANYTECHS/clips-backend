@@ -1,28 +1,26 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
+import { AppConfigService } from '../config/app-config.service';
 import { EncryptionService } from './encryption.service';
 
 describe('EncryptionService', () => {
   let service: EncryptionService;
-  let configService: ConfigService;
 
   beforeEach(async () => {
-    const mockConfigService = {
-      get: jest.fn().mockReturnValue('test-encryption-secret-32-chars-long'),
+    const mockAppConfig = {
+      encryptionSecret: 'test-encryption-secret-32-chars-long',
     };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EncryptionService,
         {
-          provide: ConfigService,
-          useValue: mockConfigService,
+          provide: AppConfigService,
+          useValue: mockAppConfig,
         },
       ],
     }).compile();
 
     service = module.get<EncryptionService>(EncryptionService);
-    configService = module.get<ConfigService>(ConfigService);
   });
 
   it('should be defined', () => {
@@ -83,8 +81,8 @@ describe('EncryptionService', () => {
     it('should throw error when decrypting with a different key', () => {
       const plaintext = 'sensitive-access-token';
       const encrypted = service.encrypt(plaintext);
-      const wrongConfigService = { get: jest.fn().mockReturnValue('different-test-encryption-secret') };
-      const wrongService = new EncryptionService(wrongConfigService as any);
+      const wrongAppConfig = { encryptionSecret: 'different-test-encryption-secret' };
+      const wrongService = new EncryptionService(wrongAppConfig as AppConfigService);
 
       expect(() => wrongService.decrypt(encrypted)).toThrow('Failed to decrypt sensitive data');
     });
@@ -92,8 +90,8 @@ describe('EncryptionService', () => {
 
   describe('constructor', () => {
     it('should throw if ENCRYPTION_SECRET is missing', async () => {
-      const mockConfigService = {
-        get: jest.fn().mockReturnValue(undefined),
+      const mockAppConfig = {
+        encryptionSecret: undefined,
       };
 
       await expect(
@@ -101,8 +99,8 @@ describe('EncryptionService', () => {
           providers: [
             EncryptionService,
             {
-              provide: ConfigService,
-              useValue: mockConfigService,
+              provide: AppConfigService,
+              useValue: mockAppConfig,
             },
           ],
         }).compile(),

@@ -1,16 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
+import { AppConfigService } from '../config/app-config.service';
 
 @Injectable()
 export class RedisService {
   private readonly logger = new Logger(RedisService.name);
   private readonly redis: Redis;
 
-  constructor() {
+  constructor(appConfig: AppConfigService) {
     this.redis = new Redis({
-      host: process.env.REDIS_HOST ?? 'localhost',
-      port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-      password: process.env.REDIS_PASSWORD || undefined,
+      host: appConfig.redisHost,
+      port: appConfig.redisPort,
+      password: appConfig.redisPassword,
       lazyConnect: true,
     });
 

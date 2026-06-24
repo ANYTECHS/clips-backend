@@ -27,19 +27,31 @@ export interface BullMQWorkerConfig {
  * Load BullMQ worker configuration from environment variables
  * with sensible defaults for each queue type.
  */
+function readConcurrency(
+  configService: ConfigService | undefined,
+  key: string,
+  defaultValue: string,
+): number {
+  const fromConfig = configService?.get<string>(key);
+  const raw = fromConfig ?? process.env[key] ?? defaultValue;
+  return parseInt(raw, 10);
+}
+
 export function getBullMQWorkerConfig(
-  configService: ConfigService,
+  configService?: ConfigService,
 ): BullMQWorkerConfig {
   return {
     // Clip generation: CPU-intensive, default to 2 concurrent jobs
-    clipGenerationConcurrency: parseInt(
-      configService.get<string>('BULLMQ_CLIP_GENERATION_CONCURRENCY', '2'),
-      10,
+    clipGenerationConcurrency: readConcurrency(
+      configService,
+      'BULLMQ_CLIP_GENERATION_CONCURRENCY',
+      '2',
     ),
     // Email delivery: I/O-bound, default to 5 concurrent jobs
-    emailDeliveryConcurrency: parseInt(
-      configService.get<string>('BULLMQ_EMAIL_DELIVERY_CONCURRENCY', '5'),
-      10,
+    emailDeliveryConcurrency: readConcurrency(
+      configService,
+      'BULLMQ_EMAIL_DELIVERY_CONCURRENCY',
+      '5',
     ),
   };
 }

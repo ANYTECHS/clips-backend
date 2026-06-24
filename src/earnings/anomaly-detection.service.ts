@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AppConfigService } from '../config/app-config.service';
 
 interface AnomalyConfig {
   thresholdMultiplier: number;
@@ -10,13 +11,18 @@ interface AnomalyConfig {
 @Injectable()
 export class AnomalyDetectionService {
   private readonly logger = new Logger(AnomalyDetectionService.name);
-  private readonly config: AnomalyConfig = {
-    thresholdMultiplier: parseFloat(process.env.ANOMALY_THRESHOLD_MULTIPLIER ?? '3'),
-    minEarningsForAnalysis: parseFloat(process.env.MIN_EARNINGS_FOR_ANALYSIS ?? '10'),
-    lookbackDays: parseInt(process.env.ANOMALY_LOOKBACK_DAYS ?? '30', 10),
-  };
+  private readonly config: AnomalyConfig;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    appConfig: AppConfigService,
+  ) {
+    this.config = {
+      thresholdMultiplier: appConfig.anomalyThresholdMultiplier,
+      minEarningsForAnalysis: appConfig.minEarningsForAnalysis,
+      lookbackDays: appConfig.anomalyLookbackDays,
+    };
+  }
 
   async detectAnomalies(earningId: number): Promise<{
     isAnomaly: boolean;

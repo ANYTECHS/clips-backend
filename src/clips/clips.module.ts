@@ -20,6 +20,8 @@ import { ClipPublishService } from './clip-publish.service';
 import { RedisModule } from '../redis/redis.module';
 import { QueueRateLimitGuard } from '../common/guards/queue-rate-limit.guard';
 import { UserPlatformModule } from '../user-platform/user-platform.module';
+import { AppConfigModule } from '../config/config.module';
+import { AppConfigService } from '../config/app-config.service';
 
 @Module({
   imports: [
@@ -56,9 +58,13 @@ import { UserPlatformModule } from '../user-platform/user-platform.module';
     StellarModule,
     CircuitBreakerModule,
     // JwtModule used by ClipsGateway to verify WebSocket handshake tokens
-    JwtModule.register({
-      secret: process.env.JWT_SECRET ?? 'dev_jwt_secret',
-      signOptions: { expiresIn: '7d' },
+    JwtModule.registerAsync({
+      imports: [AppConfigModule],
+      inject: [AppConfigService],
+      useFactory: (appConfig: AppConfigService) => ({
+        secret: appConfig.jwtSecret,
+        signOptions: { expiresIn: '7d' },
+      }),
     }),
   ],
   controllers: [ClipsController],

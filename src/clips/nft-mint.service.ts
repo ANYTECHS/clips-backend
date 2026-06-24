@@ -10,7 +10,7 @@ import { StellarService } from '../stellar/stellar.service';
 import StellarSdk from '@stellar/stellar-sdk';
 import { MetricsService } from '../metrics/metrics.service';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
-import { ConfigService } from '../config/config.service';
+import { AppConfigService } from '../config/app-config.service';
 
 interface NftAttribute {
   trait_type: string;
@@ -48,7 +48,7 @@ export class NftMintService {
     private readonly stellarService: StellarService,
     private readonly metricsService: MetricsService,
     private readonly circuitBreakerService: CircuitBreakerService,
-    private readonly config: ConfigService,
+    private readonly config: AppConfigService,
   ) {}
 
   private get CONTRACT_ID(): string {
@@ -332,10 +332,8 @@ export class NftMintService {
     metadata: NftMetadata,
     clipId: number,
   ): Promise<string> {
-    const pinataJwt = process.env.PINATA_JWT ?? process.env.IPFS_JWT;
-    const ipfsApiUrl =
-      process.env.IPFS_API_URL ??
-      'https://api.pinata.cloud/pinning/pinJSONToIPFS';
+    const pinataJwt = this.config.pinataJwt;
+    const ipfsApiUrl = this.config.ipfsApiUrl;
 
     if (!pinataJwt) {
       throw new BadRequestException(

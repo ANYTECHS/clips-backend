@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { RedisService } from '../redis/redis.service';
+import { AppConfigService } from '../config/app-config.service';
 
 export interface BruteForceConfig {
   maxAttempts: number;
@@ -15,23 +15,14 @@ export class BruteForceProtectionService {
   private readonly redis: ReturnType<RedisService['getClient']>;
 
   constructor(
-    private configService: ConfigService,
+    appConfig: AppConfigService,
     private redisService: RedisService,
   ) {
     this.redis = this.redisService.getClient();
     this.config = {
-      maxAttempts: this.configService.get<number>(
-        'BRUTE_FORCE_MAX_ATTEMPTS',
-        5,
-      ),
-      lockoutDuration: this.configService.get<number>(
-        'BRUTE_FORCE_LOCKOUT_DURATION',
-        900,
-      ), // 15 minutes
-      windowDuration: this.configService.get<number>(
-        'BRUTE_FORCE_WINDOW_DURATION',
-        900,
-      ), // 15 minutes
+      maxAttempts: appConfig.bruteForceMaxAttempts,
+      lockoutDuration: appConfig.bruteForceLockoutDuration,
+      windowDuration: appConfig.bruteForceWindowDuration,
     };
   }
 

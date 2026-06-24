@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { AppConfigService } from '../config/app-config.service';
 import * as crypto from 'crypto';
 
 @Injectable()
 export class CsrfService {
-  constructor(private configService: ConfigService) {}
+  constructor(private readonly appConfig: AppConfigService) {}
 
   generateToken(): string {
     return crypto.randomBytes(32).toString('hex');
@@ -18,13 +18,11 @@ export class CsrfService {
   }
 
   setCsrfCookie(res: any, token: string): void {
-    const isProduction = this.configService.get('NODE_ENV') === 'production';
-
     res.cookie('_csrf', token, {
-      httpOnly: false, // Allow JavaScript to read for header inclusion
-      secure: isProduction,
+      httpOnly: false,
+      secure: this.appConfig.isProduction,
       sameSite: 'strict',
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      maxAge: 24 * 60 * 60 * 1000,
     });
   }
 
