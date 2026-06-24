@@ -1,6 +1,5 @@
 import { Logger } from '@nestjs/common';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { Clip } from './clip.entity';
@@ -80,7 +79,7 @@ const JOB_TIMEOUT_MS = 30 * 60 * 1000;
  *  100%  → done            (DB updated, all done)
  */
 @Processor(CLIP_GENERATION_QUEUE, {
-  concurrency: getBullMQWorkerConfig(new ConfigService()).clipGenerationConcurrency,
+  concurrency: getBullMQWorkerConfig().clipGenerationConcurrency,
 })
 export class ClipGenerationProcessor extends WorkerHost {
   private readonly logger = new Logger(ClipGenerationProcessor.name);
@@ -94,7 +93,7 @@ export class ClipGenerationProcessor extends WorkerHost {
     private readonly prisma: PrismaService,
   ) {
     super();
-    const config = getBullMQWorkerConfig(new ConfigService());
+    const config = getBullMQWorkerConfig();
     this.logger.log(
       `Clip generation worker initialized with concurrency: ${config.clipGenerationConcurrency}`,
     );

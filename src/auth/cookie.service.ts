@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Response } from 'express';
+import { AppConfigService } from '../config/app-config.service';
 
 export interface CookieOptions {
   httpOnly: boolean;
@@ -16,22 +17,11 @@ export class CookieService {
   private readonly accessTokenTtlMs: number;
   private readonly refreshTokenTtlMs: number;
 
-  constructor() {
-    this.useSecure = process.env.COOKIE_SECURE !== 'false'; // default true
-    const raw = (process.env.COOKIE_SAME_SITE ?? 'lax').toLowerCase();
-    this.sameSite = raw === 'strict' || raw === 'none' ? raw : 'lax';
-
-    const jwtExpires =
-      Number(process.env.JWT_EXPIRES) > 0
-        ? Number(process.env.JWT_EXPIRES)
-        : 3600;
-    const refreshDays =
-      Number(process.env.JWT_REFRESH_EXPIRES_DAYS) > 0
-        ? Number(process.env.JWT_REFRESH_EXPIRES_DAYS)
-        : 14;
-
-    this.accessTokenTtlMs = jwtExpires * 1000;
-    this.refreshTokenTtlMs = refreshDays * 24 * 60 * 60 * 1000;
+  constructor(private readonly appConfig: AppConfigService) {
+    this.useSecure = appConfig.cookieSecure;
+    this.sameSite = appConfig.cookieSameSite;
+    this.accessTokenTtlMs = appConfig.jwtExpires * 1000;
+    this.refreshTokenTtlMs = appConfig.jwtRefreshExpiresDays * 24 * 60 * 60 * 1000;
   }
 
   private baseOptions(maxAge: number): CookieOptions {

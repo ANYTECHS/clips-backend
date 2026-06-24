@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { AppConfigService } from '../config/app-config.service';
 import ffmpeg from 'fluent-ffmpeg';
 
 type ViralMoment = { start: number; end: number; reason: string };
@@ -11,7 +11,7 @@ export class VideoService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
+    private readonly appConfig: AppConfigService,
   ) {}
 
   async detectViralTimestamps(videoId: number): Promise<ViralMoment[]> {
@@ -118,10 +118,8 @@ export class VideoService {
   }
 
   private async callClaudeApi(videoUrl: string) {
-    const apiKey =
-      this.config.get<string>('ANTHROPIC_API_KEY') ||
-      process.env.ANTHROPIC_API_KEY;
-    const model = this.config.get<string>('ANTHROPIC_MODEL') || 'claude-4.1';
+    const apiKey = this.appConfig.anthropicApiKey;
+    const model = this.appConfig.anthropicModel;
     const maxClips = 30;
     const minClips = 10;
 
@@ -238,7 +236,7 @@ export class VideoService {
     provider: string,
     usage?: { inputTokens?: number; outputTokens?: number },
   ) {
-    const model = this.config.get<string>('ANTHROPIC_MODEL') || 'claude-4.1';
+    const model = this.appConfig.anthropicModel;
 
     if (usage?.inputTokens || usage?.outputTokens) {
       this.logger.log(

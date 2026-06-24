@@ -1,5 +1,6 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
+import { AppConfigModule } from './config/config.module';
+import { AppConfigService } from './config/app-config.service';
 import { ThrottlerModule, ThrottlerGuard, ThrottlerStorage } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerRedisModule } from './common/throttler/throttler-redis.module';
@@ -34,20 +35,25 @@ import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    AppConfigModule,
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
-    BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST ?? 'localhost',
-        port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-      },
+    BullModule.forRootAsync({
+      imports: [AppConfigModule],
+      inject: [AppConfigService],
+      useFactory: (appConfig: AppConfigService) => ({
+        connection: {
+          host: appConfig.redisHost,
+          port: appConfig.redisPort,
+          password: appConfig.redisPassword,
+        },
+      }),
     }),
     PrismaModule,
     ThrottlerModule.forRootAsync({
-      imports: [ConfigModule, ThrottlerRedisModule],
-      inject: [ConfigService, ThrottlerStorage],
-      useFactory: (config: ConfigService, storage: ThrottlerStorage) => ({
+      imports: [AppConfigModule, ThrottlerRedisModule],
+      inject: [AppConfigService, ThrottlerStorage],
+      useFactory: (appConfig: AppConfigService, storage: ThrottlerStorage) => ({
         storage,
         throttlers: [
           {
@@ -98,9 +104,8 @@ import { ScheduleModule } from '@nestjs/schedule';
         ],
         skipIf: (context) => {
           const request = context.switchToHttp().getRequest();
-          const whitelist = config.get<string>('THROTTLER_WHITELIST');
-          if (!whitelist) return false;
-          const whitelistedIps = whitelist.split(',').map((ip) => ip.trim());
+          const whitelistedIps = appConfig.throttlerWhitelist;
+          if (whitelistedIps.length === 0) return false;
           return whitelistedIps.includes(request.ip);
         },
       }),

@@ -1,4 +1,13 @@
 import { AppLoggerService } from './logger.service';
+import { AppConfigService } from '../config/app-config.service';
+
+function createMockAppConfig(overrides: Partial<AppConfigService> = {}): AppConfigService {
+  return {
+    logLevel: 'debug',
+    isProduction: true,
+    ...overrides,
+  } as AppConfigService;
+}
 
 describe('AppLoggerService', () => {
   let service: AppLoggerService;
@@ -6,16 +15,13 @@ describe('AppLoggerService', () => {
   let consoleSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    process.env.NODE_ENV = 'production';
-    process.env.LOG_LEVEL = 'debug';
-    service = new AppLoggerService();
+    service = new AppLoggerService(createMockAppConfig());
     stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
-    delete process.env.LOG_LEVEL;
   });
 
   it('outputs JSON in production', () => {
@@ -53,8 +59,7 @@ describe('AppLoggerService', () => {
   });
 
   it('respects LOG_LEVEL — suppresses debug when level is warn', () => {
-    process.env.LOG_LEVEL = 'warn';
-    service = new AppLoggerService();
+    service = new AppLoggerService(createMockAppConfig({ logLevel: 'warn' }));
     service.debug('should not appear');
     expect(stdoutSpy).not.toHaveBeenCalled();
   });

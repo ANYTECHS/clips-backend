@@ -1,4 +1,5 @@
 import { Injectable, LoggerService, Scope } from '@nestjs/common';
+import { AppConfigService } from '../config/app-config.service';
 
 export interface LogContext {
   requestId?: string;
@@ -37,9 +38,9 @@ export class AppLoggerService implements LoggerService {
     verbose: 4,
   };
 
-  constructor() {
-    this.level = (process.env.LOG_LEVEL ?? 'info').toLowerCase();
-    this.isProduction = process.env.NODE_ENV === 'production';
+  constructor(private readonly appConfig: AppConfigService) {
+    this.level = appConfig.logLevel;
+    this.isProduction = appConfig.isProduction;
   }
 
   private shouldLog(level: string): boolean {

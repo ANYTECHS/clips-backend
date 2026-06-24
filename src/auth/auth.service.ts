@@ -22,6 +22,7 @@ import { LoginDto } from './dto/login.dto';
 import * as speakeasy from 'speakeasy';
 import * as QRCode from 'qrcode';
 import { StellarService } from '../stellar/stellar.service';
+import { AppConfigService } from '../config/app-config.service';
 
 type JwtUser = {
   id: number;
@@ -29,14 +30,10 @@ type JwtUser = {
   emailVerified?: Date | null;
 };
 
-const REFRESH_TOKEN_EXPIRES_DAYS =
-  Number(process.env.JWT_REFRESH_EXPIRES_DAYS) > 0
-    ? Number(process.env.JWT_REFRESH_EXPIRES_DAYS)
-    : 14;
-
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private readonly refreshTokenExpiresDays: number;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -46,7 +43,10 @@ export class AuthService {
     private readonly bruteForceService: BruteForceProtectionService,
     private readonly encryption: EncryptionService,
     private readonly stellarService: StellarService,
-  ) {}
+    appConfig: AppConfigService,
+  ) {
+    this.refreshTokenExpiresDays = appConfig.jwtRefreshExpiresDays;
+  }
 
   /** Generate a custodial Stellar keypair and persist it on the user record. */
   private async assignStellarWallet(userId: number): Promise<void> {
@@ -146,7 +146,7 @@ export class AuthService {
       .update(rawToken)
       .digest('hex');
     const expiresAt = new Date(
-      Date.now() + REFRESH_TOKEN_EXPIRES_DAYS * 24 * 60 * 60 * 1000,
+      Date.now() + this.refreshTokenExpiresDays * 24 * 60 * 60 * 1000,
     );
 
     await this.prisma.refreshToken.create({

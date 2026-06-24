@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { AppConfigService } from '../config/app-config.service';
 
 export interface AyrsharePostResult {
   platform: string;
@@ -16,8 +17,12 @@ export interface AyrsharePostResult {
 @Injectable()
 export class AyrshareService {
   private readonly logger = new Logger(AyrshareService.name);
-  private readonly apiKey = process.env.AYRSHARE_API_KEY ?? '';
+  private readonly apiKey: string;
   private readonly baseUrl = 'https://app.ayrshare.com/api';
+
+  constructor(appConfig: AppConfigService) {
+    this.apiKey = appConfig.ayrshareApiKey;
+  }
 
   async post(
     mediaUrl: string,

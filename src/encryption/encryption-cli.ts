@@ -3,17 +3,16 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { UserPlatformService } from '../user-platform/user-platform.service';
-import { ConfigService } from '@nestjs/config';
+import { AppConfigService } from '../config/app-config.service';
 
 async function runMigration() {
   console.log('🔐 Starting encryption migration for UserPlatform tokens...');
   
   const app = await NestFactory.createApplicationContext(AppModule);
   const userPlatformService = app.get(UserPlatformService);
-  const configService = app.get(ConfigService);
+  const appConfig = app.get(AppConfigService);
 
-  // Verify encryption secret is set
-  const encryptionSecret = configService.get<string>('ENCRYPTION_SECRET');
+  const encryptionSecret = appConfig.encryptionSecret;
   if (!encryptionSecret) {
     console.error('❌ ENCRYPTION_SECRET environment variable is required');
     process.exit(1);

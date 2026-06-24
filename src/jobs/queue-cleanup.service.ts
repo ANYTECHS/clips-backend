@@ -1,8 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import { EMAIL_DELIVERY_QUEUE } from '../auth/email-delivery.queue';
+import { AppConfigService } from '../config/app-config.service';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const CLEAN_BATCH_LIMIT = 1000;
@@ -15,7 +15,7 @@ export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
   private readonly emailQueue: Queue;
   private cleanupTimer?: NodeJS.Timeout;
 
-  constructor(private readonly config: ConfigService) {
+  constructor(private readonly appConfig: AppConfigService) {
     const connection = this.getRedisConnection();
     this.clipQueue = new Queue(CLIP_GENERATION_QUEUE, { connection });
     this.emailQueue = new Queue(EMAIL_DELIVERY_QUEUE, { connection });
@@ -88,8 +88,7 @@ export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getRetentionMilliseconds(): number {
-    const raw = this.config.get<string>('BULL_JOB_RETENTION_DAYS');
-    const retentionDays = Number.parseInt(raw ?? `${DEFAULT_RETENTION_DAYS}`, 10);
+    const retentionDays = this.appConfig.bullJobRetentionDays;
 
     if (Number.isNaN(retentionDays) || retentionDays < 1) {
       return DEFAULT_RETENTION_DAYS * ONE_DAY_MS;
@@ -114,14 +113,10 @@ export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getRedisConnection() {
-    const host = this.config.get<string>('REDIS_HOST') ?? 'localhost';
-    const port = Number.parseInt(this.config.get<string>('REDIS_PORT') ?? '6379', 10);
-    const password = this.config.get<string>('REDIS_PASSWORD');
-
     return {
-      host,
-      port,
-      password: password || undefined,
+      host: this.appConfig.redisHost,
+      port: this.appConfig.redisPort,
+      password: this.appConfig.redisPassword,
     };
   }
 }
