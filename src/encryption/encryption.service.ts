@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { AppConfigService } from '../config/app-config.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -7,12 +7,12 @@ export class EncryptionService {
   private readonly algorithm = 'aes-256-gcm';
   private readonly key: Buffer;
 
-  constructor(private configService: ConfigService) {
-    const secret = this.configService.get<string>('ENCRYPTION_SECRET');
+  constructor(private readonly appConfig: AppConfigService) {
+    const secret = appConfig.encryptionSecret;
     if (!secret) {
       throw new Error('ENCRYPTION_SECRET environment variable is required');
     }
-    
+
     // Use SHA-256 to ensure we have exactly 32 bytes for AES-256
     this.key = crypto.createHash('sha256').update(secret).digest();
   }

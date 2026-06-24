@@ -5,6 +5,7 @@ import { AnomalyDetectionService } from './anomaly-detection.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { ANOMALY_DETECTION_QUEUE } from './anomaly-detection.queue';
 import { MailService } from '../auth/mail.service';
+import { AppConfigService } from '../config/app-config.service';
 
 interface AnomalyDetectionJob {
   earningId: number;
@@ -18,6 +19,7 @@ export class AnomalyDetectionProcessor {
     private anomalyDetectionService: AnomalyDetectionService,
     private mailService: MailService,
     private metricsService: MetricsService,
+    private readonly appConfig: AppConfigService,
   ) {}
 
   @Process('detect-anomaly')
@@ -54,7 +56,7 @@ export class AnomalyDetectionProcessor {
     reason: string;
     severity: string;
   }): Promise<void> {
-    const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
+    const adminEmails = this.appConfig.adminEmails;
 
     if (adminEmails.length === 0) {
       this.logger.warn('No admin emails configured for anomaly notifications');

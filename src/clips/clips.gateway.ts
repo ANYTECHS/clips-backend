@@ -13,6 +13,7 @@ import type {
   ClipFailedPayload,
 } from './clips.events';
 import { WS_CLIP_PROGRESS, WS_CLIP_COMPLETED, WS_CLIP_FAILED } from './clips.events';
+import { getAllowedOrigins } from '../config/env.validation';
 
 /**
  * WebSocket gateway for real-time clip-generation progress.
@@ -32,7 +33,7 @@ import { WS_CLIP_PROGRESS, WS_CLIP_COMPLETED, WS_CLIP_FAILED } from './clips.eve
 @WebSocketGateway({
   namespace: '/clips',
   cors: {
-    origin: process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:3000'],
+    origin: getAllowedOrigins(),
     credentials: true,
   },
 })

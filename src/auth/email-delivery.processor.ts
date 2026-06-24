@@ -1,6 +1,5 @@
 import { Logger } from '@nestjs/common';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
-import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { MailService } from './mail.service';
 import { MetricsService } from '../metrics/metrics.service';
@@ -17,7 +16,7 @@ import { getBullMQWorkerConfig } from '../config/bullmq.config';
  * Default: 5 concurrent jobs (email sending is I/O-bound and can handle more parallelism)
  */
 @Processor(EMAIL_DELIVERY_QUEUE, {
-  concurrency: getBullMQWorkerConfig(new ConfigService()).emailDeliveryConcurrency,
+  concurrency: getBullMQWorkerConfig().emailDeliveryConcurrency,
 })
 export class EmailDeliveryProcessor extends WorkerHost {
   private readonly logger = new Logger(EmailDeliveryProcessor.name);
@@ -27,7 +26,7 @@ export class EmailDeliveryProcessor extends WorkerHost {
     private readonly metricsService: MetricsService,
   ) {
     super();
-    const config = getBullMQWorkerConfig(configService);
+    const config = getBullMQWorkerConfig();
     this.logger.log(
       `Email delivery worker initialized with concurrency: ${config.emailDeliveryConcurrency}`,
     );

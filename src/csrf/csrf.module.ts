@@ -1,11 +1,11 @@
 import { Module, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { CsrfService } from './csrf.service';
 import { CsrfGuard } from './csrf.guard';
+import { AppConfigModule } from '../config/config.module';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [AppConfigModule],
   providers: [
     CsrfService,
     {
@@ -17,11 +17,8 @@ import { CsrfGuard } from './csrf.guard';
 })
 export class CsrfModule {
   configure(consumer: MiddlewareConsumer) {
-    const configService = new ConfigService();
-
     consumer
       .apply((req: any, res: any, next: any) => {
-        const csrfService = new CsrfService(configService);
 
         // Skip CSRF for GET, HEAD, OPTIONS requests
         if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {

@@ -1,6 +1,5 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -11,6 +10,7 @@ import { AppModule } from './app.module';
 import { PayoutsService } from './payouts/payouts.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AppLoggerService } from './logger/logger.service';
+import { AppConfigService } from './config/app-config.service';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
@@ -19,11 +19,11 @@ import {
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
-  const isProduction = process.env.NODE_ENV === 'production';
+  const appConfig = app.get(AppConfigService);
+  const isProduction = appConfig.isProduction;
 
   // Validate BullMQ worker configuration on startup
-  const configService = app.get(ConfigService);
-  const workerConfig = getBullMQWorkerConfig(configService);
+  const workerConfig = getBullMQWorkerConfig();
   try {
     validateWorkerConfig(workerConfig);
     logger.log(
@@ -113,7 +113,7 @@ async function bootstrap() {
   logger.log(`OpenAPI spec exported to ${openapiPath}`);
 
   // Setup Swagger UI (only in non-production or if explicitly enabled)
-  const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
+  const enableSwaggerUI = !isProduction || appConfig.enableSwaggerUi;
   if (enableSwaggerUI) {
     SwaggerModule.setup('api/docs', app, document, {
       swaggerOptions: {
@@ -129,9 +129,7 @@ async function bootstrap() {
     logger.log('Swagger UI disabled in production. Set ENABLE_SWAGGER_UI=true to enable.');
   }
 
-  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
-    'http://localhost:3000',
-  ];
+  const allowedOrigins = appConfig.allowedOrigins;
   app.enableCors({
     origin: allowedOrigins,
     credentials: true, // required for cross-origin cookie support
@@ -191,7 +189,7 @@ async function bootstrap() {
   // in-flight work to finish (e.g. BullMQ processors should finish jobs).
   const shutdown = async (signal: string) => {
     logger.log(`Received ${signal}, shutting down gracefully...`);
-    const timeoutMs = Number(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS) || 30000;
+    const timeoutMs = appConfig.gracefulShutdownTimeoutMs;
     const forceExit = setTimeout(() => {
       logger.error(`Shutdown timed out after ${timeoutMs}ms — forcing exit.`);
       process.exit(1);
@@ -212,12 +210,12 @@ async function bootstrap() {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  await app.listen(process.env.PORT ?? 3000);
+  await app.listen(appConfig.port);
 
   // Start periodic payout verification to confirm on-chain transactions
   try {
     const payoutsService = app.get(PayoutsService);
-    const intervalMs = parseInt(process.env.PAYOUT_VERIFIER_INTERVAL_MS ?? '60000', 10);
+    const intervalMs = appConfig.payoutVerifierIntervalMs;
 
     // Run once on startup
     void payoutsService.verifyPendingPayouts().catch((err) => logger.error(`Payout verifier initial run failed: ${err?.message ?? err}`));
