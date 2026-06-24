@@ -83,6 +83,9 @@ model Clip {
   mintAddress   String?    @unique
   mintedAt      DateTime?
   nftStatus     String     @default("none")
+  status        String     @default("pending")
+  localFilePath String?
+  error         String?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)

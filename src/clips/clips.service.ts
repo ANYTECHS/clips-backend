@@ -3,6 +3,7 @@ import {
   Logger,
   ForbiddenException,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -202,17 +203,29 @@ export class ClipsService {
       `Clip generation failed for video ${payload.videoId}: ${payload.failedReason}`,
     );
 
+    if (this._isVideoCancelled(payload.videoId) || payload.failedReason === 'Cancelled by user') {
+      this.logger.log(`Video ${payload.videoId} was cancelled, skipping failed status update.`);
+      return;
+    }
+
     // Update Video status and processingError in Prisma
     try {
-      await this.prisma.video.update({
+      const video = await this.prisma.video.findUnique({
         where: { id: Number(payload.videoId) },
-        data: {
-          status: 'failed',
-          processingError: payload.failedReason,
-          updatedAt: new Date(),
-        },
+        select: { status: true },
       });
-      this.logger.log(`Video ${payload.videoId} marked as failed in database`);
+
+      if (video && video.status !== 'cancelled') {
+        await this.prisma.video.update({
+          where: { id: Number(payload.videoId) },
+          data: {
+            status: 'failed',
+            processingError: payload.failedReason,
+            updatedAt: new Date(),
+          },
+        });
+        this.logger.log(`Video ${payload.videoId} marked as failed in database`);
+      }
     } catch (error) {
       this.logger.error(
         `Failed to update video ${payload.videoId} status: ${error.message}`,
@@ -473,7 +486,41 @@ export class ClipsService {
 
   async cancelVideo(
     videoId: string,
+    userId?: number,
   ): Promise<{ cancelled: boolean; removedJobs: number; abortedJobs: number }> {
+    const video = await this.prisma.video.findUnique({
+      where: { id: Number(videoId) },
+    }).catch(() => null);
+
+    if (video) {
+      if (userId !== undefined && video.userId !== userId) {
+        throw new ForbiddenException(
+          'You do not have permission to cancel this video',
+        );
+      }
+      await this.prisma.video.update({
+        where: { id: Number(videoId) },
+        data: {
+          status: 'cancelled',
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      // In-memory or legacy fallback
+      const legacyVideo = this.videos.get(videoId);
+      if (legacyVideo) {
+        if (userId !== undefined && legacyVideo.userId !== userId) {
+          throw new ForbiddenException(
+            'You do not have permission to cancel this video',
+          );
+        }
+        legacyVideo.status = 'cancelled';
+        legacyVideo.updatedAt = new Date();
+      } else {
+        throw new NotFoundException(`Video ${videoId} not found`);
+      }
+    }
+
     this.cancelledVideos.add(videoId);
     const jobIds = [...(this.videoJobs.get(videoId) ?? new Set<string>())];
     let removedJobs = 0;

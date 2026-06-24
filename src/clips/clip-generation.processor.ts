@@ -196,12 +196,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     const { videoId, inputPath, userId } = job.data;
     this.logger.log(`Processing uploaded video ${videoId} (job: ${job.id})`);
 
+    const { controller, timeout } = this.setupJobTimeout(String(videoId), String(job.id ?? ''));
+
     try {
       // ── Step 1: video_download ─────────────────────────────────────────
       await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
 
       // ── Step 2: ai_analysis — detect viral timestamps ──────────────────
       await job.updateProgress({ percent: PROGRESS.AI_ANALYSIS, step: 'ai_analysis' });
+
+      if (controller.signal.aborted) {
+        throw new Error('Aborted');
+      }
+
       const videoService = this.clipsService['videoService'] as VideoService;
       const moments = await videoService.detectViralTimestamps(Number(videoId));
       this.logger.log(`Detected ${moments.length} viral moments for video ${videoId}`);
@@ -210,6 +217,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       await this.safeDeleteLocalFile(inputPath);
       await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
 
+      this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
       return this.buildUploadProcessedClip(videoId, userId);
     } catch (error) {
       this.logger.error(
@@ -217,6 +225,12 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         error.stack,
       );
       await this.safeDeleteLocalFile(inputPath);
+      this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
+
+      if (controller.signal.aborted) {
+        const cancelled = this.clipsService._isVideoCancelled(String(videoId));
+        throw new UnrecoverableError(cancelled ? 'Cancelled by user' : 'Timeout');
+      }
       throw error;
     }
   }
@@ -247,6 +261,20 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     );
 
     void this.clipsService.refreshQueueDepth();
+
+    // Persist clip failure status
+    const { clipId } = job.data;
+    if (clipId) {
+      const isUploadError = error.message?.includes('Cloudinary') || error.message?.includes('upload');
+      const finalStatus = isUploadError ? 'upload_failed' : 'failed';
+      void this.clipsService.updateClip(clipId, {
+        status: finalStatus,
+        error: error.message,
+      }).catch((err) => {
+        this.logger.error(`Failed to update clip ${clipId} status on job failure: ${err.message}`);
+      });
+    }
+
     this.emitClipGenerationFailedEvent(job, error);
     void this.emitFailedWebSocketEvent(job, error);
   }
@@ -485,14 +513,14 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       jobId: job.id,
       videoId: job.data.videoId,
       percent,
+      progress: percent,
+      stage: step,
       step,
-      ...(!isUploadJob && {
-        currentClip: {
-          id: clipId,
-          startTime: job.data.startTime,
-          endTime: job.data.endTime,
-          positionRatio: job.data.positionRatio,
-        },
+      currentClip: job.data.clipId ?? (isUploadJob ? undefined : {
+        id: clipId,
+        startTime: job.data.startTime,
+        endTime: job.data.endTime,
+        positionRatio: job.data.positionRatio,
       }),
     });
   }
