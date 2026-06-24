@@ -27,20 +27,23 @@ describe('CreateClipDto validation', () => {
 
   it('fails when endTime equals startTime', async () => {
     const dto = makeValid({ startTime: 10, endTime: 10 });
-    const errors = await validate(dto);
-    expect(errors.length).toBeGreaterThan(0);
+    await expect(async () => validate(dto)).rejects.toThrow(
+      'endTime must be greater than startTime',
+    );
   });
 
   it('fails when duration < 5 seconds', async () => {
     const dto = makeValid({ startTime: 0, endTime: 3 });
-    const errors = await validate(dto);
-    expect(errors.length).toBeGreaterThan(0);
+    await expect(async () => validate(dto)).rejects.toThrow(
+      'Clip duration must be between 5 and 300 seconds',
+    );
   });
 
   it('fails when duration > 300 seconds', async () => {
     const dto = makeValid({ startTime: 0, endTime: 301 });
-    const errors = await validate(dto);
-    expect(errors.length).toBeGreaterThan(0);
+    await expect(async () => validate(dto)).rejects.toThrow(
+      'Clip duration must be between 5 and 300 seconds',
+    );
   });
 
   it('passes at boundary: exactly 5 seconds', async () => {

@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
@@ -8,7 +8,7 @@ import { calculateViralityScore } from './virality-score.util';
 import { cutClip, getVideoMetadata } from './ffmpeg.util';
 import { generateCaption } from './caption.util';
 import { CloudinaryService } from './cloudinary.service';
-import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
+import { CLIP_GENERATION_QUEUE, CLIP_GENERATION_WORKER_OPTIONS } from './clip-generation.queue';
 import {
   CLIP_GENERATION_FAILED_EVENT,
   ClipGenerationFailedPayload,
@@ -20,6 +20,7 @@ import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { VideoService } from '../videos/video.service';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 export interface ClipGenerationJob {
   videoId: string;
@@ -81,8 +82,12 @@ const JOB_TIMEOUT_MS = 30 * 60 * 1000;
  */
 @Processor(CLIP_GENERATION_QUEUE, {
   concurrency: getBullMQWorkerConfig(new ConfigService()).clipGenerationConcurrency,
+  // Lock duration must exceed the longest expected job run (30 min job timeout + buffer)
+  lockDuration: CLIP_GENERATION_WORKER_OPTIONS.lockDuration,
+  stalledInterval: CLIP_GENERATION_WORKER_OPTIONS.stalledInterval,
+  maxStalledCount: CLIP_GENERATION_WORKER_OPTIONS.maxStalledCount,
 })
-export class ClipGenerationProcessor extends WorkerHost {
+export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(ClipGenerationProcessor.name);
 
   constructor(
@@ -92,12 +97,18 @@ export class ClipGenerationProcessor extends WorkerHost {
     private readonly clipsService: ClipsService,
     private readonly metricsService: MetricsService,
     private readonly prisma: PrismaService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
     const config = getBullMQWorkerConfig(new ConfigService());
     this.logger.log(
       `Clip generation worker initialized with concurrency: ${config.clipGenerationConcurrency}`,
     );
+  }
+
+  onModuleInit(): void {
+    // Register with the shutdown coordinator so SIGTERM drains this worker
+    this.shutdownService.register(this.worker);
   }
 
   // ── Main entry point ───────────────────────────────────────────────────────

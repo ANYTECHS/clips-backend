@@ -1,19 +1,13 @@
 import { Module } from '@nestjs/common';
-import { BullModule } from '@nestjs/bullmq';
 import { JobsController } from './jobs.controller';
 import { JobsService } from './jobs.service';
 import { QueueCleanupService } from './queue-cleanup.service';
-import {
-  CLIP_GENERATION_QUEUE,
-  CLIP_GENERATION_QUEUE_PRIORITY,
-} from '../clips/clip-generation.queue';
+import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
+import { registerQueue } from '../common';
 
 @Module({
   imports: [
-    BullModule.registerQueue({
-      name: CLIP_GENERATION_QUEUE,
-      defaultJobOptions: { priority: CLIP_GENERATION_QUEUE_PRIORITY },
-    }),
+    registerQueue(CLIP_GENERATION_QUEUE),
   ],
   controllers: [JobsController],
   providers: [JobsService, QueueCleanupService],

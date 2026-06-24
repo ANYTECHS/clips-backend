@@ -18,24 +18,30 @@ describe('Auth - Password Strength Validation', () => {
   let stellarService: StellarService;
 
   beforeEach(async () => {
+    const prismaMock = {
+      user: {
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      refreshToken: {
+        create: jest.fn(),
+      },
+      emailVerificationToken: {
+        create: jest.fn(),
+      },
+      withTransaction: jest.fn(),
+    };
+    prismaMock.withTransaction.mockImplementation(async (callback: (tx: typeof prismaMock) => unknown) =>
+      callback(prismaMock),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         {
           provide: PrismaService,
-          useValue: {
-            user: {
-              findUnique: jest.fn(),
-              create: jest.fn(),
-              update: jest.fn(),
-            },
-            refreshToken: {
-              create: jest.fn(),
-            },
-            emailVerificationToken: {
-              create: jest.fn(),
-            },
-          },
+          useValue: prismaMock,
         },
         {
           provide: JwtService,
@@ -78,11 +84,6 @@ describe('Auth - Password Strength Validation', () => {
             isTestnet: jest.fn().mockReturnValue(true),
             fundWithFriendbot: jest.fn().mockResolvedValue(undefined),
           },
-          useValue: { queueEmail: jest.fn() },
-        },
-        {
-          provide: EncryptionService,
-          useValue: { encrypt: jest.fn(), decrypt: jest.fn() },
         },
       ],
     }).compile();

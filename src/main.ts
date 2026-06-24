@@ -14,6 +14,8 @@ import { AppLoggerService } from './logger/logger.service';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
+  getBullMQConnectionConfig,
+  validateConnectionConfig,
 } from './config/bullmq.config';
 
 async function bootstrap() {
@@ -21,8 +23,21 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Validate BullMQ worker configuration on startup
+  // Validate BullMQ Redis connection configuration on startup
   const configService = app.get(ConfigService);
+  const connectionConfig = getBullMQConnectionConfig(configService);
+  try {
+    validateConnectionConfig(connectionConfig);
+    logger.log(
+      `BullMQ connection configuration validated: ` +
+        `host=${connectionConfig.redisHost}, port=${connectionConfig.redisPort}`,
+    );
+  } catch (error) {
+    logger.error(`Invalid BullMQ connection configuration: ${error.message}`);
+    process.exit(1);
+  }
+
+  // Validate BullMQ worker configuration on startup
   const workerConfig = getBullMQWorkerConfig(configService);
   try {
     validateWorkerConfig(workerConfig);
@@ -220,11 +235,11 @@ async function bootstrap() {
     const intervalMs = parseInt(process.env.PAYOUT_VERIFIER_INTERVAL_MS ?? '60000', 10);
 
     // Run once on startup
-    void payoutsService.verifyPendingPayouts().catch((err) => logger.error(`Payout verifier initial run failed: ${err?.message ?? err}`));
+    void payoutsService.listPendingPayouts().catch((err) => logger.error(`Payout verifier initial run failed: ${err?.message ?? err}`));
 
     // Schedule periodic runs
     setInterval(() => {
-      void payoutsService.verifyPendingPayouts().catch((err) => logger.error(`Payout verifier error: ${err?.message ?? err}`));
+      void payoutsService.listPendingPayouts().catch((err) => logger.error(`Payout verifier error: ${err?.message ?? err}`));
     }, intervalMs);
 
     logger.log(`Payout verifier started (interval=${intervalMs}ms)`);

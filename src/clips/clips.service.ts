@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { Clip, PostStatus } from './clip.entity';
@@ -24,6 +25,8 @@ import {
 } from './clip-generation.queue';
 import { CloudinaryService } from './cloudinary.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { QueueOverflowService } from '../common/queue/queue-overflow.service';
+import { getBullMQRateLimitConfig } from '../config/bullmq.config';
 
 export type ClipSortField = 'viralityScore' | 'createdAt' | 'duration';
 export type SortOrder = 'asc' | 'desc';
@@ -66,22 +69,46 @@ export class ClipsService {
     private readonly prisma: PrismaService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly metricsService: MetricsService,
+    private readonly queueOverflowService: QueueOverflowService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
    * Enqueue a clip-generation job with retry + exponential backoff.
+   *
+   * Overflow protection: if the queue depth exceeds the configured global
+   * cap (`BULLMQ_CLIP_GENERATION_GLOBAL_DEPTH_CAP`), the job is delayed
+   * rather than enqueued immediately, preventing queue saturation during
+   * traffic spikes. The delay is configurable via
+   * `BULLMQ_CLIP_GENERATION_OVERFLOW_DELAY_MS` (default 30 000 ms).
    */
   async enqueueClip(
     job: ClipGenerationJob,
-  ): Promise<{ jobId: string | undefined }> {
-    const bullJob = await this.clipQueue.add('generate', job, CLIP_JOB_OPTIONS);
-    if (bullJob?.id && job.videoId) {
+  ): Promise<{ jobId: string | undefined; delayed?: boolean; delayMs?: number }> {
+    const rateLimits = getBullMQRateLimitConfig(this.configService);
+
+    const result = await this.queueOverflowService.enqueue({
+      queue: this.clipQueue as Queue<any>,
+      jobName: 'generate',
+      data: job,
+      baseOptions: CLIP_JOB_OPTIONS as Record<string, unknown>,
+      rateLimitConfig: rateLimits.clipGeneration,
+    });
+
+    if (result.jobId && job.videoId) {
       const set = this.videoJobs.get(job.videoId) ?? new Set<string>();
-      set.add(String(bullJob.id));
+      set.add(result.jobId);
       this.videoJobs.set(job.videoId, set);
     }
+
+    if (result.delayed) {
+      this.logger.warn(
+        `Clip job ${result.jobId} for video ${job.videoId} delayed by ${result.delayMs}ms due to queue overflow`,
+      );
+    }
+
     await this.refreshQueueDepth();
-    return { jobId: bullJob.id };
+    return { jobId: result.jobId, delayed: result.delayed, delayMs: result.delayMs };
   }
 
   async refreshQueueDepth(): Promise<void> {

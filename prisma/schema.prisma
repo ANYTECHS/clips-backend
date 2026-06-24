@@ -52,6 +52,8 @@ model Video {
   processingError  String?
   // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, errorDetails?: string }
   processingStats  Json?
+  // Schema: { duration: number, width: number, height: number, format: string, fps: number, bitrate: number }
+  metadata         Json?
   targetPlatforms  Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -158,6 +160,7 @@ model Payout {
   method           String
   status           String
   transactionId    String?
+  externalTransactionId String?
   stellarXdr       String?
   onChainTxHash    String?
   confirmedAt      DateTime?

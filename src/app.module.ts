@@ -1,6 +1,10 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard, ThrottlerStorage } from '@nestjs/throttler';
+import {
+  ThrottlerModule,
+  ThrottlerGuard,
+  ThrottlerStorage,
+} from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerRedisModule } from './common/throttler/throttler-redis.module';
 import { AppController } from './app.controller';
@@ -10,7 +14,6 @@ import { AuthModule } from './auth/auth.module';
 import { ClipsModule } from './clips/clips.module';
 import { NftModule } from './nft/nft.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { BullModule } from '@nestjs/bullmq';
 import { VideosModule } from './videos/videos.module';
 import { JobsModule } from './jobs/jobs.module';
 import { PayoutsModule } from './payouts/payouts.module';
@@ -23,6 +26,7 @@ import { CircuitBreakerModule } from './common/circuit-breaker/circuit-breaker.m
 import { RedisModule } from './redis/redis.module';
 import { EarningsModule } from './earnings/earnings.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { ConfigModule as AppConfigModule } from './config/config.module';
 import { WalletsModule } from './wallets/wallets.module';
 import { LoggerModule } from './logger/logger.module';
 import { RequestIdMiddleware } from './logger/request-id.middleware';
@@ -31,18 +35,15 @@ import { TransactionsModule } from './transactions/transactions.module';
 import { HealthModule } from './health/health.module';
 import { QueueDashboardModule } from './queue-dashboard/queue-dashboard.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { QueueModule } from './queue/queue.module';
+import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
-    BullModule.forRoot({
-      connection: {
-        host: process.env.REDIS_HOST ?? 'localhost',
-        port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-      },
-    }),
+    QueueModule,
     PrismaModule,
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule, ThrottlerRedisModule],
@@ -121,11 +122,13 @@ import { ScheduleModule } from '@nestjs/schedule';
     RedisModule,
     EarningsModule,
     MetricsModule,
+    AppConfigModule,
     WalletsModule,
     UsersModule,
     TransactionsModule,
     HealthModule,
     QueueDashboardModule,
+    GracefulShutdownModule,
   ],
   controllers: [AppController],
   providers: [

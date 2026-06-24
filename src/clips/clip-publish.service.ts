@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { UserPlatformService } from '../user-platform/user-platform.service';
 import {
@@ -13,6 +14,8 @@ import {
   CLIP_POSTING_JOB_OPTIONS,
   type ClipPostingJob,
 } from './clip-posting.queue';
+import { QueueOverflowService } from '../common/queue/queue-overflow.service';
+import { getBullMQRateLimitConfig } from '../config/bullmq.config';
 
 @Injectable()
 export class ClipPublishService {
@@ -23,6 +26,8 @@ export class ClipPublishService {
     private readonly userPlatformService: UserPlatformService,
     @InjectQueue(CLIP_POSTING_QUEUE)
     private readonly postingQueue: Queue<ClipPostingJob>,
+    private readonly queueOverflowService: QueueOverflowService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -92,17 +97,30 @@ export class ClipPublishService {
       platforms: validPlatforms,
     };
 
-    const job = await this.postingQueue.add('post-clip', jobPayload, {
-      ...CLIP_POSTING_JOB_OPTIONS,
-      jobId: `post-${clipId}-${Date.now()}`,
+    const rateLimits = getBullMQRateLimitConfig(this.configService);
+    const result = await this.queueOverflowService.enqueue({
+      queue: this.postingQueue as Queue<any>,
+      jobName: 'post-clip',
+      data: jobPayload,
+      baseOptions: {
+        ...CLIP_POSTING_JOB_OPTIONS,
+        jobId: `post-${clipId}-${Date.now()}`,
+      } as Record<string, unknown>,
+      rateLimitConfig: rateLimits.clipPosting,
     });
 
-    this.logger.log(
-      `Enqueued posting job ${job.id} for clipId=${clipId} ` +
-        `platforms=[${validPlatforms.join(', ')}]`,
-    );
+    if (result.delayed) {
+      this.logger.warn(
+        `Posting job ${result.jobId} for clipId=${clipId} delayed by ${result.delayMs}ms due to queue overflow`,
+      );
+    } else {
+      this.logger.log(
+        `Enqueued posting job ${result.jobId} for clipId=${clipId} ` +
+          `platforms=[${validPlatforms.join(', ')}]`,
+      );
+    }
 
-    return { jobId: String(job.id), platforms: validPlatforms };
+    return { jobId: String(result.jobId), platforms: validPlatforms };
   }
 
   /**

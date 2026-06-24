@@ -65,6 +65,9 @@ function makeProcessor() {
   };
   const metricsService = {
     incrementClipsGenerated: jest.fn(),
+    recordJobStart: jest.fn(),
+    recordJobCompletion: jest.fn(),
+    recordJobFailure: jest.fn(),
   };
   const prisma = {
     video: {
@@ -217,10 +220,10 @@ describe('ClipGenerationProcessor', () => {
   });
 
   describe('CLIP_JOB_OPTIONS', () => {
-    it('configures 3 attempts with exponential backoff at 1000ms', () => {
-      expect(CLIP_JOB_OPTIONS.attempts).toBe(3);
+    it('configures 5 attempts with exponential backoff at 2000ms', () => {
+      expect(CLIP_JOB_OPTIONS.attempts).toBe(5);
       expect(CLIP_JOB_OPTIONS.backoff.type).toBe('exponential');
-      expect(CLIP_JOB_OPTIONS.backoff.delay).toBe(1000);
+      expect(CLIP_JOB_OPTIONS.backoff.delay).toBe(2000);
     });
   });
 });

@@ -33,6 +33,10 @@ const mockPrisma = {
   },
 };
 
+mockPrisma.withTransaction = jest.fn(async (callback: (tx: typeof mockPrisma) => unknown) =>
+  callback(mockPrisma),
+);
+
 const mockJwt = { sign: jest.fn().mockReturnValue('mock.jwt.token') };
 
 const mockEmailDelivery = { enqueue: jest.fn() };

@@ -1,6 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EarningsService } from '../src/earnings/earnings.service';
+import { EarningsAggregationService } from '../src/earnings/earnings-aggregation.service';
+import { EarningsExportService } from '../src/earnings/earnings-export.service';
+import { CurrencyConversionService } from '../src/earnings/currency-conversion.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { RedisService } from '../src/redis/redis.service';
+import { ConfigService } from '../src/config/config.service';
 import { buildClipRecordList } from './fixtures/clip.fixture';
 
 /**
@@ -66,7 +71,25 @@ describe('EarningsService (integration)', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EarningsService,
+        EarningsAggregationService,
+        EarningsExportService,
+        CurrencyConversionService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: RedisService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            setex: jest.fn(),
+            del: jest.fn(),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            earningsCacheTtlSeconds: 3600,
+            leaderboardEnabled: false,
+          },
+        },
       ],
     }).compile();
 
@@ -115,7 +138,11 @@ describe('EarningsService (integration)', () => {
 
     it('returns zero totals when user has no earnings', async () => {
       const result = await service.getUserTotalEarnings(99);
-      expect(result).toEqual({ total: 0, breakdown: { royalties: 0, subscriptions: 0 } });
+      expect(result).toEqual({
+        total: 0,
+        currency: 'USD',
+        breakdown: { royalties: 0, subscriptions: 0 },
+      });
     });
   });
 
@@ -157,6 +184,7 @@ describe('EarningsService (integration)', () => {
       const result = await service.getEarningsDashboard(1);
       expect(result).toEqual({
         totalEarned: 0,
+        currency: 'USD',
         pendingPayout: 0,
         paidOut: 0,
         breakdown: { royalties: 0, subscriptions: 0 },

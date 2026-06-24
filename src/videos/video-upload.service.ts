@@ -23,6 +23,8 @@ export interface VideoValidationResult {
     width: number;
     height: number;
     format: string;
+    fps: number;
+    bitrate: number;
   };
 }
 
@@ -114,6 +116,8 @@ export class VideoUploadService {
             width: metadata.width,
             height: metadata.height,
             format: metadata.format,
+            fps: metadata.fps,
+            bitrate: metadata.bitrate,
           },
         };
       }
@@ -125,6 +129,8 @@ export class VideoUploadService {
           width: metadata.width,
           height: metadata.height,
           format: metadata.format,
+          fps: metadata.fps,
+          bitrate: metadata.bitrate,
         },
       };
     } catch (error) {
@@ -177,6 +183,14 @@ export class VideoUploadService {
           status: 'pending',
           duration: Math.round(validation.metadata!.duration),
           fileSize: BigInt(stats.size),
+          metadata: {
+            duration: validation.metadata!.duration,
+            width: validation.metadata!.width,
+            height: validation.metadata!.height,
+            format: validation.metadata!.format,
+            fps: validation.metadata!.fps,
+            bitrate: validation.metadata!.bitrate,
+          },
           processingStats: {
             inputQuality: `${validation.metadata!.height}p`,
             durationSec: validation.metadata!.duration,

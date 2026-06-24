@@ -18,7 +18,7 @@ export class EarningsExportService {
 
   constructor(private prisma: PrismaService) {}
 
-  private userEarningsWhere(userId: number) {
+  private userEarningsWhere(userId: number): Record<string, unknown> {
     return {
       clip: { video: { userId } },
       deletedAt: null,
@@ -29,17 +29,18 @@ export class EarningsExportService {
     userId: number,
     options: EarningsExportOptions,
   ): Promise<EarningsExportResult> {
-    let where = this.userEarningsWhere(userId);
+    let where: Record<string, unknown> = this.userEarningsWhere(userId);
     if (options.startDate || options.endDate) {
-      where = { ...where, date: {} };
+      const dateFilter: Record<string, Date> = {};
       if (options.startDate) {
-        where.date.gte = new Date(options.startDate);
+        dateFilter.gte = new Date(options.startDate);
       }
       if (options.endDate) {
         const end = new Date(options.endDate);
         end.setUTCHours(23, 59, 59, 999);
-        where.date.lte = end;
+        dateFilter.lte = end;
       }
+      where = { ...where, date: dateFilter };
     }
 
     const earnings = await this.prisma.earning.findMany({

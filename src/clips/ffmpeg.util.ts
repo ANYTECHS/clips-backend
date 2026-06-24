@@ -21,6 +21,8 @@ export interface VideoMetadata {
   height: number;
   format: string;
   resolution: string;
+  fps: number;
+  bitrate: number;
 }
 
 /**
@@ -48,12 +50,27 @@ export async function getVideoMetadata(
       const height = stream.height || 0;
       const formatName = format.format_name || 'unknown';
 
+      // Parse frame rate from "num/den" string (e.g. "30/1" or "30000/1001")
+      let fps = 0;
+      if (stream.r_frame_rate) {
+        const parts = stream.r_frame_rate.split('/');
+        if (parts.length === 2) {
+          const num = parseFloat(parts[0]);
+          const den = parseFloat(parts[1]);
+          fps = den > 0 ? Math.round((num / den) * 100) / 100 : 0;
+        }
+      }
+
+      const bitrate = parseInt(format.bit_rate?.toString() || '0', 10);
+
       resolve({
         duration,
         width,
         height,
         format: formatName,
         resolution: `${width}x${height}`,
+        fps,
+        bitrate,
       });
     });
   });

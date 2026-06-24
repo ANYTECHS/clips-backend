@@ -18,11 +18,24 @@ const mockPostingQueue = {
   add: jest.fn(),
 };
 
+const mockQueueOverflowService = {
+  enqueue: jest.fn(async ({ queue, jobName, data, baseOptions }) => {
+    const job = await queue.add(jobName, data, baseOptions);
+    return { jobId: job.id, delayed: false, delayMs: 0 };
+  }),
+};
+
+const mockConfigService = {
+  get: jest.fn((_key: string, defaultValue?: string) => defaultValue),
+};
+
 function makeService() {
   return new ClipPublishService(
     mockPrisma as any,
     mockUserPlatformService as any,
     mockPostingQueue as any,
+    mockQueueOverflowService as any,
+    mockConfigService as any,
   );
 }
 

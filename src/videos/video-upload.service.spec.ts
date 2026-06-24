@@ -1,3 +1,8 @@
+jest.mock('fs/promises', () => ({
+  stat: jest.fn(),
+  unlink: jest.fn(),
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { VideoUploadService } from './video-upload.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -247,9 +252,9 @@ describe('VideoUploadService', () => {
     };
 
     beforeEach(() => {
-      jest.spyOn(fs, 'stat').mockResolvedValue({
+      (fs.stat as jest.Mock).mockResolvedValue({
         size: 100 * 1024 * 1024,
-      } as any);
+      });
       (getVideoMetadata as jest.Mock).mockResolvedValue(mockMetadata);
     });
 
@@ -336,9 +341,9 @@ describe('VideoUploadService', () => {
     });
 
     it('should throw BadRequestException for file too large', async () => {
-      jest.spyOn(fs, 'stat').mockResolvedValue({
+      (fs.stat as jest.Mock).mockResolvedValue({
         size: 600 * 1024 * 1024, // 600 MB
-      } as any);
+      });
 
       await expect(
         service.processUpload('/tmp/upload-126.mp4', 'huge.mp4', 1),
@@ -348,7 +353,7 @@ describe('VideoUploadService', () => {
 
   describe('cleanupTempFile', () => {
     it('should delete temp file successfully', async () => {
-      jest.spyOn(fs, 'unlink').mockResolvedValue(undefined);
+      (fs.unlink as jest.Mock).mockResolvedValue(undefined);
 
       await service.cleanupTempFile('/tmp/test.mp4');
 
@@ -358,7 +363,7 @@ describe('VideoUploadService', () => {
     it('should not throw if file does not exist', async () => {
       const error = new Error('ENOENT: file not found');
       (error as any).code = 'ENOENT';
-      jest.spyOn(fs, 'unlink').mockRejectedValue(error);
+      (fs.unlink as jest.Mock).mockRejectedValue(error);
 
       await expect(
         service.cleanupTempFile('/tmp/nonexistent.mp4'),

@@ -21,7 +21,8 @@ describe('QueueCleanupService', () => {
   it('cleans completed jobs using default retention when env is unset', async () => {
     mockClean.mockResolvedValue([]);
     const configService = { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService;
-    const service = new QueueCleanupService(configService);
+    const redisService = { isAvailable: jest.fn().mockReturnValue(true) };
+    const service = new QueueCleanupService(configService, redisService as any);
 
     await service.runCleanup();
 
@@ -34,7 +35,8 @@ describe('QueueCleanupService', () => {
     const configService = {
       get: jest.fn((key: string) => (key === 'BULL_JOB_RETENTION_DAYS' ? '15' : undefined)),
     } as unknown as ConfigService;
-    const service = new QueueCleanupService(configService);
+    const redisService = { isAvailable: jest.fn().mockReturnValue(true) };
+    const service = new QueueCleanupService(configService, redisService as any);
 
     await service.runCleanup();
 

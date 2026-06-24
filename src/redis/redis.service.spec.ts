@@ -9,8 +9,18 @@ describe('RedisService', () => {
   let mockRedisClient: jest.Mocked<Redis>;
 
   beforeEach(async () => {
+    const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
+
     mockRedisClient = {
-      on: jest.fn(),
+      on: jest.fn((event: string, cb: (...args: unknown[]) => void) => {
+        listeners[event] = listeners[event] ?? [];
+        listeners[event].push(cb);
+      }),
+      emit: jest.fn((event: string, ...args: unknown[]) => {
+        for (const cb of listeners[event] ?? []) {
+          cb(...args);
+        }
+      }),
       get: jest.fn(),
       setex: jest.fn(),
       del: jest.fn(),
@@ -26,6 +36,7 @@ describe('RedisService', () => {
     }).compile();
 
     service = module.get<RedisService>(RedisService);
+    mockRedisClient.emit('ready');
   });
 
   it('should be defined', () => {

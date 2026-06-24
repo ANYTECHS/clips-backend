@@ -14,6 +14,8 @@ export interface RedisMemoryStats {
   isAboveThreshold: boolean;
   alert: string | null;
   checkedAt: string;
+  /** true when Redis is unreachable and stats could not be collected */
+  unavailable?: boolean;
 }
 
 export const MEMORY_ALERT_THRESHOLD_PERCENT = 80;
@@ -30,34 +32,58 @@ export class RedisMemoryService {
   /**
    * Collects current Redis memory stats, evaluates the alert threshold,
    * and returns a structured payload.
+   *
+   * When Redis is unavailable the method returns a degraded-but-safe object
+   * with `unavailable: true` instead of throwing, so callers can distinguish
+   * "no data" from "high memory".
    */
   async getStats(): Promise<RedisMemoryStats> {
-    const info = await this.redisService.getMemoryInfo();
+    // Check availability before issuing any command
+    if (!this.redisService.isAvailable()) {
+      return this.unavailableStats('Redis is not connected');
+    }
 
-    const isAboveThreshold =
-      info.usagePercent !== null &&
-      info.usagePercent > MEMORY_ALERT_THRESHOLD_PERCENT;
+    try {
+      const info = await this.redisService.getMemoryInfo();
 
-    const alert = isAboveThreshold
-      ? `Redis memory usage is at ${info.usagePercent}%, which exceeds the ${MEMORY_ALERT_THRESHOLD_PERCENT}% threshold. OOM risk is elevated.`
-      : null;
+      // getMemoryInfo itself can return an unavailable sentinel
+      if (info.unavailable) {
+        return this.unavailableStats('Redis returned no data');
+      }
 
-    return {
-      ...info,
-      isAboveThreshold,
-      alert,
-      checkedAt: new Date().toISOString(),
-    };
+      const isAboveThreshold =
+        info.usagePercent !== null &&
+        info.usagePercent > MEMORY_ALERT_THRESHOLD_PERCENT;
+
+      const alert = isAboveThreshold
+        ? `Redis memory usage is at ${info.usagePercent}%, exceeding the ${MEMORY_ALERT_THRESHOLD_PERCENT}% threshold. OOM risk is elevated.`
+        : null;
+
+      return {
+        ...info,
+        isAboveThreshold,
+        alert,
+        checkedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      return this.unavailableStats((err as Error).message);
+    }
   }
 
   /**
    * Runs on a fixed interval to log Redis memory statistics.
-   * Emits a warning when usage exceeds the configured threshold.
+   * Emits a warning when usage exceeds the configured threshold or when
+   * Redis is unavailable.
    */
   @Interval(LOG_INTERVAL_MS)
   async logMemoryStats(): Promise<void> {
     try {
       const stats = await this.getStats();
+
+      if (stats.unavailable) {
+        this.logger.warn('Redis memory stats unavailable — Redis may be down');
+        return;
+      }
 
       const logPayload = {
         usedMemory: stats.usedMemoryHuman,
@@ -73,9 +99,25 @@ export class RedisMemoryService {
         this.logger.log('Redis memory stats', logPayload);
       }
     } catch (err) {
-      this.logger.error(
-        `Failed to collect Redis memory stats: ${(err as Error).message}`,
-      );
+      this.logger.error(`Failed to collect Redis memory stats: ${(err as Error).message}`);
     }
+  }
+
+  // ── Private helpers ────────────────────────────────────────────────────────
+
+  private unavailableStats(reason: string): RedisMemoryStats {
+    return {
+      usedMemoryBytes: 0,
+      maxMemoryBytes: 0,
+      usedMemoryHuman: 'N/A',
+      maxMemoryHuman: 'N/A',
+      usedMemoryRssBytes: 0,
+      memFragmentationRatio: 0,
+      usagePercent: null,
+      isAboveThreshold: false,
+      alert: `Redis unavailable: ${reason}`,
+      checkedAt: new Date().toISOString(),
+      unavailable: true,
+    };
   }
 }

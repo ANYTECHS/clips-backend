@@ -1,5 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { NftMintService } from './nft-mint.service';
+import { IpfsUploadService } from '../nft/ipfs-upload.service';
+import { ConfigService } from '../config/config.service';
 
 // ── Mock @stellar/stellar-sdk at module level so Contract() never validates ──
 // Shared mock functions so tests can control return values directly.
@@ -71,12 +73,35 @@ describe('NftMintService uploadMetadataToIPFS', () => {
       update: jest.fn(),
     },
   };
+});
 
-  const stellarMock = {
-    networkPassphrase: 'Test SDF Network ; September 2015',
-    rpcUrl: 'https://soroban-testnet.stellar.org',
-    network: 'testnet',
-    validateAddress: jest.fn().mockReturnValue({ valid: true }),
+import StellarSdk from '@stellar/stellar-sdk';
+
+const baseClip = {
+  id: 5,
+  title: 'Amazing Clip',
+  caption: 'A test clip',
+  clipUrl: 'https://cdn.example.com/video.mp4',
+  thumbnail: 'https://cdn.example.com/thumb.jpg',
+  duration: 27,
+  viralityScore: 88,
+  createdAt: new Date('2026-03-01T00:00:00.000Z'),
+  postStatus: { tiktok: true },
+  nftStatus: null,
+  metadataUri: null,
+  royaltyBps: null,
+  mintAddress: null,
+};
+
+  const configMock = {
+    creatorRoyaltyBps: 1000,
+    platformRoyaltyBps: 100,
+    platformWallet: 'GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6',
+    sorobanNftContractId: '',
+  } as ConfigService;
+
+  const ipfsUploadMock = {
+    uploadMetadata: jest.fn(),
   };
 
   const metricsMock = { incrementNftMints: jest.fn() };
@@ -99,21 +124,12 @@ describe('NftMintService uploadMetadataToIPFS', () => {
 
   it('throws NotFoundException when clip does not exist', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(null);
-
-    await expect(service.uploadMetadataToIPFS(101)).rejects.toBeInstanceOf(
-      NotFoundException,
-    );
+    await expect(service.uploadMetadataToIPFS(101)).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('throws BadRequestException when clipUrl is missing', async () => {
-    prismaMock.clip.findUnique.mockResolvedValue({
-      id: 2,
-      clipUrl: '',
-    });
-
-    await expect(service.uploadMetadataToIPFS(2)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    prismaMock.clip.findUnique.mockResolvedValue({ id: 2, clipUrl: '' });
+    await expect(service.uploadMetadataToIPFS(2)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('uploads metadata, persists metadataUri, and returns cid', async () => {
@@ -129,16 +145,13 @@ describe('NftMintService uploadMetadataToIPFS', () => {
       postStatus: { tiktok: true },
     });
 
-    const uploadSpy = jest
-      .spyOn(service as any, 'uploadMetadataToIpfs')
-      .mockResolvedValue('ipfs://bafyTestCid123');
-
+    ipfsUploadMock.uploadMetadata.mockResolvedValue('ipfs://bafyTestCid123');
     prismaMock.clip.update.mockResolvedValue({});
 
     const result = await service.uploadMetadataToIPFS(5);
 
-    expect(uploadSpy).toHaveBeenCalledTimes(1);
-    const [metadata, clipId] = uploadSpy.mock.calls[0];
+    expect(ipfsUploadMock.uploadMetadata).toHaveBeenCalledTimes(1);
+    const [metadata, clipId] = ipfsUploadMock.uploadMetadata.mock.calls[0];
 
     expect(clipId).toBe(5);
     expect(metadata as any).toMatchObject({
@@ -153,17 +166,168 @@ describe('NftMintService uploadMetadataToIPFS', () => {
         expect.objectContaining({ trait_type: 'royaltyPercent', value: 10 }),
       ]),
     );
-
     expect(prismaMock.clip.update).toHaveBeenCalledWith({
       where: { id: 5 },
       data: { metadataUri: 'ipfs://bafyTestCid123' },
     });
+    expect(result).toEqual({ clipId: 5, cid: 'bafyTestCid123', metadataUri: 'ipfs://bafyTestCid123' });
+  });
+});
 
-    expect(result).toEqual({
+// ─── prepareMintTx ──────────────────────────────────────────────────────────
+
+describe('NftMintService.prepareMintTx', () => {
+  let service: NftMintService;
+  beforeEach(() => { service = makeService(); });
+
+  it('throws BadRequestException for invalid wallet address', async () => {
+    stellarMock.validateAddress.mockReturnValueOnce({ valid: false, message: 'bad address' });
+    await expect(service.prepareMintTx(5, 'invalid')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('throws NotFoundException when clip does not exist', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue(null);
+    await expect(service.prepareMintTx(99, VALID_WALLET)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('throws BadRequestException when clip is already minted', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, nftStatus: 'minted' });
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('throws BadRequestException when clip is in minting state', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, nftStatus: 'minting' });
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('throws BadRequestException when clipUrl is missing', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, clipUrl: null });
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('returns xdr and metadata when clip is ready', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, metadataUri: 'ipfs://abc123' });
+    prismaMock.clip.update.mockResolvedValue({});
+
+    // Mock rpc.Server to return a fake account
+    const fakeAccount = { accountId: () => VALID_WALLET, sequenceNumber: () => '0', incrementSequenceNumber: jest.fn() };
+    (StellarSdk.rpc.Server as jest.Mock).mockImplementation(() => ({
+      getAccount: jest.fn().mockResolvedValue(fakeAccount),
+    }));
+    circuitBreakerMock.execute.mockImplementation((_config, fn) => fn());
+
+    const result = await service.prepareMintTx(5, VALID_WALLET);
+
+    expect(result).toMatchObject({
+      xdr: 'xdr-string',
       clipId: 5,
-      cid: 'bafyTestCid123',
-      metadataUri: 'ipfs://bafyTestCid123',
+      tokenId: 5,
+      metadataUri: 'ipfs://abc123',
+      to: VALID_WALLET,
     });
+    expect(prismaMock.clip.update).toHaveBeenCalledWith({
+      where: { id: 5 },
+      data: { nftStatus: 'minting' },
+    });
+  });
+
+  it('sets nftStatus to failed and rethrows on unexpected error', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, metadataUri: 'ipfs://abc' });
+    prismaMock.clip.update.mockResolvedValue({});
+    circuitBreakerMock.execute.mockRejectedValue(new Error('RPC error'));
+
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prismaMock.clip.update).toHaveBeenCalledWith({
+      where: { id: 5 },
+      data: { nftStatus: 'failed' },
+    });
+    expect(metricsMock.incrementNftMints).toHaveBeenCalledWith('failure');
+  });
+});
+
+// ─── confirmMint ─────────────────────────────────────────────────────────────
+
+describe('NftMintService.confirmMint', () => {
+  let service: NftMintService;
+  beforeEach(() => { service = makeService(); });
+
+  it('updates clip to minted status and returns success', async () => {
+    prismaMock.clip.update.mockResolvedValue({
+      id: 5,
+      mintAddress: 'CONTRACT_ID',
+      nftStatus: 'minted',
+    });
+
+    const result = await service.confirmMint(5, 'CONTRACT_ID');
+
+    expect(prismaMock.clip.update).toHaveBeenCalledWith({
+      where: { id: 5 },
+      data: { nftStatus: 'minted', mintAddress: 'CONTRACT_ID', mintedAt: expect.any(Date) },
+    });
+    expect(result).toEqual({
+      success: true,
+      clip: { id: 5, mintAddress: 'CONTRACT_ID', nftStatus: 'minted' },
+    });
+    expect(metricsMock.incrementNftMints).toHaveBeenCalledWith('success');
+  });
+
+  it('throws BadRequestException and increments failure when prisma update fails', async () => {
+    prismaMock.clip.update.mockRejectedValue(new Error('DB error'));
+    await expect(service.confirmMint(5, 'CONTRACT_ID')).rejects.toBeInstanceOf(BadRequestException);
+    expect(metricsMock.incrementNftMints).toHaveBeenCalledWith('failure');
+  });
+});
+
+// ─── verifyNFTOwnership ──────────────────────────────────────────────────────
+
+describe('NftMintService.verifyNFTOwnership', () => {
+  let service: NftMintService;
+  beforeEach(() => {
+    service = makeService();
+    (StellarSdk.rpc.Server as jest.Mock).mockImplementation(() => ({
+      simulateTransaction: jest.fn(),
+    }));
+  });
+
+  it('returns owned:false with error when circuit breaker throws', async () => {
+    circuitBreakerMock.execute.mockRejectedValue(new Error('Network error'));
+    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
+    expect(result.owned).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+
+  it('returns owned:false when simulation returns an error field', async () => {
+    circuitBreakerMock.execute.mockResolvedValue({ error: 'contract error' });
+    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
+    expect(result.owned).toBe(false);
+    expect(result.error).toContain('Simulation failed');
+  });
+
+  it('returns owned:false when simulation returns no results', async () => {
+    circuitBreakerMock.execute.mockResolvedValue({ results: [] });
+    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
+    expect(result.owned).toBe(false);
+  });
+
+  it('returns owned:true when contract returns matching wallet address', async () => {
+    circuitBreakerMock.execute.mockResolvedValue({
+      results: [{ xdr: 'fakeXdr' }],
+    });
+    (StellarSdk.scValToNative as jest.Mock).mockReturnValue(VALID_WALLET);
+
+    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
+    expect(result.owned).toBe(true);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('returns owned:false when contract returns different wallet address', async () => {
+    circuitBreakerMock.execute.mockResolvedValue({
+      results: [{ xdr: 'fakeXdr' }],
+    });
+    (StellarSdk.scValToNative as jest.Mock).mockReturnValue('GDIFFERENTADDRESS');
+
+    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
+    expect(result.owned).toBe(false);
   });
 });
 

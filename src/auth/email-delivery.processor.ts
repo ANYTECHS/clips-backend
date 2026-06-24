@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
@@ -9,6 +9,7 @@ import {
   EmailDeliveryJobData,
 } from './email-delivery.queue';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 /**
  * BullMQ processor for email delivery jobs.
@@ -19,18 +20,23 @@ import { getBullMQWorkerConfig } from '../config/bullmq.config';
 @Processor(EMAIL_DELIVERY_QUEUE, {
   concurrency: getBullMQWorkerConfig(new ConfigService()).emailDeliveryConcurrency,
 })
-export class EmailDeliveryProcessor extends WorkerHost {
+export class EmailDeliveryProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(EmailDeliveryProcessor.name);
 
   constructor(
     private readonly mailService: MailService,
     private readonly metricsService: MetricsService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
-    const config = getBullMQWorkerConfig(configService);
+    const config = getBullMQWorkerConfig(new ConfigService());
     this.logger.log(
       `Email delivery worker initialized with concurrency: ${config.emailDeliveryConcurrency}`,
     );
+  }
+
+  onModuleInit(): void {
+    this.shutdownService.register(this.worker);
   }
 
   async process(job: Job<EmailDeliveryJobData>): Promise<void> {

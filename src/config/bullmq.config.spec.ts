@@ -2,7 +2,10 @@ import { ConfigService } from '@nestjs/config';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
+  getBullMQConnectionConfig,
+  validateConnectionConfig,
   BullMQWorkerConfig,
+  BullMQConnectionConfig,
 } from './bullmq.config';
 
 describe('BullMQ Configuration', () => {
@@ -59,14 +62,14 @@ describe('BullMQ Configuration', () => {
       );
     });
 
-    it('should reject clip generation concurrency > 20', () => {
+    it('should reject clip generation concurrency > 200', () => {
       const config: BullMQWorkerConfig = {
-        clipGenerationConcurrency: 25,
+        clipGenerationConcurrency: 250,
         emailDeliveryConcurrency: 5,
       };
 
       expect(() => validateWorkerConfig(config)).toThrow(
-        /BULLMQ_CLIP_GENERATION_CONCURRENCY should not exceed 20/,
+        /BULLMQ_CLIP_GENERATION_CONCURRENCY should not exceed 200/,
       );
     });
 
@@ -100,7 +103,7 @@ describe('BullMQ Configuration', () => {
       expect(() => validateWorkerConfig(minConfig)).not.toThrow();
 
       const maxConfig: BullMQWorkerConfig = {
-        clipGenerationConcurrency: 20,
+        clipGenerationConcurrency: 200,
         emailDeliveryConcurrency: 50,
       };
       expect(() => validateWorkerConfig(maxConfig)).not.toThrow();
@@ -117,6 +120,87 @@ describe('BullMQ Configuration', () => {
       );
       expect(() => validateWorkerConfig(config)).toThrow(
         /BULLMQ_EMAIL_DELIVERY_CONCURRENCY should not exceed 50/,
+      );
+    });
+  });
+});
+
+describe('BullMQ Connection Configuration', () => {
+  describe('getBullMQConnectionConfig', () => {
+    it('should return defaults when env vars are not set', () => {
+      const configService = new ConfigService();
+      const config = getBullMQConnectionConfig(configService);
+
+      expect(config.redisHost).toBe('localhost');
+      expect(config.redisPort).toBe(6379);
+    });
+
+    it('should parse env vars correctly', () => {
+      const configService = new ConfigService({
+        REDIS_HOST: 'redis.prod.internal',
+        REDIS_PORT: '6380',
+      });
+      const config = getBullMQConnectionConfig(configService);
+
+      expect(config.redisHost).toBe('redis.prod.internal');
+      expect(config.redisPort).toBe(6380);
+    });
+  });
+
+  describe('validateConnectionConfig', () => {
+    it('should accept valid configuration', () => {
+      const config: BullMQConnectionConfig = { redisHost: 'localhost', redisPort: 6379 };
+      expect(() => validateConnectionConfig(config)).not.toThrow();
+    });
+
+    it('should reject empty REDIS_HOST', () => {
+      const config: BullMQConnectionConfig = { redisHost: '', redisPort: 6379 };
+      expect(() => validateConnectionConfig(config)).toThrow(
+        /REDIS_HOST must be a non-empty string/,
+      );
+    });
+
+    it('should reject whitespace-only REDIS_HOST', () => {
+      const config: BullMQConnectionConfig = { redisHost: '   ', redisPort: 6379 };
+      expect(() => validateConnectionConfig(config)).toThrow(
+        /REDIS_HOST must be a non-empty string/,
+      );
+    });
+
+    it('should reject REDIS_PORT of 0', () => {
+      const config: BullMQConnectionConfig = { redisHost: 'localhost', redisPort: 0 };
+      expect(() => validateConnectionConfig(config)).toThrow(
+        /REDIS_PORT must be a valid port number/,
+      );
+    });
+
+    it('should reject REDIS_PORT > 65535', () => {
+      const config: BullMQConnectionConfig = { redisHost: 'localhost', redisPort: 70000 };
+      expect(() => validateConnectionConfig(config)).toThrow(
+        /REDIS_PORT must be a valid port number/,
+      );
+    });
+
+    it('should reject NaN REDIS_PORT', () => {
+      const config: BullMQConnectionConfig = { redisHost: 'localhost', redisPort: NaN };
+      expect(() => validateConnectionConfig(config)).toThrow(
+        /REDIS_PORT must be a valid port number/,
+      );
+    });
+
+    it('should accept boundary port values', () => {
+      expect(() =>
+        validateConnectionConfig({ redisHost: 'localhost', redisPort: 1 }),
+      ).not.toThrow();
+      expect(() =>
+        validateConnectionConfig({ redisHost: 'localhost', redisPort: 65535 }),
+      ).not.toThrow();
+    });
+
+    it('should collect multiple errors', () => {
+      const config: BullMQConnectionConfig = { redisHost: '', redisPort: 0 };
+      expect(() => validateConnectionConfig(config)).toThrow(
+        /Invalid BullMQ connection configuration/,
       );
     });
   });

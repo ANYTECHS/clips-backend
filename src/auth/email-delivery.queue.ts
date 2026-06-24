@@ -7,7 +7,7 @@ export const EMAIL_DELIVERY_JOB = 'deliver-email';
  */
 export const EMAIL_DELIVERY_QUEUE_PRIORITY = 5;
 
-export type EmailTemplate = 'verification' | 'password-reset' | 'magic-link';
+export type EmailTemplate = 'verification' | 'password-reset' | 'magic-link' | 'queue-alert';
 
 export interface EmailDeliveryJobData {
   to: string;

@@ -12,7 +12,7 @@ import {
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { EarningsService } from './earnings.service';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { Currency } from './earnings.types';
 
 interface RequestWithUser extends Request {
@@ -23,6 +23,14 @@ interface RequestWithUser extends Request {
 @Controller('earnings')
 export class EarningsController {
   constructor(private readonly earningsService: EarningsService) {}
+
+  @Get('metrics')
+  async getDashboardMetrics(
+    @Req() req: RequestWithUser,
+    @Query('currency') currency: Currency = Currency.USD,
+  ) {
+    return this.earningsService.getDashboardMetrics(req.user.userId, currency);
+  }
 
   @Get('export')
   async exportEarnings(
@@ -89,4 +97,12 @@ export class EarningsController {
   async getEarningsByPlatform(@Req() req: RequestWithUser) {
     return this.earningsService.getEarningsByPlatform(req.user.userId);
   }
+  @Get('summary')
+  async getEarningsSummary(
+    @Req() req: RequestWithUser,
+    @Query('currency') currency: Currency = Currency.USD,
+  ) {
+    return this.earningsService.getEarningsSummary(req.user.userId, currency);
+  }
+
 }

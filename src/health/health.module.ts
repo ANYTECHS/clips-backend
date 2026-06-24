@@ -7,8 +7,6 @@ import { HealthController } from './health.controller';
 @Module({
   imports: [
     RedisModule,
-    // ScheduleModule powers the @Interval() decorator on RedisMemoryService.
-    // forRoot() is idempotent — safe to call in multiple modules.
     ScheduleModule.forRoot(),
   ],
   controllers: [HealthController],

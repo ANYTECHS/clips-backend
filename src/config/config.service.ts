@@ -34,7 +34,16 @@ export class ConfigService {
 
   readonly sorobanNftContractId = process.env.SOROBAN_NFT_CONTRACT_ID || '';
 
-  readonly platformWallet = process.env.PLATFORM_WALLET || '';
+  readonly platformWallet =
+    process.env.PLATFORM_WALLET_ADDRESS ?? process.env.PLATFORM_WALLET ?? '';
+
+  readonly ipfsProvider = process.env.IPFS_PROVIDER ?? '';
+
+  readonly pinataJwt = process.env.PINATA_JWT ?? process.env.IPFS_JWT ?? '';
+
+  readonly ipfsApiUrl = process.env.IPFS_API_URL ?? '';
+
+  readonly nftStorageApiKey = process.env.NFT_STORAGE_API_KEY ?? '';
 
   readonly tiktokWebhookSecret = process.env.TIKTOK_WEBHOOK_SECRET || '';
 
