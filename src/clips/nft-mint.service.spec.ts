@@ -35,6 +35,10 @@ describe('NftMintService uploadMetadataToIPFS', () => {
     uploadMetadata: jest.fn(),
   };
 
+  const ownershipMock = {
+    verifyNFTOwnership: jest.fn(),
+  };
+
   let service: NftMintService;
 
   beforeEach(() => {
@@ -46,6 +50,7 @@ describe('NftMintService uploadMetadataToIPFS', () => {
       circuitBreakerMock as any,
       configMock as any,
       ipfsUploadMock as any,
+      ownershipMock as any,
     );
   });
 

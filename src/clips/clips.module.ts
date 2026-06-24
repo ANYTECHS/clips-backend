@@ -23,6 +23,7 @@ import { UserPlatformModule } from '../user-platform/user-platform.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { ConfigModule } from '../config/config.module';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
+import { NftOwnershipService } from '../nft/nft-ownership.service';
 
 @Module({
   imports: [
@@ -68,6 +69,7 @@ import { IpfsUploadService } from '../nft/ipfs-upload.service';
     ClipsGateway,
     NftMintService,
     IpfsUploadService,
+    NftOwnershipService,
     AyrshareService,
     ClipPublishService,
     QueueRateLimitGuard,
@@ -78,6 +80,7 @@ import { IpfsUploadService } from '../nft/ipfs-upload.service';
     ClipsGateway,
     NftMintService,
     IpfsUploadService,
+    NftOwnershipService,
     ClipPublishService,
   ],
 })

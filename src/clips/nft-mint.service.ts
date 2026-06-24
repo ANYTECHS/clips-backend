@@ -13,6 +13,7 @@ import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-b
 import { ConfigService } from '../config/config.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { NftMetadata, NftMetadataAttribute } from '../nft/nft-metadata.types';
+import { NftOwnershipService } from '../nft/nft-ownership.service';
 
 interface NftAttribute extends NftMetadataAttribute {}
 
@@ -40,6 +41,7 @@ export class NftMintService {
     private readonly circuitBreakerService: CircuitBreakerService,
     private readonly config: ConfigService,
     private readonly ipfsUploadService: IpfsUploadService,
+    private readonly nftOwnershipService: NftOwnershipService,
   ) {}
 
   private get CONTRACT_ID(): string {
@@ -370,91 +372,14 @@ export class NftMintService {
     owned: boolean;
     error?: string;
   }> {
-    this.logger.log(
-      `Verifying ownership: tokenId=${tokenId}, wallet=${walletAddress}`,
+    const result = await this.nftOwnershipService.verifyNFTOwnership(
+      tokenId,
+      walletAddress,
     );
 
-    try {
-      const rpcUrl = this.stellarService.rpcUrl;
-      const server = new StellarSdk.rpc.Server(rpcUrl);
-      const contract = new StellarSdk.Contract(this.CONTRACT_ID);
-
-      // Prepare simulation
-      const op = contract.call(
-        'owner_of',
-        StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u128' }),
-      );
-
-      // Create a dummy transaction for simulation (requires a valid source account format, but not necessarily funded for simulation only)
-      // Using a known neutral address or the walletAddress itself
-      const dummySource = walletAddress;
-      const sourceAccount = new StellarSdk.Account(dummySource, '0');
-
-      const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: '100',
-        networkPassphrase: this.stellarService.networkPassphrase,
-      })
-        .addOperation(op)
-        .setTimeout(StellarSdk.TimeoutInfinite)
-        .build();
-
-      // Simulate transaction with circuit breaker protection
-      const simulation = await this.circuitBreakerService.execute(
-        this.sorobanCircuitBreakerConfig,
-        async () => server.simulateTransaction(tx),
-      );
-
-      if (simulation.error) {
-        return {
-          owned: false,
-          error: `Simulation failed: ${simulation.error}`,
-        };
-      }
-
-      if (!simulation.results || simulation.results.length === 0) {
-        return {
-          owned: false,
-          error: 'No simulation results returned',
-        };
-      }
-
-      const result = simulation.results[0];
-      if (!result.xdr) {
-        return {
-          owned: false,
-          error: 'Missing result XDR',
-        };
-      }
-
-      // Parse the return value
-      const returnValue = StellarSdk.xdr.ScVal.fromXDR(result.xdr, 'base64');
-      const ownerAddress = StellarSdk.scValToNative(returnValue);
-
-      const isOwner = ownerAddress === walletAddress;
-
-      return {
-        owned: isOwner,
-        error: isOwner ? undefined : 'Caller does not own the NFT on-chain',
-      };
-    } catch (error) {
-      // Handle ServiceUnavailableException from circuit breaker
-      if (error.name === 'ServiceUnavailableException') {
-        this.logger.error(`Soroban service unavailable during ownership verification`);
-        return {
-          owned: false,
-          error: 'Soroban service temporarily unavailable. Please try again later.',
-        };
-      }
-
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Ownership verification failed';
-      this.logger.error(`Ownership verification failed: ${message}`);
-      return {
-        owned: false,
-        error: message,
-      };
-    }
+    return {
+      owned: result.owned,
+      error: result.error,
+    };
   }
 }
