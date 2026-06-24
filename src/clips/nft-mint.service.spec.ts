@@ -134,7 +134,7 @@ const baseClip = {
     });
     expect(result).toEqual({ clipId: 5, cid: 'bafyTestCid123', metadataUri: 'ipfs://bafyTestCid123' });
   });
-});
+
 
 // ─── prepareMintTx ──────────────────────────────────────────────────────────
 
