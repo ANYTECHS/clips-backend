@@ -371,15 +371,26 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
    * Upload clip buffer to Cloudinary with 2 retries (3 total attempts).
    * Returns an object with `error` set on failure instead of throwing.
    */
-  private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
+private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const buffer = await this.cloudinaryService.readFileToBuffer(filePath);
-      return await this.cloudinaryService.uploadVideoFromBuffer(buffer, clipId, {}, 2);
+      const result = await this.cloudinaryService.uploadVideoFromBuffer(buffer, clipId, {}, 2);
+      if (!result.error) {
+        return result;
+      }
+      this.logger.warn(`Cloudinary upload attempt ${attempt} failed for ${clipId}: ${result.error}`);
     } catch (error) {
-      this.logger.error(`Upload to Cloudinary failed for ${clipId}: ${error.message}`);
-      return { error: error.message, secure_url: '', public_id: clipId };
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Upload to Cloudinary attempt ${attempt} failed for ${clipId}: ${msg}`);
+    }
+    if (attempt < maxAttempts) {
+      await new Promise(res => setTimeout(res, 1000 * attempt));
     }
   }
+  return { error: 'Upload failed after retries', secure_url: '', public_id: clipId };
+}
 
   /**
    * Handle errors from the main clip processing try/catch.

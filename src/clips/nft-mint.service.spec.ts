@@ -68,6 +68,24 @@ const baseClip = {
     buildRoyaltyMap: jest.fn(),
   };
 
+  const prismaMock = {
+    clip: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    // add other prisma models if needed
+  };
+  const stellarMock = {
+    validateAddress: jest.fn().mockReturnValue({ valid: true, message: '' }),
+    // mock other stellar SDK methods as needed
+  };
+  const metricsMock = {
+    incrementNftMints: jest.fn(),
+  };
+  const circuitBreakerMock = {
+    execute: jest.fn().mockImplementation((_config, fn) => fn()),
+  };
+  const VALID_WALLET = 'VALID_WALLET_ADDRESS';
   let service: NftMintService;
 
   beforeEach(() => {
@@ -83,6 +101,20 @@ const baseClip = {
       royaltyConfigMock as any,
     );
   });
+
+function makeService(): NftMintService {
+  return new NftMintService(
+    prismaMock as any,
+    stellarMock as any,
+    metricsMock as any,
+    circuitBreakerMock as any,
+    configMock,
+    ipfsUploadMock as unknown as IpfsUploadService,
+    nftOwnershipMock as any,
+    royaltyConfigMock as any,
+  );
+}
+
 
   it('throws NotFoundException when clip does not exist', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(null);
