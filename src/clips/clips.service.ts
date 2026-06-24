@@ -47,8 +47,8 @@ export interface PaginatedClips {
 
 export interface BulkUpdateResult {
   updatedCount: number;
-  updates: { selected?: boolean; postStatus?: unknown };
-  notFoundIds: string[];
+  updates: { selected?: boolean; postStatus?: unknown; caption?: string; royaltyBps?: number };
+  notFoundIds: number[];
   allClipsProcessed: boolean;
 }
 
@@ -237,9 +237,11 @@ export class ClipsService {
     userId: number,
     dto: BulkUpdateClipsDto,
   ): Promise<BulkUpdateResult> {
-    if (dto.selected === undefined && dto.postStatus === undefined && dto.royaltyBps === undefined && dto.caption === undefined) {
+    const { updates } = dto;
+    
+    if (!updates || (updates.selected === undefined && updates.postStatus === undefined && updates.royaltyBps === undefined && updates.caption === undefined)) {
       throw new BadRequestException(
-        'At least one of selected, postStatus, royaltyBps, or caption must be provided',
+        'At least one of selected, postStatus, royaltyBps, or caption must be provided in updates',
       );
     }
 
@@ -247,7 +249,7 @@ export class ClipsService {
     // Performance: Use select to fetch only id for ownership validation (optimization #326)
     let clips = await this.prisma.clip.findMany({
       where: {
-        id: { in: dto.clipIds.map((id) => Number(id)) },
+        id: { in: dto.clipIds },
         video: { userId },
       },
       select: { id: true },
@@ -262,7 +264,7 @@ export class ClipsService {
         .map((clip) => ({ ...clip, video: { userId } }));
     }
 
-    const foundIds = clips.map((c) => String(c.id));
+    const foundIds = clips.map((c) => Number(c.id));
     const notFoundIds = dto.clipIds.filter((id) => !foundIds.includes(id));
 
     if (clips.length === 0 && dto.clipIds.length > 0) {
@@ -275,10 +277,10 @@ export class ClipsService {
     const patch: any = {
       updatedAt: new Date(),
     };
-    if (dto.selected !== undefined) patch.selected = dto.selected;
-    if (dto.postStatus !== undefined) patch.postStatus = dto.postStatus;
-    if (dto.caption !== undefined) patch.caption = dto.caption;
-    if (dto.royaltyBps !== undefined) patch.royaltyBps = dto.royaltyBps;
+    if (updates.selected !== undefined) patch.selected = updates.selected;
+    if (updates.postStatus !== undefined) patch.postStatus = updates.postStatus;
+    if (updates.caption !== undefined) patch.caption = updates.caption;
+    if (updates.royaltyBps !== undefined) patch.royaltyBps = updates.royaltyBps;
 
     if (this.seededClips.size > 0) {
       clips.forEach((clip) => {
@@ -329,9 +331,10 @@ export class ClipsService {
     return {
       updatedCount: clips.length,
       updates: {
-        ...(dto.selected !== undefined && { selected: dto.selected }),
-        ...(dto.postStatus !== undefined && { postStatus: dto.postStatus }),
-        ...(dto.royaltyBps !== undefined && { royaltyBps: dto.royaltyBps }),
+        ...(updates.selected !== undefined && { selected: updates.selected }),
+        ...(updates.postStatus !== undefined && { postStatus: updates.postStatus }),
+        ...(updates.royaltyBps !== undefined && { royaltyBps: updates.royaltyBps }),
+        ...(updates.caption !== undefined && { caption: updates.caption }),
       },
       notFoundIds,
       allClipsProcessed,
