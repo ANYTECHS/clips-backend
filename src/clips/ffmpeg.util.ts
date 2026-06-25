@@ -110,8 +110,8 @@ export function cutClip(options: CutClipOptions): Promise<string> {
   }
 
   // Fixed-precision strings — avoids floating-point noise in FFmpeg args
-  const startSeconds = parseFloat(start.toFixed(3));
-  const durationSeconds = parseFloat((end - start).toFixed(3));
+  const startSeconds = start.toFixed(3);
+  const durationSeconds = (end - start).toFixed(3);
 
   logger.log(
     `Cutting clip: input=${inputPath} start=${startSeconds}s duration=${durationSeconds}s output=${outputPath}`,

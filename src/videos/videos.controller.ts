@@ -1,4 +1,4 @@
-import { Controller, Post, Param, UseGuards, Get } from '@nestjs/common';
+import { Controller, Post, Param, UseGuards, Get, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { ClipsService } from '../clips/clips.service';
 import { LoginGuard } from '../auth/guards/login.guard.js';
@@ -24,7 +24,8 @@ export class VideosController {
   @ApiResponse({ status: 200, description: 'Video processing cancelled' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Video not found' })
-  async cancel(@Param('id') id: string) {
-    return this.clipsService.cancelVideo(id);
+  async cancel(@Param('id') id: string, @Req() req: any) {
+    const userId = Number(req.user?.id ?? 0);
+    return this.clipsService.cancelVideo(id, userId);
   }
 }
