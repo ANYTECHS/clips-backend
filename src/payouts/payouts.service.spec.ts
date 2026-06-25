@@ -119,6 +119,12 @@ describe('PayoutsService', () => {
           provide: getQueueToken(PAYOUT_RETRY_QUEUE),
           useValue: mockPayoutRetryQueue,
         },
+        {
+          provide: EarningsService,
+          useValue: {
+            processCreatorEarnings: jest.fn(),
+          },
+        },
       ],
     }).compile();
 

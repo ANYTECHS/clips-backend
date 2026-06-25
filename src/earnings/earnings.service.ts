@@ -45,7 +45,46 @@ export class EarningsService {
     limit = 20,
     targetCurrency: Currency = Currency.USD,
   ) {
-    return this.aggregationService.getEarningsDashboard(userId, page, limit, targetCurrency);
+    // Total earnings and breakdown
+    const totalEarnings = await this.aggregationService.getUserTotalEarnings(userId, targetCurrency);
+
+    // Pending payouts (status pending)
+    const pendingPayouts = await this.prisma.payout.findMany({
+      where: { userId, status: 'pending' },
+      select: { amount: true, currency: true },
+    });
+    const pendingPayout = pendingPayouts.reduce((sum, p) =>
+      sum + this.currencyConversion.convert(p.amount, (p.currency as Currency) || Currency.USD, targetCurrency),
+      0,
+    );
+
+    // Paid payouts (completed or processing)
+    const paidPayouts = await this.prisma.payout.findMany({
+      where: { userId, status: { in: ['completed', 'processing'] } },
+      select: { amount: true, currency: true },
+    });
+    const paidOut = paidPayouts.reduce((sum, p) =>
+      sum + this.currencyConversion.convert(p.amount, (p.currency as Currency) || Currency.USD, targetCurrency),
+      0,
+    );
+
+    // Earnings history (paginated)
+    const skip = (page - 1) * limit;
+    const earnings = await this.prisma.earning.findMany({
+      where: { clip: { video: { userId } }, deletedAt: null },
+      orderBy: { date: 'desc' },
+      skip,
+      take: limit,
+    });
+
+    return {
+      totalEarned: totalEarnings.total,
+      currency: targetCurrency,
+      pendingPayout,
+      paidOut,
+      breakdown: totalEarnings.breakdown,
+      history: earnings,
+    };
   }
 
   async exportEarningsCsv(

@@ -8,6 +8,7 @@ import { CurrencyConversionService } from './currency-conversion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
+import { TaxReportExportService } from './tax-report-export.service';
 
 describe('EarningsService - getEarningsByPlatform', () => {
   let service: EarningsService;
@@ -42,6 +43,12 @@ describe('EarningsService - getEarningsByPlatform', () => {
           useValue: {
             earningsCacheTtlSeconds: 3600,
             leaderboardEnabled: false,
+          },
+        },
+        {
+          provide: TaxReportExportService,
+          useValue: {
+            generateTaxReport: jest.fn(),
           },
         },
       ],

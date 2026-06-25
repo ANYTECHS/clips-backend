@@ -5,6 +5,7 @@ import { EarningsExportService } from './earnings-export.service';
 import { TaxReportExportService } from './tax-report-export.service';
 import { EarningsMetricsService } from './earnings-metrics.service';
 import { CurrencyConversionService } from './currency-conversion.service';
+import { TaxReportExportService } from './tax-report-export.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
@@ -65,6 +66,12 @@ describe('EarningsService', () => {
         {
           provide: ConfigService,
           useValue: mockConfigService,
+        },
+        {
+          provide: TaxReportExportService,
+          useValue: {
+            generateTaxReport: jest.fn(),
+          },
         },
       ],
     }).compile();

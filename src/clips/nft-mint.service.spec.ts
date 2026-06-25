@@ -114,6 +114,20 @@ describe('NftMintService.uploadMetadataToIPFS', () => {
     service = makeService();
   });
 
+function makeService(): NftMintService {
+  return new NftMintService(
+    prismaMock as any,
+    stellarMock as any,
+    metricsMock as any,
+    circuitBreakerMock as any,
+    configMock,
+    ipfsUploadMock as unknown as IpfsUploadService,
+    nftOwnershipMock as any,
+    royaltyConfigMock as any,
+  );
+}
+
+
   it('throws NotFoundException when clip does not exist', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(null);
     await expect(service.uploadMetadataToIPFS(101)).rejects.toBeInstanceOf(NotFoundException);
@@ -164,7 +178,7 @@ describe('NftMintService.uploadMetadataToIPFS', () => {
     });
     expect(result).toEqual({ clipId: 5, cid: 'bafyTestCid123', metadataUri: 'ipfs://bafyTestCid123' });
   });
-});
+
 
 // ─── prepareMintTx ──────────────────────────────────────────────────────────
 
@@ -325,6 +339,7 @@ describe('NftMintService.verifyNFTOwnership', () => {
     nftOwnershipMock.verifyNFTOwnership.mockResolvedValue({ isOwner: false });
     const result = await service.verifyNFTOwnership('5', VALID_WALLET);
     expect(result.owned).toBe(false);
+    expect(result.error).toBeUndefined();
   });
 
   it('returns owned:true when ownership verification succeeds', async () => {

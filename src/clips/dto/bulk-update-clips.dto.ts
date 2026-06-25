@@ -4,6 +4,8 @@ import {
   IsOptional,
   IsString,
   ArrayNotEmpty,
+  ValidateNested,
+  IsInt,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -12,17 +14,7 @@ import {
   CLIP_ROYALTY_BPS_MAX,
 } from '../../common/validators/decorators';
 
-export class BulkUpdateClipsDto {
-  @ApiProperty({
-    description: 'IDs of clips to update — must all belong to the requesting user',
-    example: ['clip-1', 'clip-2', 'clip-3'],
-    type: [String],
-  })
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsString({ each: true })
-  clipIds: string[];
-
+export class ClipUpdatesDto {
   @ApiPropertyOptional({
     description: 'Mark clips as curated/selected',
     example: true,
@@ -56,4 +48,25 @@ export class BulkUpdateClipsDto {
   @Type(() => Number)
   @IsValidRoyaltyBps({ max: CLIP_ROYALTY_BPS_MAX })
   royaltyBps?: number;
+}
+
+export class BulkUpdateClipsDto {
+  @ApiProperty({
+    description: 'IDs of clips to update — must all belong to the requesting user',
+    example: [1, 2, 3],
+    type: [Number],
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  clipIds: number[];
+
+  @ApiProperty({
+    description: 'Updates to apply to the specified clips',
+    type: () => ClipUpdatesDto,
+  })
+  @ValidateNested()
+  @Type(() => ClipUpdatesDto)
+  updates: ClipUpdatesDto;
 }

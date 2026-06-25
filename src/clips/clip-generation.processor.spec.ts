@@ -77,13 +77,22 @@ function makeProcessor() {
   jest.spyOn(emitter, 'emit');
   jest.spyOn(cloudinaryService, 'uploadVideoFromBuffer');
   jest.spyOn(cloudinaryService, 'deleteLocalFile');
+  const videoService = {
+    detectViralTimestamps: jest.fn().mockResolvedValue([]),
+  };
+  const shutdownService = {
+    register: jest.fn(),
+  };
+
   const processor = new ClipGenerationProcessor(
+    videoService as any,
     cloudinaryService as any,
     emitter,
     clipsGateway as any,
     clipsService as any,
     metricsService as any,
     prisma as any,
+    shutdownService as any,
   );
   return { processor, emitter, cloudinaryService, clipsService, prisma };
 }
