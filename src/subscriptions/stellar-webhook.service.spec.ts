@@ -4,6 +4,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { StellarPaymentService } from './stellar-payment.service';
+import { StellarService } from '../stellar/stellar.service';
 
 jest.mock('@stellar/stellar-sdk', () => require('../../test/mocks/stellar-sdk.mock'));
 
@@ -37,6 +39,15 @@ describe('StellarWebhookService', () => {
     get: jest.fn((key: string) => configValues[key]),
   };
 
+  const mockStellarPaymentService = {
+    processDetectedPayment: jest.fn().mockResolvedValue(true),
+  };
+
+  const mockStellarService = {
+    horizonUrl: 'https://horizon-testnet.stellar.org',
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
+  };
+
   beforeEach(async () => {
     jest.clearAllMocks();
     mockConfigService.get.mockImplementation((key: string) => configValues[key]);
@@ -46,6 +57,8 @@ describe('StellarWebhookService', () => {
         StellarWebhookService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarPaymentService, useValue: mockStellarPaymentService },
+        { provide: StellarService, useValue: mockStellarService },
       ],
     }).compile();
 

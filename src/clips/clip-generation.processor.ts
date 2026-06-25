@@ -44,6 +44,8 @@ export interface ClipGenerationJob {
   clipId?: number;
   /** Existing virality score to preserve during regeneration */
   existingViralityScore?: number;
+  /** Existing clip URL to replace/delete during regeneration */
+  existingClipUrl?: string;
 }
 
 export interface ClipProcessingResult {
@@ -159,6 +161,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
       // ── Step 3: upload ─────────────────────────────────────────────────
       await job.updateProgress({ percent: PROGRESS.UPLOAD, step: 'upload' });
+
+      // Clean up existing Cloudinary asset if we are regenerating
+      if (data.existingClipUrl) {
+        const oldPublicId = this.extractCloudinaryPublicId(data.existingClipUrl);
+        if (oldPublicId) {
+          try {
+            await this.cloudinaryService.deleteClip(oldPublicId);
+          } catch (e) {
+            this.logger.warn(`Failed to delete old Cloudinary asset ${oldPublicId}: ${e.message}`);
+          }
+        }
+      }
+
       const uploadResult = await this.uploadWithAbort(data.outputPath, clipId, controller);
 
       if (uploadResult.error) {
@@ -200,12 +215,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     const { videoId, inputPath, userId } = job.data;
     this.logger.log(`Processing uploaded video ${videoId} (job: ${job.id})`);
 
+    const { controller, timeout } = this.setupJobTimeout(String(videoId), String(job.id ?? ''));
+
     try {
       // ── Step 1: video_download ─────────────────────────────────────────
       await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
 
       // ── Step 2: ai_analysis — detect viral timestamps ──────────────────
       await job.updateProgress({ percent: PROGRESS.AI_ANALYSIS, step: 'ai_analysis' });
+
+      if (controller.signal.aborted) {
+        throw new Error('Aborted');
+      }
+
       const videoService = this.clipsService['videoService'] as VideoService;
       const moments = await videoService.detectViralTimestamps(Number(videoId));
       this.logger.log(`Detected ${moments.length} viral moments for video ${videoId}`);
@@ -214,6 +236,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       await this.safeDeleteLocalFile(inputPath);
       await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
 
+      this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
       return this.buildUploadProcessedClip(videoId, userId);
     } catch (error) {
       this.logger.error(
@@ -221,6 +244,12 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         error.stack,
       );
       await this.safeDeleteLocalFile(inputPath);
+      this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
+
+      if (controller.signal.aborted) {
+        const cancelled = this.clipsService._isVideoCancelled(String(videoId));
+        throw new UnrecoverableError(cancelled ? 'Cancelled by user' : 'Timeout');
+      }
       throw error;
     }
   }
@@ -251,6 +280,20 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     );
 
     void this.clipsService.refreshQueueDepth();
+
+    // Persist clip failure status
+    const { clipId } = job.data;
+    if (clipId) {
+      const isUploadError = error.message?.includes('Cloudinary') || error.message?.includes('upload');
+      const finalStatus = isUploadError ? 'upload_failed' : 'failed';
+      void this.clipsService.updateClip(clipId, {
+        status: finalStatus,
+        error: error.message,
+      }).catch((err) => {
+        this.logger.error(`Failed to update clip ${clipId} status on job failure: ${err.message}`);
+      });
+    }
+
     this.emitClipGenerationFailedEvent(job, error);
     void this.emitFailedWebSocketEvent(job, error);
   }
@@ -338,7 +381,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     await job.updateProgress({ percent: PROGRESS.FFMPEG_CUT, step: 'ffmpeg_cut' });
 
     const metadata = await getVideoMetadata(data.outputPath);
-    const actualDuration = Math.round(metadata.duration);
+    const actualDuration = parseFloat(metadata.duration.toFixed(3));
 
     const viralityScore =
       data.existingViralityScore ??
@@ -441,6 +484,7 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
         thumbnail: result.thumbnail,
         status: result.status,
         duration: result.duration,
+        caption: result.caption,
         error: result.error,
         localFilePath: result.localFilePath,
       });
@@ -500,14 +544,14 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       jobId: job.id,
       videoId: job.data.videoId,
       percent,
+      progress: percent,
+      stage: step,
       step,
-      ...(!isUploadJob && {
-        currentClip: {
-          id: clipId,
-          startTime: job.data.startTime,
-          endTime: job.data.endTime,
-          positionRatio: job.data.positionRatio,
-        },
+      currentClip: job.data.clipId ?? (isUploadJob ? undefined : {
+        id: clipId,
+        startTime: job.data.startTime,
+        endTime: job.data.endTime,
+        positionRatio: job.data.positionRatio,
       }),
     });
   }
@@ -640,5 +684,13 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  private extractCloudinaryPublicId(url: string): string | null {
+    if (!url || !url.includes('res.cloudinary.com')) return null;
+    const uploaded = url.split('/upload/')[1];
+    if (!uploaded) return null;
+    const sanitized = uploaded.replace(/^v\d+\//, '');
+    return sanitized.replace(/\.[^/.]+$/, '');
   }
 }

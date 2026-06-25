@@ -25,12 +25,10 @@ export class NftMintGuard implements CanActivate {
 
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
-      select: {
-        id: true,
-        nftStatus: true,
-        mintAddress: true,
-        postStatus: true,
-        clipUrl: true,
+      include: {
+        clipPosts: {
+          select: { status: true },
+        },
       },
     });
 
@@ -38,7 +36,7 @@ export class NftMintGuard implements CanActivate {
       throw new NotFoundException(`Clip with ID ${clipId} not found`);
     }
 
-    this.assertMintable(clip);
+    await this.assertMintable(clip);
     return true;
   }
 
@@ -61,12 +59,13 @@ export class NftMintGuard implements CanActivate {
     return null;
   }
 
-  private assertMintable(clip: {
+  private async assertMintable(clip: {
     nftStatus: string;
     mintAddress: string | null;
     postStatus: unknown;
     clipUrl: string | null;
-  }): void {
+    clipPosts: { status: string }[];
+  }): Promise<void> {
     if (clip.nftStatus === 'minting' || clip.nftStatus === 'minted') {
       throw new BadRequestException(
         'Clip is already being minted or has been minted',
@@ -77,10 +76,12 @@ export class NftMintGuard implements CanActivate {
       throw new BadRequestException('Clip has already been minted on-chain');
     }
 
-    if (clip.postStatus === 'posted') {
-      throw new BadRequestException(
-        'Posted clips cannot be minted as NFTs',
-      );
+    // Check if clip is posted (either via postStatus or any published clipPost)
+    const isPosted = clip.postStatus === 'posted' || 
+      clip.clipPosts.some(post => post.status === 'published');
+    
+    if (isPosted) {
+      throw new BadRequestException('Posted clips cannot be minted.');
     }
 
     if (!clip.clipUrl) {

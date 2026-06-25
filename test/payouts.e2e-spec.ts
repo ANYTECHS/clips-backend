@@ -8,6 +8,8 @@ import { StellarService } from '../src/stellar/stellar.service';
 import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
 import { PayoutReceiptService } from '../src/payouts/payout-receipt.service';
 import { FeeService } from '../src/payouts/fee.service';
+import { EarningsService } from '../src/earnings/earnings.service';
+import { PayoutApprovalService } from '../src/payouts/payout-approval.service';
 import { PAYOUT_RETRY_QUEUE } from '../src/payouts/payout-retry.queue';
 import * as StellarSdk from '@stellar/stellar-sdk';
 
@@ -35,6 +37,8 @@ const mockPrisma: any = {
 const mockStellarService = {
   horizonUrl: 'https://horizon-testnet.stellar.org',
   networkPassphrase: 'Test SDF Network ; September 2015',
+  getAccountBalance: jest.fn(),
+  validateAddress: jest.fn().mockReturnValue({ valid: true }),
 };
 
 const mockFeeService = {
@@ -66,7 +70,9 @@ describe('Payouts E2E', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: StellarService, useValue: mockStellarService },
         { provide: PayoutReceiptService, useValue: mockReceiptService },
+        { provide: EarningsService, useValue: {} },
         { provide: FeeService, useValue: mockFeeService },
+        { provide: PayoutApprovalService, useValue: { resolveInitialStatus: () => 'approved' } },
         { provide: PAYOUT_RETRY_QUEUE, useValue: mockQueue },
         // InjectQueue uses a Bull-specific token of the form `BullQueue_${queueName}`
         { provide: `BullQueue_${PAYOUT_RETRY_QUEUE}`, useValue: mockQueue },
@@ -148,6 +154,65 @@ describe('Payouts E2E', () => {
       .post('/payouts/request')
       .send({ amount: 50, currency: 'USD', method: 'stellar' })
       .expect(400);
+  });
+
+  it('POST /payouts/initiate-stellar prepares a pending Stellar payout transaction', async () => {
+    const destination = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+
+    mockPrisma.payout.findFirst
+      .mockResolvedValueOnce({
+        id: 101,
+        userId: USER_ID,
+        amount: 100,
+        currency: 'USD',
+        method: 'stellar',
+        status: 'approved',
+        wallet: { address: destination },
+        transactionId: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    mockStellarService.getAccountBalance.mockResolvedValue(200);
+    mockPrisma.payout.update.mockResolvedValue({
+      id: 101,
+      amount: 100,
+      status: 'pending',
+    });
+
+    jest.spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount').mockResolvedValue({
+      sequenceNumber: () => '1',
+      accountId: () => 'GPLATFORM',
+    } as any);
+    jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
+      publicKey: () => 'GPLATFORM',
+      sign: () => Buffer.from([]),
+    } as any);
+    jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
+    jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
+      return this;
+    });
+    jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
+      return this;
+    });
+    jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
+      return {
+        sign: () => {},
+        hash: () => Buffer.from('abcd', 'hex'),
+        toXDR: () => 'mock-stellar-xdr',
+      };
+    });
+
+    process.env.STELLAR_PLATFORM_SECRET = 'SOME_SECRET';
+    process.env.STELLAR_WALLET_ADDRESS = 'GPLATFORM';
+
+    const res = await request(app.getHttpServer())
+      .post('/payouts/initiate-stellar')
+      .send({ payoutId: 101, amount: 100 })
+      .expect(201);
+
+    expect(res.body.status).toBe('pending');
+    expect(res.body.stellarXdr).toBe('mock-stellar-xdr');
+    expect(res.body.transactionId).toBe('abcd');
   });
 });
 

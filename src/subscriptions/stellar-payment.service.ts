@@ -1,14 +1,14 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { Horizon, TransactionBuilder, Networks, Operation, Asset } from '@stellar/stellar-sdk';
+import { Horizon, Asset } from '@stellar/stellar-sdk';
 import { CreateStellarSubscriptionDto, StellarPaymentIntentDto } from './dto/create-stellar-subscription.dto';
 import { StellarService } from '../stellar/stellar.service';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
 
 @Injectable()
 export class StellarPaymentService {
-  private server: any;
+  private server: Horizon.Server;
   private readonly logger = new Logger(StellarPaymentService.name);
   private readonly PAYMENT_EXPIRY_MINUTES = 15;
 
@@ -25,9 +25,7 @@ export class StellarPaymentService {
     private readonly stellarService: StellarService,
     private readonly circuitBreakerService: CircuitBreakerService,
   ) {
-    this.server = new Horizon.Server(
-      this.configService.get<string>('STELLAR_HORIZON_URL') || 'https://horizon-testnet.stellar.org',
-    );
+    this.server = new Horizon.Server(this.stellarService.horizonUrl);
   }
 
   /**
@@ -50,7 +48,10 @@ export class StellarPaymentService {
     const memo = dto.memo || this.generatePaymentMemo(userId);
     
     // Create payment intent record
-    const destination = dto.destinationAddress ?? wallet.address;
+    const destination = dto.destinationAddress ?? this.configService.get<string>('STELLAR_WALLET_ADDRESS');
+    if (!destination) {
+      throw new BadRequestException('STELLAR_WALLET_ADDRESS not configured');
+    }
     const addressCheck = this.stellarService.validateAddress(destination);
     if (!addressCheck.valid) {
       throw new BadRequestException('Invalid Stellar address format');
@@ -88,7 +89,7 @@ export class StellarPaymentService {
       // Get the transaction from Stellar network with circuit breaker
       const transaction = await this.circuitBreakerService.execute(
         this.horizonCircuitBreakerConfig,
-        async () => this.server.transactionsTransaction(transactionHash),
+        async () => this.server.transactions().transaction(transactionHash).call(),
       );
 
       // Get the payment intent
@@ -100,17 +101,24 @@ export class StellarPaymentService {
         return false;
       }
 
+      // Fetch operations for the transaction
+      const operationsPage = await transaction.operations().call();
+      const operations = operationsPage.records;
+
       // Verify transaction details match our payment intent
-      const payment = transaction.operations.find(op => op.type === 'payment') as Operation.Payment;
+      const payment = operations.find(op => op.type === 'payment');
 
       if (!payment) {
         return false;
       }
 
+      // Get asset code
+      const assetCode = payment.asset_type === 'native' ? 'XLM' : payment.asset_code;
+
       // Verify payment matches our intent
       const isValidPayment =
         payment.destination === paymentIntent.destination &&
-        payment.asset.getCode() === paymentIntent.asset &&
+        assetCode === paymentIntent.asset &&
         parseFloat(payment.amount) === paymentIntent.amount &&
         transaction.memo === paymentIntent.memo;
 
@@ -123,12 +131,12 @@ export class StellarPaymentService {
         where: { id: paymentIntentId },
         data: {
           status: 'completed',
-          transactionHash,
+          transactionId: transactionHash,
         },
       });
 
       // Activate subscription
-      await this.activateSubscription(paymentIntent.userId, paymentIntent.plan);
+      await this.activateSubscription(paymentIntent.userId, paymentIntent.plan, transactionHash, paymentIntent.memo);
 
       return true;
     } catch (error) {
@@ -167,7 +175,7 @@ export class StellarPaymentService {
   /**
    * Activate subscription for a user
    */
-  private async activateSubscription(userId: number, plan: string): Promise<void> {
+  private async activateSubscription(userId: number, plan: string, stellarTxHash?: string, stellarMemo?: string): Promise<void> {
     const planDurations = {
       'pro': 30, // 30 days
       'agency': 30, // 30 days
@@ -198,6 +206,8 @@ export class StellarPaymentService {
         paymentMethod: 'stellar',
         startDate,
         endDate,
+        stellarTxHash,
+        stellarMemo,
       },
     });
   }
@@ -273,7 +283,7 @@ export class StellarPaymentService {
       },
     });
 
-    await this.activateSubscription(paymentIntent.userId, paymentIntent.plan);
+    await this.activateSubscription(paymentIntent.userId, paymentIntent.plan, params.transactionId, params.memo);
     return true;
   }
 }

@@ -19,6 +19,7 @@ describe('NftMintGuard', () => {
     mintAddress: null,
     postStatus: null,
     clipUrl: 'https://cdn.example.com/clip.mp4',
+    clipPosts: [],
   };
 
   beforeEach(() => {
@@ -89,10 +90,21 @@ describe('NftMintGuard', () => {
     );
   });
 
-  it('rejects posted clips', async () => {
+  it('rejects posted clips via postStatus', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({
       ...mintableClip,
       postStatus: 'posted',
+    });
+
+    await expect(runGuard({ body: { clipId: 1 } })).rejects.toThrow(
+      'Posted clips cannot be minted',
+    );
+  });
+
+  it('rejects posted clips via clipPosts', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      ...mintableClip,
+      clipPosts: [{ status: 'published' }],
     });
 
     await expect(runGuard({ body: { clipId: 1 } })).rejects.toThrow(

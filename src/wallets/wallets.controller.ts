@@ -32,11 +32,15 @@ export class WalletsController {
   @Throttle({ walletDisconnect: { limit: 10, ttl: 60000 } })
   @ApiOperation({
     summary: 'Disconnect wallet',
-    description: 'Soft-deletes the wallet (sets deletedAt). Blocked if pending payouts exist on the wallet.',
+    description:
+      'Soft-deletes the wallet (sets deletedAt). Blocked if pending payouts or active NFTs still depend on the wallet.',
   })
   @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
   @ApiResponse({ status: 200, description: 'Wallet disconnected successfully' })
-  @ApiResponse({ status: 400, description: 'Cannot disconnect - pending payouts exist' })
+  @ApiResponse({
+    status: 400,
+    description: 'Cannot disconnect - pending payouts or active NFTs exist',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Wallet not found or belongs to another user' })
   @UseGuards(WalletOwnershipGuard)

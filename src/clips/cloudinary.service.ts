@@ -45,31 +45,47 @@ export class CloudinaryService {
       resourceType?: 'video' | 'image' | 'raw' | 'auto';
       autoTagging?: number;
     } = {},
-    _retries: number = 2,
+    retries: number = 2,
   ): Promise<CloudinaryUploadResult> {
-    try {
-      this.logger.log(`Starting Cloudinary upload for ${publicId}`);
+    let attempts = 0;
+    const maxAttempts = 1 + retries;
+    let lastError: any = null;
 
-      const result = await this.circuitBreakerService.execute(
-        this.circuitBreakerConfig,
-        () => this.performUpload(buffer, publicId, options),
-      );
+    while (attempts < maxAttempts) {
+      try {
+        attempts++;
+        this.logger.log(
+          `Starting Cloudinary upload for ${publicId} (attempt ${attempts}/${maxAttempts})`,
+        );
 
-      if (result.error) {
-        this.logger.error(`Cloudinary upload failed for ${publicId}: ${result.error}`);
-        throw new Error(result.error);
+        const result = await this.circuitBreakerService.execute(
+          this.circuitBreakerConfig,
+          () => this.performUpload(buffer, publicId, options),
+        );
+
+        if (result.error) {
+          throw new Error(result.error);
+        }
+
+        this.logger.log(`Clip uploaded successfully: ${publicId} (${result.secure_url})`);
+        return result;
+      } catch (error) {
+        lastError = error;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.warn(`Cloudinary upload attempt ${attempts} failed for ${publicId}: ${errorMessage}`);
+
+        if (attempts >= maxAttempts) {
+          this.logger.error(`Cloudinary upload failed after ${attempts} attempts for ${publicId}: ${errorMessage}`);
+          break;
+        }
+
+        // Delay between retries
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempts));
       }
-
-      this.logger.log(`Clip uploaded successfully: ${publicId} (${result.secure_url})`);
-      return result;
-    } catch (error) {
-      if (error.name === 'ServiceUnavailableException') {
-        throw error;
-      }
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Cloudinary upload failed for ${publicId}: ${errorMessage}`);
-      return { secure_url: '', public_id: publicId, error: errorMessage };
     }
+
+    const finalErrorMessage = lastError instanceof Error ? lastError.message : 'Unknown error';
+    return { secure_url: '', public_id: publicId, error: finalErrorMessage };
   }
 
   private async performUpload(

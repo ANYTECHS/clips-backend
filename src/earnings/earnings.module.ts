@@ -11,6 +11,7 @@ import { AnomalyDetectionProcessor } from './anomaly-detection.processor';
 import { ANOMALY_DETECTION_QUEUE } from './anomaly-detection.queue';
 import { AuthModule } from '../auth/auth.module';
 import { CurrencyConversionService } from './currency-conversion.service';
+import { TaxReportExportService } from './tax-report-export.service';
 import { RedisModule } from '../redis/redis.module';
 import { MonthlySummaryService } from './monthly-summary.service';
 import { registerQueue } from '../common';
@@ -31,6 +32,7 @@ import { registerQueue } from '../common';
     AnomalyDetectionService,
     AnomalyDetectionProcessor,
     CurrencyConversionService,
+    TaxReportExportService,
     MonthlySummaryService,
   ],
   exports: [

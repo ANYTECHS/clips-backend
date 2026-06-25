@@ -406,13 +406,13 @@ Mint a clip as an NFT on Stellar. Clips that have already been **auto-posted** (
 | ------ | ------------------- | ------------------- |
 | POST   | `/clips/:id/mint`   | Mint clip as NFT    |
 
-### Payouts — `POST /payouts`
+### Payouts — `POST /payouts/initiate-stellar`
 
-Initiate a Stellar payout. Returns `400` if the amount is below `MIN_STELLAR_PAYOUT`.
+Prepare a Stellar payout transaction. Returns `400` if the payout cannot be validated or the platform balance is insufficient.
 
-| Method | Endpoint    | Body                         | Description             |
-| ------ | ----------- | ---------------------------- | ----------------------- |
-| POST   | `/payouts`  | `{ amount, walletId? }`      | Initiate Stellar payout |
+| Method | Endpoint                    | Body                          | Description                       |
+| ------ | --------------------------- | ----------------------------- | --------------------------------- |
+| POST   | `/payouts/initiate-stellar` | `{ payoutId, amount }`        | Prepare Stellar payout XDR/pending |
 
 ## Project Structure
 

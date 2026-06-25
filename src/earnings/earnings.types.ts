@@ -50,3 +50,10 @@ export interface EarningsByPeriod {
   breakdown: EarningsBreakdown;
   items: EarningsPeriodItem[];
 }
+
+export interface DetailedRevenueBreakdown {
+  subscriptions: number;
+  nftSales: number;
+  royalties: number;
+  other: number;
+}

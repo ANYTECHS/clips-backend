@@ -7,6 +7,62 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   async onModuleInit() {
+    this.$use(async (params, next) => {
+      const result = await next(params);
+      
+      try {
+        const createAuditLog = async (userId: number, amount: number, actionType: string) => {
+          await this.earningsAuditLog.create({
+            data: { userId, amount, actionType },
+          });
+        };
+
+        const processRecord = async (record: any, model: string, action: string) => {
+          if (!record) return;
+          if (model === 'Payout' && record.userId && record.amount !== undefined) {
+            const statusStr = record.status ? `_${record.status}` : '';
+            await createAuditLog(
+              record.userId, 
+              record.amount, 
+              `payout_action_${action}${statusStr}`
+            );
+          }
+          if (model === 'Earning' && record.clipId && record.amount !== undefined) {
+            const clip = await this.clip.findUnique({
+              where: { id: record.clipId },
+              include: { video: { select: { userId: true } } }
+            });
+            if (clip?.video?.userId) {
+              const type = record.deletedAt ? 'delete' : action;
+              await createAuditLog(
+                clip.video.userId, 
+                record.amount, 
+                `earning_adjustment_${type}`
+              );
+            }
+          }
+        };
+
+        const targetModels = ['Payout', 'Earning'];
+        const targetActions = ['create', 'update', 'upsert', 'delete'];
+        
+        if (params.model && targetModels.includes(params.model) && params.action && targetActions.includes(params.action)) {
+          if (Array.isArray(result)) {
+            for (const item of result) {
+              await processRecord(item, params.model, params.action);
+            }
+          } else {
+            await processRecord(result, params.model, params.action);
+          }
+        }
+      } catch (err) {
+        // fail silently to avoid breaking the main transaction
+        console.error('Failed to create audit log:', err);
+      }
+
+      return result;
+    });
+
     await this.$connect();
   }
 

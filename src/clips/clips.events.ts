@@ -45,10 +45,14 @@ export interface ClipProgressPayload {
   videoId: string;
   /** 0–100 */
   percent: number;
+  /** Alias for percent */
+  progress: number;
+  /** Alias for step */
+  stage: ClipProgressStep;
   /** Human-readable step label */
   step: ClipProgressStep;
   /** Snapshot of the clip being processed (may be absent for video-level jobs) */
-  currentClip?: {
+  currentClip?: number | string | {
     id: string;
     startTime: number;
     endTime: number;

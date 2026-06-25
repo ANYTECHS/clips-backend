@@ -3,8 +3,9 @@ import { Currency } from './earnings.types';
 import { CurrencyConversionService } from './currency-conversion.service';
 import { EarningsExportService, EarningsExportOptions, EarningsExportResult } from './earnings-export.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { TaxReportExportService } from './tax-report-export.service';
+import { PrismaService } from '../prisma/prisma.service';
+
 export interface LeaderboardEntry {
   rank: number;
   label: string;
@@ -108,6 +109,7 @@ export class EarningsService {
   async getEarningsByPlatform(userId: number) {
     return this.aggregationService.getEarningsByPlatform(userId);
   }
+
   async getEarningsHistory(
     userId: number,
     options: {
@@ -150,18 +152,5 @@ export class EarningsService {
       this.prisma.earning.count({ where }),
     ]);
     return { items, total, page, limit };
-  }
-
-  // Updated to use circuit breaker for ownership verification
-  async verifyNFTOwnership(tokenId: string, walletAddress: string): Promise<{ owned: boolean; error?: string }> {
-    try {
-      const result = await this.circuitBreakerService.execute(this.sorobanCircuitBreakerConfig, async () =>
-        this.nftOwnershipService.verifyNFTOwnership(tokenId, walletAddress),
-      );
-      return { owned: result.isOwner, error: result.error };
-    } catch (error) {
-      this.logger.error(`Ownership verification failed: ${error instanceof Error ? error.message : String(error)}`);
-      return { owned: false, error: error instanceof Error ? error.message : String(error) };
-    }
   }
 }

@@ -14,7 +14,15 @@ export const mockHorizonServer = {
   }),
   transactions: jest.fn().mockReturnValue({
     forAccount: jest.fn().mockReturnThis(),
-    call: jest.fn().mockResolvedValue({ records: [] }),
+    transaction: jest.fn().mockReturnThis(),
+    call: jest.fn().mockResolvedValue({
+      records: [],
+      memo: '',
+      hash: 'tx_hash',
+      operations: jest.fn().mockReturnValue({
+        call: jest.fn().mockResolvedValue({ records: [] }),
+      }),
+    }),
     stream: jest.fn().mockReturnValue(jest.fn()),
   }),
 };
