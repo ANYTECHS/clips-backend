@@ -14,6 +14,7 @@ import { StellarService } from '../stellar/stellar.service';
 import { PayoutReceiptService } from './payout-receipt.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
+import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
 
 const OPEN_PAYOUT_STATUSES = [
@@ -43,6 +44,143 @@ export class PayoutsService {
   }
 
   private minPayoutAmount: number;
+
+  private getPlatformWalletAddress(): string {
+    return (
+      process.env.STELLAR_WALLET_ADDRESS ||
+      process.env.PLATFORM_WALLET_ADDRESS ||
+      ''
+    );
+  }
+
+  async initiateStellarPayout(
+    userId: number,
+    payoutId: number,
+    amount: number,
+  ): Promise<{
+    id: number;
+    status: string;
+    amount: number;
+    transactionId: string;
+    stellarXdr: string;
+  }> {
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+      include: {
+        wallet: {
+          select: { address: true },
+        },
+      },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout record not found');
+    }
+
+    if (payout.status !== 'approved' && payout.status !== 'pending') {
+      throw new BadRequestException(
+        `Payout must be approved or pending before Stellar initiation (current status: ${payout.status})`,
+      );
+    }
+
+    if (payout.method !== 'stellar') {
+      throw new BadRequestException('Only Stellar payouts can be initiated here');
+    }
+
+    if (payout.amount !== amount) {
+      throw new BadRequestException('Requested amount does not match payout amount');
+    }
+
+    const existingPending = await this.prisma.payout.findFirst({
+      where: {
+        id: payoutId,
+        userId,
+        status: 'pending',
+        transactionId: { not: null },
+      },
+    });
+
+    if (existingPending) {
+      throw new ConflictException('A Stellar payout transaction is already pending for this payout');
+    }
+
+    const platformAddress = this.getPlatformWalletAddress();
+    if (!platformAddress) {
+      throw new BadRequestException(
+        'Platform Stellar wallet address is not configured',
+      );
+    }
+
+    const platformAddressCheck = this.stellarService.validateAddress(platformAddress);
+    if (!platformAddressCheck.valid) {
+      throw new BadRequestException('Invalid platform Stellar wallet address');
+    }
+
+    const payoutWalletAddress = payout.wallet?.address;
+    if (!payoutWalletAddress) {
+      throw new BadRequestException('No wallet associated with this payout');
+    }
+
+    const destinationCheck = this.stellarService.validateAddress(payoutWalletAddress);
+    if (!destinationCheck.valid) {
+      throw new BadRequestException('Invalid destination Stellar address');
+    }
+
+    const platformBalance = await this.stellarService.getAccountBalance(platformAddress);
+    if (platformBalance < amount) {
+      throw new BadRequestException(
+        `Insufficient platform balance. Available: ${platformBalance} XLM`,
+      );
+    }
+
+    const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
+    if (!platformSecret) {
+      throw new InternalServerErrorException(
+        'STELLAR_PLATFORM_SECRET environment variable is not set',
+      );
+    }
+
+    const sourceKeyPair = StellarSdk.Keypair.fromSecret(platformSecret);
+    const server = new StellarSdk.Horizon.Server(this.stellarService.horizonUrl);
+    const sourceAccount = await server.loadAccount(sourceKeyPair.publicKey());
+
+    const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination: payoutWalletAddress,
+          asset: StellarSdk.Asset.native(),
+          amount: amount.toString(),
+        }),
+      )
+      .setTimeout(60)
+      .build();
+
+    transaction.sign(sourceKeyPair);
+
+    const transactionId = transaction.hash().toString('hex');
+    const stellarXdr = transaction.toXDR();
+
+    const updated = await this.prisma.payout.update({
+      where: { id: payoutId },
+      data: {
+        status: 'pending',
+        transactionId,
+        stellarXdr,
+        externalTransactionId: transactionId,
+      },
+    });
+
+    return {
+      id: updated.id,
+      status: updated.status,
+      amount: updated.amount,
+      transactionId,
+      stellarXdr,
+    };
+  }
 
   async requestPayout(userId: number): Promise<{
     id: number;

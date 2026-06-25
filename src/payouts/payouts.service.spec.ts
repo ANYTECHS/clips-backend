@@ -14,12 +14,14 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { FeeService } from './fee.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { PayoutApprovalService } from './payout-approval.service';
+import { EarningsService } from '../earnings/earnings.service';
 import {
   ConflictException,
   BadRequestException,
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
+import * as StellarSdk from '@stellar/stellar-sdk';
 
 describe('PayoutsService', () => {
   let service: PayoutsService;
@@ -36,6 +38,9 @@ describe('PayoutsService', () => {
     wallet: {
       findFirst: jest.fn(),
     },
+    user: {
+      findUnique: jest.fn(),
+    },
     earning: {
       aggregate: jest.fn(),
     },
@@ -45,11 +50,15 @@ describe('PayoutsService', () => {
   const mockStellarService = {
     horizonUrl: 'https://horizon-testnet.stellar.org',
     networkPassphrase: 'Test SDF Network ; September 2015',
+    getAccountBalance: jest.fn(),
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
   };
 
   const mockPayoutReceiptService = {
     generateAndSendReceipt: jest.fn().mockResolvedValue(undefined),
   };
+
+  const mockEarningsService = {} as any;
 
   const mockFeeService = {
     calculateFee: jest.fn().mockResolvedValue({
@@ -70,6 +79,8 @@ describe('PayoutsService', () => {
   const mockPayoutRetryQueue = {
     add: jest.fn(),
   };
+
+  const mockPlatformAddress = StellarSdk.Keypair.random().publicKey();
 
   beforeEach(async () => {
     mockPrismaService.$transaction.mockImplementation(
@@ -93,6 +104,10 @@ describe('PayoutsService', () => {
           useValue: mockPayoutReceiptService,
         },
         {
+          provide: EarningsService,
+          useValue: mockEarningsService,
+        },
+        {
           provide: FeeService,
           useValue: mockFeeService,
         },
@@ -113,6 +128,9 @@ describe('PayoutsService', () => {
   afterEach(() => {
     jest.clearAllMocks();
     delete process.env.STELLAR_PLATFORM_SECRET;
+    delete process.env.STELLAR_WALLET_ADDRESS;
+    delete process.env.PLATFORM_WALLET_ADDRESS;
+    jest.restoreAllMocks();
   });
 
   it('should be defined', () => {
@@ -313,6 +331,101 @@ describe('PayoutsService', () => {
       await expect(service.processPayout(1)).rejects.toThrow(
         InternalServerErrorException,
       );
+    });
+  });
+
+  describe('initiateStellarPayout', () => {
+    beforeEach(() => {
+      process.env.STELLAR_PLATFORM_SECRET = 'SOME_SECRET';
+      process.env.STELLAR_WALLET_ADDRESS = mockPlatformAddress;
+    });
+
+    afterEach(() => {
+      delete process.env.STELLAR_PLATFORM_SECRET;
+      delete process.env.STELLAR_WALLET_ADDRESS;
+    });
+
+    it('should create a pending payout transaction and store XDR', async () => {
+      const destination = StellarSdk.Keypair.random().publicKey();
+      mockPrismaService.payout.findFirst
+        .mockResolvedValueOnce({
+          id: 44,
+          userId: 1,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          wallet: { address: destination },
+          transactionId: null,
+        })
+        .mockResolvedValueOnce(null);
+      mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: destination });
+      mockPrismaService.payout.update.mockResolvedValue({
+        id: 44,
+        amount: 100,
+        status: 'pending',
+      });
+      jest.spyOn(mockStellarService as any, 'getAccountBalance').mockResolvedValue(250);
+
+      jest.spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount').mockResolvedValue({
+        sequenceNumber: () => '1',
+        accountId: () => mockPlatformAddress,
+      } as any);
+      jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
+        publicKey: () => mockPlatformAddress,
+        sign: () => Buffer.from([]),
+      } as any);
+      jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
+        return this;
+      });
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
+        return this;
+      });
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
+        return {
+          sign: () => {},
+          hash: () => Buffer.from('deadbeef', 'hex'),
+          toXDR: () => 'mock-xdr',
+        };
+      });
+
+      const result = await service.initiateStellarPayout(1, 44, 100);
+
+      expect(result.status).toBe('pending');
+      expect(result.stellarXdr).toBe('mock-xdr');
+      expect(result.transactionId).toBe('deadbeef');
+      expect(mockPrismaService.payout.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 44 },
+          data: expect.objectContaining({
+            status: 'pending',
+            transactionId: 'deadbeef',
+            stellarXdr: 'mock-xdr',
+            externalTransactionId: 'deadbeef',
+          }),
+        }),
+      );
+    });
+
+    it('should validate platform balance before building the transaction', async () => {
+      mockPrismaService.payout.findFirst
+        .mockResolvedValueOnce({
+          id: 55,
+          userId: 1,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          wallet: { address: StellarSdk.Keypair.random().publicKey() },
+          transactionId: null,
+        })
+        .mockResolvedValueOnce(null);
+      jest.spyOn(mockStellarService as any, 'getAccountBalance').mockResolvedValue(50);
+
+      await expect(
+        service.initiateStellarPayout(1, 55, 100),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

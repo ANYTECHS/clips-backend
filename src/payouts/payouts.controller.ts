@@ -12,6 +12,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam }
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutsService } from './payouts.service';
 import { CreatePayoutDto } from './dto/request-payout.dto';
+import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { Request } from 'express';
 
 interface RequestWithUser extends Request {
@@ -39,6 +40,22 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
+    );
+  }
+
+  @Post('initiate-stellar')
+  @ApiOperation({ summary: 'Prepare a Stellar payout transaction' })
+  @ApiResponse({ status: 201, description: 'Stellar payout transaction prepared' })
+  @ApiResponse({ status: 400, description: 'Invalid payout request or insufficient balance' })
+  @ApiResponse({ status: 404, description: 'Payout not found' })
+  async initiateStellarPayout(
+    @Req() req: RequestWithUser,
+    @Body() dto: InitiateStellarPayoutDto,
+  ) {
+    return this.payoutsService.initiateStellarPayout(
+      req.user.userId,
+      dto.payoutId,
+      dto.amount,
     );
   }
 
