@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -155,5 +156,29 @@ export class ClipsController {
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
     return this.clipsService.regenerate(userId, Number(id));
+  }
+
+  @Patch(':id/caption')
+  @ApiOperation({
+    summary: 'Update clip caption',
+    description: 'Update the auto-generated caption for a clip. Useful for customizing social media posts.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID' })
+  @ApiResponse({ status: 200, description: 'Caption updated' })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Clip not found' })
+  async updateCaption(
+    @Param('id') id: string,
+    @Body('caption') caption: string,
+    @Req() req: Request,
+  ) {
+    if (!caption || typeof caption !== 'string') {
+      throw new BadRequestException('caption is required and must be a string');
+    }
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipsService.updateCaption(Number(id), userId, caption);
   }
 }

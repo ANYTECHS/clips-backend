@@ -74,7 +74,7 @@ model Clip {
   caption       String?
   startTime     Float
   endTime       Float
-  duration      Int
+  duration      Float
   viralityScore Float?
   royaltyBps    Int?
   postStatus    Json?

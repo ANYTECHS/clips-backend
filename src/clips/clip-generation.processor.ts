@@ -334,7 +334,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     await job.updateProgress({ percent: PROGRESS.FFMPEG_CUT, step: 'ffmpeg_cut' });
 
     const metadata = await getVideoMetadata(data.outputPath);
-    const actualDuration = Math.round(metadata.duration);
+    const actualDuration = parseFloat(metadata.duration.toFixed(3));
 
     const viralityScore =
       data.existingViralityScore ??
@@ -426,6 +426,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         thumbnail: result.thumbnail,
         status: result.status,
         duration: result.duration,
+        caption: result.caption,
         error: result.error,
         localFilePath: result.localFilePath,
       });
