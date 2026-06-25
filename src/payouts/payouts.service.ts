@@ -16,7 +16,7 @@ import { EarningsService } from '../earnings/earnings.service';
 import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
-import { FeeService } from './fee.service';
+import { ConfigService } from '../config/config.service';
 
 const OPEN_PAYOUT_STATUSES = [
   'pending',
@@ -39,12 +39,17 @@ export class PayoutsService {
     private payoutReceiptService: PayoutReceiptService,
     private feeService: FeeService,
     private payoutApprovalService: PayoutApprovalService,
+    private readonly config: ConfigService,
     @InjectQueue(PAYOUT_RETRY_QUEUE) private payoutRetryQueue: Queue,
-  ) {
-    this.minPayoutAmount = parseFloat(process.env.MIN_STELLAR_PAYOUT ?? '5');
-  }
+  ) {}
 
-  private minPayoutAmount: number;
+  private assertMinimumPayout(amount: number): void {
+    if (amount < this.config.minStellarPayout) {
+      throw new BadRequestException(
+        `Minimum payout amount is ${this.config.minStellarPayout} USD equivalent.`,
+      );
+    }
+  }
 
   private getPlatformWalletAddress(): string {
     return (
@@ -91,6 +96,8 @@ export class PayoutsService {
     if (payout.amount !== amount) {
       throw new BadRequestException('Requested amount does not match payout amount');
     }
+
+    this.assertMinimumPayout(amount);
 
     const existingPending = await this.prisma.payout.findFirst({
       where: {
@@ -227,6 +234,8 @@ export class PayoutsService {
       const availableBalance =
         (totalEarnings._sum.amount ?? 0) - (totalPaidOut._sum.amount ?? 0);
 
+      this.assertMinimumPayout(availableBalance);
+
       const fee = await this.feeService.calculateFee(availableBalance, 'stellar');
       const status = this.payoutApprovalService.resolveInitialStatus(availableBalance);
 
@@ -280,12 +289,7 @@ export class PayoutsService {
       );
     }
 
-    const minThreshold = parseFloat(process.env.MIN_PAYOUT_AMOUNT ?? '10');
-    if (amount < minThreshold) {
-      throw new BadRequestException(
-        `Minimum payout amount is ${minThreshold} ${currency}`,
-      );
-    }
+    this.assertMinimumPayout(amount);
 
     const totalEarnings = await this.prisma.earning.aggregate({
       where: { clip: { video: { userId } }, deletedAt: null },
@@ -456,6 +460,8 @@ export class PayoutsService {
     if (!payout.wallet) {
       throw new BadRequestException('No wallet associated with this payout');
     }
+
+    this.assertMinimumPayout(payout.amount);
 
     const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
     if (!platformSecret) {
@@ -658,6 +664,8 @@ export class PayoutsService {
               'No wallet associated with this payout',
             );
           }
+
+          this.assertMinimumPayout(payout.amount);
 
           const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
           if (!platformSecret) {
