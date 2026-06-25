@@ -374,3 +374,18 @@ model EarningsAuditLog {
   @@index([userId])
   @@index([timestamp])
 }
+
+
+model SubscriptionRevenue {
+  id              Int      @id @default(autoincrement())
+  subscriptionId  Int
+  transactionHash String   @unique
+  payerAddress    String
+  amount          Float
+  assetType       String
+  memo            String
+  processedAt     DateTime @default(now())
+
+  @@index([subscriptionId])
+  @@index([processedAt])
+}
