@@ -471,6 +471,36 @@ export class ClipsService {
     return this.cancelledVideos.has(videoId);
   }
 
+  async updateCaption(
+    id: number,
+    userId: number,
+    caption: string,
+  ): Promise<{ id: number; caption: string }> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        video: { select: { userId: true } },
+      },
+    });
+
+    if (!clip) {
+      throw new BadRequestException(`Clip ${id} not found`);
+    }
+
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException('You do not have permission to update this clip');
+    }
+
+    await this.prisma.clip.update({
+      where: { id },
+      data: { caption, updatedAt: new Date() },
+    });
+
+    this.logger.log(`Clip ${id} caption updated`);
+    return { id, caption };
+  }
+
   async cancelVideo(
     videoId: string,
   ): Promise<{ cancelled: boolean; removedJobs: number; abortedJobs: number }> {
