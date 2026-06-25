@@ -162,6 +162,10 @@ export class NftMintService {
       );
     }
 
+    if (clip.mintAddress) {
+      throw new BadRequestException('Clip has already been minted on-chain');
+    }
+
     // Prevent minting of posted clips
     const isPosted = clip.postStatus === 'posted' || 
       clip.clipPosts.some(post => post.status === 'published');
@@ -325,6 +329,19 @@ export class NftMintService {
     this.logger.log(`Confirming mint for clip ${clipId} with contract ${contractId}`);
 
     try {
+      const existingClip = await this.prisma.clip.findUnique({
+        where: { id: clipId },
+        select: { nftStatus: true, mintAddress: true },
+      });
+
+      if (!existingClip) {
+        throw new NotFoundException(`Clip with ID ${clipId} not found`);
+      }
+
+      if (existingClip.nftStatus === 'minted' || existingClip.mintAddress) {
+        throw new BadRequestException('Clip has already been minted on-chain');
+      }
+
       const clip = await this.prisma.clip.update({
         where: { id: clipId },
         data: {

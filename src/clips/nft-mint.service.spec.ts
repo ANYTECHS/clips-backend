@@ -187,6 +187,11 @@ describe('NftMintService.prepareMintTx', () => {
     await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('throws BadRequestException when clip already has a mintAddress', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, mintAddress: 'CONTRACT_ID' });
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toThrow('already been minted on-chain');
+  });
+
   it('throws BadRequestException when clip is in minting state', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, nftStatus: 'minting' });
     await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
@@ -244,6 +249,11 @@ describe('NftMintService.confirmMint', () => {
   beforeEach(() => { service = makeService(); });
 
   it('updates clip to minted status and returns success', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 5,
+      nftStatus: 'minting',
+      mintAddress: null,
+    });
     prismaMock.clip.update.mockResolvedValue({
       id: 5,
       mintAddress: 'CONTRACT_ID',
@@ -267,6 +277,22 @@ describe('NftMintService.confirmMint', () => {
     prismaMock.clip.update.mockRejectedValue(new Error('DB error'));
     await expect(service.confirmMint(5, 'CONTRACT_ID')).rejects.toBeInstanceOf(BadRequestException);
     expect(metricsMock.incrementNftMints).toHaveBeenCalledWith('failure');
+  });
+
+  it('rejects confirmMint when clip is already finalized', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 5,
+      nftStatus: 'minted',
+      mintAddress: 'CONTRACT_ID',
+    });
+
+    await expect(service.confirmMint(5, 'CONTRACT_ID')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects confirmMint when clip is missing', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue(null);
+
+    await expect(service.confirmMint(5, 'CONTRACT_ID')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 
