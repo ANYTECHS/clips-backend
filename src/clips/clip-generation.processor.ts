@@ -43,6 +43,8 @@ export interface ClipGenerationJob {
   clipId?: number;
   /** Existing virality score to preserve during regeneration */
   existingViralityScore?: number;
+  /** Existing clip URL to replace/delete during regeneration */
+  existingClipUrl?: string;
 }
 
 export interface ClipProcessingResult {
@@ -155,6 +157,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
       // ── Step 3: upload ─────────────────────────────────────────────────
       await job.updateProgress({ percent: PROGRESS.UPLOAD, step: 'upload' });
+
+      // Clean up existing Cloudinary asset if we are regenerating
+      if (data.existingClipUrl) {
+        const oldPublicId = this.extractCloudinaryPublicId(data.existingClipUrl);
+        if (oldPublicId) {
+          try {
+            await this.cloudinaryService.deleteClip(oldPublicId);
+          } catch (e) {
+            this.logger.warn(`Failed to delete old Cloudinary asset ${oldPublicId}: ${e.message}`);
+          }
+        }
+      }
+
       const uploadResult = await this.uploadWithAbort(data.outputPath, clipId, controller);
 
       if (uploadResult.error) {
@@ -625,5 +640,13 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  private extractCloudinaryPublicId(url: string): string | null {
+    if (!url || !url.includes('res.cloudinary.com')) return null;
+    const uploaded = url.split('/upload/')[1];
+    if (!uploaded) return null;
+    const sanitized = uploaded.replace(/^v\d+\//, '');
+    return sanitized.replace(/\.[^/.]+$/, '');
   }
 }

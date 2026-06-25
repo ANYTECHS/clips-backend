@@ -118,29 +118,36 @@ export function cutClip(options: CutClipOptions): Promise<string> {
   );
 
   return new Promise((resolve, reject) => {
-    const stderrLines: string[] = [];
-    const MAX_STDERR_LINES = 10;
+    const logLines: string[] = [];
+    const MAX_LOG_LINES = 10;
 
     const cmd = ffmpeg(inputPath)
       .seekInput(startSeconds)
       .duration(durationSeconds)
       .output(outputPath)
-      .on('stderr', (line: string) => {
-        stderrLines.push(line);
-        if (stderrLines.length > MAX_STDERR_LINES) {
-          stderrLines.shift();
+      .on('stdout', (line: string) => {
+        logLines.push(`[stdout] ${line}`);
+        if (logLines.length > MAX_LOG_LINES) {
+          logLines.shift();
         }
-        logger.debug(`[ffmpeg stderr] ${line}`);
+        logger.log(`[ffmpeg stdout] ${line}`);
+      })
+      .on('stderr', (line: string) => {
+        logLines.push(`[stderr] ${line}`);
+        if (logLines.length > MAX_LOG_LINES) {
+          logLines.shift();
+        }
+        logger.log(`[ffmpeg stderr] ${line}`);
       })
       .on('end', () => {
         resolve(outputPath);
       })
       .on('error', (err: Error) => {
-        const stderrSummary =
-          stderrLines.length > 0
-            ? `\nLast FFmpeg output:\n${stderrLines.join('\n')}`
+        const logSummary =
+          logLines.length > 0
+            ? `\nLast FFmpeg output:\n${logLines.join('\n')}`
             : '';
-        const detailedError = new Error(`${err.message}${stderrSummary}`);
+        const detailedError = new Error(`${err.message}${logSummary}`);
         reject(detailedError);
       });
 
