@@ -21,6 +21,9 @@ const mockPrisma = {
   payout: {
     findFirst: jest.fn(),
   },
+  clip: {
+    findFirst: jest.fn(),
+  },
 };
 
 const mockWalletValidationService = {
@@ -36,6 +39,7 @@ const baseWallet = {
   deletedAt: null,
   connectedAt: new Date(),
   updatedAt: new Date(),
+  payouts: [],
 };
 
 describe('WalletManagementService.disconnect', () => {
@@ -76,14 +80,24 @@ describe('WalletManagementService.disconnect', () => {
   });
 
   it('throws ConflictException when pending payouts exist', async () => {
+    mockPrisma.wallet.findUnique.mockResolvedValue({
+      ...baseWallet,
+      payouts: [{ id: 5, status: 'pending' }],
+    });
+    mockPrisma.clip.findFirst.mockResolvedValue(null);
+    await expect(service.disconnect(1, 42)).rejects.toThrow(ConflictException);
+  });
+
+  it('throws ConflictException when active NFTs exist', async () => {
     mockPrisma.wallet.findUnique.mockResolvedValue(baseWallet);
-    mockPrisma.payout.findFirst.mockResolvedValue({ id: 5, status: 'pending' });
+    mockPrisma.clip.findFirst.mockResolvedValue({ id: 9 });
+
     await expect(service.disconnect(1, 42)).rejects.toThrow(ConflictException);
   });
 
   it('soft-deletes the wallet and returns success message', async () => {
     mockPrisma.wallet.findUnique.mockResolvedValue(baseWallet);
-    mockPrisma.payout.findFirst.mockResolvedValue(null);
+    mockPrisma.clip.findFirst.mockResolvedValue(null);
     mockPrisma.wallet.update.mockResolvedValue({ ...baseWallet, deletedAt: new Date() });
 
     const result = await service.disconnect(1, 42);

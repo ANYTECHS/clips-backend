@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
 import { PayoutsService } from './payouts/payouts.service';
+import { StellarWebhookService } from './subscriptions/stellar-webhook.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AppLoggerService } from './logger/logger.service';
 import {
@@ -245,6 +246,14 @@ async function bootstrap() {
     logger.log(`Payout verifier started (interval=${intervalMs}ms)`);
   } catch (err) {
     logger.warn('Payout verifier not started: PayoutsService not available');
+  }
+
+  // Start Stellar transaction listener for subscription payments
+  try {
+    const stellarWebhookService = app.get(StellarWebhookService);
+    await stellarWebhookService.startTransactionListener();
+  } catch (err) {
+    logger.warn('Stellar transaction listener not started');
   }
 }
 bootstrap();

@@ -96,7 +96,7 @@ export class QueueOverflowService {
           `Delaying new job by ${delayMs}ms.`,
       );
 
-      const job = await queue.add(jobName, data, {
+      const job = await (queue as any).add(jobName, data, {
         ...baseOptions,
         delay: delayMs,
       } as any);
@@ -105,7 +105,7 @@ export class QueueOverflowService {
     }
 
     // ── Step 3: normal enqueue (within capacity) ─────────────────────────────
-    const job = await queue.add(jobName, data, baseOptions as any);
+    const job = await (queue as any).add(jobName, data, baseOptions as any);
     return { jobId: job.id, delayed: false, delayMs: 0 };
   }
 

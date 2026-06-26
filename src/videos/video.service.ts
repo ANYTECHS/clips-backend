@@ -51,6 +51,7 @@ export class VideoService {
         clipsGenerated,
         timeTakenMs,
         error,
+        moments: normalized,
       });
 
       this.logUsage(videoId, provider, usage);
@@ -216,6 +217,7 @@ export class VideoService {
       clipsGenerated: number;
       timeTakenMs: number;
       error?: string;
+      moments?: any[]; // optional array of viral moments
     },
   ) {
     await this.prisma.video.update({
@@ -228,6 +230,7 @@ export class VideoService {
           clipsGenerated: stats.clipsGenerated,
           timeTakenMs: stats.timeTakenMs,
           ...(stats.error ? { errorDetails: stats.error } : {}),
+          ...(stats.moments ? { moments: stats.moments } : {}),
         },
       },
     });

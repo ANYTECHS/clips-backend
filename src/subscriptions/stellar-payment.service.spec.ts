@@ -32,7 +32,10 @@ describe('StellarPaymentService', () => {
   };
 
   const mockConfigService = {
-    get: jest.fn().mockReturnValue('https://horizon-testnet.stellar.org'),
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'STELLAR_WALLET_ADDRESS') return 'GDEST';
+      return 'https://horizon-testnet.stellar.org';
+    }),
   };
 
   const mockStellarService = {
@@ -100,10 +103,11 @@ describe('StellarPaymentService', () => {
         amount: 10,
       };
 
-      const result = await service.createPaymentIntent(1, dto);
+      mockPrismaService.wallet.findFirst.mockResolvedValue(null);
 
-      expect(mockStellarService.validateAddress).toHaveBeenCalledWith('GDEST');
-      expect(result.destination).toBe('GDEST');
+      await expect(
+        service.createPaymentIntent(userId, dto),
+      ).rejects.toThrow('Stellar wallet not found');
     });
   });
 

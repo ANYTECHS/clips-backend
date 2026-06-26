@@ -3,7 +3,9 @@ import { Currency } from './earnings.types';
 import { CurrencyConversionService } from './currency-conversion.service';
 import { EarningsExportService, EarningsExportOptions, EarningsExportResult } from './earnings-export.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
+import { TaxReportExportService } from './tax-report-export.service';
 import { PrismaService } from '../prisma/prisma.service';
+
 export interface LeaderboardEntry {
   rank: number;
   label: string;
@@ -17,6 +19,7 @@ export class EarningsService {
     private exportService: EarningsExportService,
     private currencyConversion: CurrencyConversionService,
     private prisma: PrismaService,
+    private taxReportExportService: TaxReportExportService,
   ) {}
 
   public async invalidateUserEarningsCache(userId: number): Promise<void> {
@@ -42,7 +45,46 @@ export class EarningsService {
     limit = 20,
     targetCurrency: Currency = Currency.USD,
   ) {
-    return this.aggregationService.getEarningsDashboard(userId, page, limit, targetCurrency);
+    // Total earnings and breakdown
+    const totalEarnings = await this.aggregationService.getUserTotalEarnings(userId, targetCurrency);
+
+    // Pending payouts (status pending)
+    const pendingPayouts = await this.prisma.payout.findMany({
+      where: { userId, status: 'pending' },
+      select: { amount: true, currency: true },
+    });
+    const pendingPayout = pendingPayouts.reduce((sum, p) =>
+      sum + this.currencyConversion.convert(p.amount, (p.currency as Currency) || Currency.USD, targetCurrency),
+      0,
+    );
+
+    // Paid payouts (completed or processing)
+    const paidPayouts = await this.prisma.payout.findMany({
+      where: { userId, status: { in: ['completed', 'processing'] } },
+      select: { amount: true, currency: true },
+    });
+    const paidOut = paidPayouts.reduce((sum, p) =>
+      sum + this.currencyConversion.convert(p.amount, (p.currency as Currency) || Currency.USD, targetCurrency),
+      0,
+    );
+
+    // Earnings history (paginated)
+    const skip = (page - 1) * limit;
+    const earnings = await this.prisma.earning.findMany({
+      where: { clip: { video: { userId } }, deletedAt: null },
+      orderBy: { date: 'desc' },
+      skip,
+      take: limit,
+    });
+
+    return {
+      totalEarned: totalEarnings.total,
+      currency: targetCurrency,
+      pendingPayout,
+      paidOut,
+      breakdown: totalEarnings.breakdown,
+      history: earnings,
+    };
   }
 
   async exportEarningsCsv(
@@ -67,6 +109,7 @@ export class EarningsService {
   async getEarningsByPlatform(userId: number) {
     return this.aggregationService.getEarningsByPlatform(userId);
   }
+
   async getEarningsHistory(
     userId: number,
     options: {
@@ -110,44 +153,4 @@ export class EarningsService {
     ]);
     return { items, total, page, limit };
   }
-    // Total earnings from clips and subscriptions
-    const totalEarnings = await this.aggregationService.getUserTotalEarnings(userId, targetCurrency);
-
-    // Pending payouts (status pending or approved)
-    const pendingPayouts = await this.prisma.payout.findMany({
-      where: { userId, status: 'pending' },
-      select: { amount: true, currency: true },
-    });
-    const pendingTotal = pendingPayouts.reduce((sum, p) =>
-      sum + this.currencyConversion.convert(
-        p.amount,
-        (p.currency as Currency) || Currency.USD,
-        targetCurrency,
-      ),
-    0);
-
-    // Paid earnings (completed or processing)
-    const paidPayouts = await this.prisma.payout.findMany({
-      where: { userId, status: { in: ['completed', 'processing'] } },
-      select: { amount: true, currency: true },
-    });
-    const paidTotal = paidPayouts.reduce((sum, p) =>
-      sum + this.currencyConversion.convert(
-        p.amount,
-        (p.currency as Currency) || Currency.USD,
-        targetCurrency,
-      ),
-    0);
-
-    // Current balance after subtracting paid and pending payouts
-    const currentBalance = totalEarnings.total - paidTotal - pendingTotal;
-
-    return {
-      totalEarnings: totalEarnings.total,
-      pendingPayouts: pendingTotal,
-      paidEarnings: paidTotal,
-      currentBalance,
-      currency: targetCurrency,
-    };
-  }
-
+}

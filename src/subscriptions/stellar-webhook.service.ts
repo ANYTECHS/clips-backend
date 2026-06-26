@@ -1,25 +1,23 @@
 import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import Server, { Horizon } from '@stellar/stellar-sdk';
+import { Horizon } from '@stellar/stellar-sdk';
 import * as crypto from 'crypto';
+import { StellarPaymentService } from './stellar-payment.service';
+import { StellarService } from '../stellar/stellar.service';
 
 @Injectable()
 export class StellarWebhookService {
   private readonly logger = new Logger(StellarWebhookService.name);
-  private server: any;
-  private horizon: any;
+  private horizon: Horizon.Server;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    private readonly stellarPaymentService: StellarPaymentService,
+    private readonly stellarService: StellarService,
   ) {
-    this.server = new Server(
-      this.configService.get<string>('STELLAR_HORIZON_URL') || 'https://horizon-testnet.stellar.org',
-    );
-    this.horizon = new Horizon.Server(
-      this.configService.get<string>('STELLAR_HORIZON_URL') || 'https://horizon-testnet.stellar.org',
-    );
+    this.horizon = new Horizon.Server(this.stellarService.horizonUrl);
   }
 
   /**
@@ -27,11 +25,17 @@ export class StellarWebhookService {
    */
   async startTransactionListener(): Promise<void> {
     try {
+      const stellarWalletAddress = this.configService.get<string>('STELLAR_WALLET_ADDRESS');
+      if (!stellarWalletAddress) {
+        this.logger.warn('STELLAR_WALLET_ADDRESS not configured, not starting transaction listener');
+        return;
+      }
+
       this.logger.log('Starting Stellar transaction listener...');
 
       // Listen for account transactions (for payment monitoring)
       this.horizon.transactions()
-        .forAccount(this.configService.get<string>('STELLAR_WALLET_ADDRESS'))
+        .forAccount(stellarWalletAddress)
         .cursor('now')
         .stream({
           onmessage: (transaction) => {
@@ -55,13 +59,20 @@ export class StellarWebhookService {
    */
   private async handleTransaction(transaction: any): Promise<void> {
     try {
+      // Fetch operations for the transaction
+      const operationsPage = await transaction.operations().call();
+      const operations = operationsPage.records;
+
       // Look for payment operations with our memo format
-      const paymentOperations = transaction.operations
-        .filter((op: any) => op.type === 'payment')
-        .filter((op: any) => op.memo && op.memo.startsWith && op.memo.startsWith('CLIPS-'));
+      const paymentOperations = operations
+        .filter((op: any) => op.type === 'payment');
 
       for (const payment of paymentOperations) {
-        await this.processPayment(payment, transaction);
+        // The memo is on the transaction, not the operation
+        const memo = transaction.memo;
+        if (memo && memo.startsWith('CLIPS-')) {
+          await this.processPayment(payment, transaction, memo);
+        }
       }
     } catch (error) {
       this.logger.error('Error handling transaction:', error);
@@ -71,95 +82,30 @@ export class StellarWebhookService {
   /**
    * Process payment from transaction
    */
-  private async processPayment(payment: any, transaction: any): Promise<void> {
+  private async processPayment(payment: any, transaction: any, memo: string): Promise<void> {
     try {
-      // Extract memo to find payment intent
-      const memo = payment.memo;
-      
-      // Find payment intent by memo
-      const paymentIntent = await this.prisma.stellarPaymentIntent.findFirst({
-        where: {
-          memo,
-          status: 'pending',
-        },
+      // Get asset code
+      const assetCode = payment.asset_type === 'native' ? 'XLM' : payment.asset_code;
+
+      // Use the StellarPaymentService to process detected payment
+      const processed = await this.stellarPaymentService.processDetectedPayment({
+        memo,
+        amount: parseFloat(payment.amount),
+        transactionId: transaction.hash,
       });
 
-      if (!paymentIntent) {
-        this.logger.warn(`Payment intent not found for memo: ${memo}`);
-        return;
+      if (processed) {
+        this.logger.log(`Payment processed and subscription activated for memo: ${memo}`);
       }
-
-      // Verify payment details
-      const isValidPayment = 
-        payment.destination === paymentIntent.destination &&
-        payment.asset_code === paymentIntent.asset &&
-        parseFloat(payment.amount) === paymentIntent.amount;
-
-      if (!isValidPayment) {
-        this.logger.warn(`Payment validation failed for intent: ${paymentIntent.id}`);
-        return;
-      }
-
-      // Update payment intent as completed
-      await this.prisma.stellarPaymentIntent.update({
-        where: { id: paymentIntent.id },
-        data: {
-          status: 'completed',
-          transactionId: transaction.hash,
-        },
-      });
-
-      // Activate subscription
-      await this.activateSubscription(paymentIntent.userId, paymentIntent.plan);
-
-      this.logger.log(`Payment processed and subscription activated for user: ${paymentIntent.userId}`);
     } catch (error) {
       this.logger.error('Error processing payment:', error);
     }
   }
 
   /**
-   * Activate subscription for user
-   */
-  private async activateSubscription(userId: number, plan: string): Promise<void> {
-    const planDurations = {
-      'pro': 30, // 30 days
-      'agency': 30, // 30 days
-    };
-
-    const duration = planDurations[plan] || 30;
-    const startDate = new Date();
-    const endDate = new Date(startDate.getTime() + duration * 24 * 60 * 60 * 1000);
-
-    // Deactivate existing subscriptions
-    await this.prisma.subscription.updateMany({
-      where: {
-        userId,
-        status: 'active',
-      },
-      data: {
-        status: 'cancelled',
-        endDate: new Date(),
-      },
-    });
-
-    // Create new subscription
-    await this.prisma.subscription.create({
-      data: {
-        userId,
-        plan,
-        status: 'active',
-        paymentMethod: 'stellar',
-        startDate,
-        endDate,
-      },
-    });
-  }
-
-  /**
    * Verify webhook signature using HMAC-SHA256 with constant-time comparison
    * @param payload - Raw request body
-   * @param signature - Signature from X-Webhook-Signature header (hex format)
+   * @param signature - Signature from X-Webhook-Signature header (hex encoded)
    * @returns boolean indicating if signature is valid
    * @throws UnauthorizedException if WEBHOOK_SECRET is not configured
    */
@@ -214,7 +160,7 @@ export class StellarWebhookService {
   }
 
   /**
-   * Log processed webhook for idempotency tracking
+   * Log processed webhook for idempotency
    * @param transactionId - Stellar transaction hash
    * @param payload - Webhook payload for audit
    */
@@ -280,7 +226,9 @@ export class StellarWebhookService {
 
     // Process the webhook
     try {
-      await this.handleTransaction(webhookData);
+      // For webhook, we'll need to fetch the full transaction from Horizon
+      const transaction = await this.horizon.transactions().transaction(transactionId).call();
+      await this.handleTransaction(transaction);
       this.logger.log(`Webhook processed successfully for transaction: ${transactionId}`);
       return { success: true, message: 'Webhook processed successfully' };
     } catch (error) {

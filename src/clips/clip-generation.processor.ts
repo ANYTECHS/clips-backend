@@ -1,5 +1,6 @@
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { VideoService } from '../videos/video.service';
 import { ConfigService } from '@nestjs/config';
 import { Job, UnrecoverableError } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -18,7 +19,7 @@ import { ClipsGateway } from './clips.gateway';
 import { ClipsService } from './clips.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { PrismaService } from '../prisma/prisma.service';
-import type { VideoService } from '../videos/video.service';
+// Removed duplicate type import of VideoService (line 21) and duplicate constructor block (lines 108-114). Updated processUploadedVideo to use injected videoService.
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
@@ -43,6 +44,8 @@ export interface ClipGenerationJob {
   clipId?: number;
   /** Existing virality score to preserve during regeneration */
   existingViralityScore?: number;
+  /** Existing clip URL to replace/delete during regeneration */
+  existingClipUrl?: string;
 }
 
 export interface ClipProcessingResult {
@@ -91,6 +94,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   private readonly logger = new Logger(ClipGenerationProcessor.name);
 
   constructor(
+    private readonly videoService: VideoService,
     private readonly cloudinaryService: CloudinaryService,
     private readonly eventEmitter: EventEmitter2,
     private readonly clipsGateway: ClipsGateway,
@@ -105,6 +109,8 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       `Clip generation worker initialized with concurrency: ${config.clipGenerationConcurrency}`,
     );
   }
+
+
 
   onModuleInit(): void {
     // Register with the shutdown coordinator so SIGTERM drains this worker
@@ -155,6 +161,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
       // ── Step 3: upload ─────────────────────────────────────────────────
       await job.updateProgress({ percent: PROGRESS.UPLOAD, step: 'upload' });
+
+      // Clean up existing Cloudinary asset if we are regenerating
+      if (data.existingClipUrl) {
+        const oldPublicId = this.extractCloudinaryPublicId(data.existingClipUrl);
+        if (oldPublicId) {
+          try {
+            await this.cloudinaryService.deleteClip(oldPublicId);
+          } catch (e) {
+            this.logger.warn(`Failed to delete old Cloudinary asset ${oldPublicId}: ${e.message}`);
+          }
+        }
+      }
+
       const uploadResult = await this.uploadWithAbort(data.outputPath, clipId, controller);
 
       if (uploadResult.error) {
@@ -196,12 +215,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     const { videoId, inputPath, userId } = job.data;
     this.logger.log(`Processing uploaded video ${videoId} (job: ${job.id})`);
 
+    const { controller, timeout } = this.setupJobTimeout(String(videoId), String(job.id ?? ''));
+
     try {
       // ── Step 1: video_download ─────────────────────────────────────────
       await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
 
       // ── Step 2: ai_analysis — detect viral timestamps ──────────────────
       await job.updateProgress({ percent: PROGRESS.AI_ANALYSIS, step: 'ai_analysis' });
+
+      if (controller.signal.aborted) {
+        throw new Error('Aborted');
+      }
+
       const videoService = this.clipsService['videoService'] as VideoService;
       const moments = await videoService.detectViralTimestamps(Number(videoId));
       this.logger.log(`Detected ${moments.length} viral moments for video ${videoId}`);
@@ -210,6 +236,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       await this.safeDeleteLocalFile(inputPath);
       await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
 
+      this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
       return this.buildUploadProcessedClip(videoId, userId);
     } catch (error) {
       this.logger.error(
@@ -217,6 +244,12 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         error.stack,
       );
       await this.safeDeleteLocalFile(inputPath);
+      this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
+
+      if (controller.signal.aborted) {
+        const cancelled = this.clipsService._isVideoCancelled(String(videoId));
+        throw new UnrecoverableError(cancelled ? 'Cancelled by user' : 'Timeout');
+      }
       throw error;
     }
   }
@@ -247,6 +280,20 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     );
 
     void this.clipsService.refreshQueueDepth();
+
+    // Persist clip failure status
+    const { clipId } = job.data;
+    if (clipId) {
+      const isUploadError = error.message?.includes('Cloudinary') || error.message?.includes('upload');
+      const finalStatus = isUploadError ? 'upload_failed' : 'failed';
+      void this.clipsService.updateClip(clipId, {
+        status: finalStatus,
+        error: error.message,
+      }).catch((err) => {
+        this.logger.error(`Failed to update clip ${clipId} status on job failure: ${err.message}`);
+      });
+    }
+
     this.emitClipGenerationFailedEvent(job, error);
     void this.emitFailedWebSocketEvent(job, error);
   }
@@ -334,7 +381,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     await job.updateProgress({ percent: PROGRESS.FFMPEG_CUT, step: 'ffmpeg_cut' });
 
     const metadata = await getVideoMetadata(data.outputPath);
-    const actualDuration = Math.round(metadata.duration);
+    const actualDuration = parseFloat(metadata.duration.toFixed(3));
 
     const viralityScore =
       data.existingViralityScore ??
@@ -371,15 +418,26 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
    * Upload clip buffer to Cloudinary with 2 retries (3 total attempts).
    * Returns an object with `error` set on failure instead of throwing.
    */
-  private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
+private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const buffer = await this.cloudinaryService.readFileToBuffer(filePath);
-      return await this.cloudinaryService.uploadVideoFromBuffer(buffer, clipId, {}, 2);
+      const result = await this.cloudinaryService.uploadVideoFromBuffer(buffer, clipId, {}, 2);
+      if (!result.error) {
+        return result;
+      }
+      this.logger.warn(`Cloudinary upload attempt ${attempt} failed for ${clipId}: ${result.error}`);
     } catch (error) {
-      this.logger.error(`Upload to Cloudinary failed for ${clipId}: ${error.message}`);
-      return { error: error.message, secure_url: '', public_id: clipId };
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Upload to Cloudinary attempt ${attempt} failed for ${clipId}: ${msg}`);
+    }
+    if (attempt < maxAttempts) {
+      await new Promise(res => setTimeout(res, 1000 * attempt));
     }
   }
+  return { error: 'Upload failed after retries', secure_url: '', public_id: clipId };
+}
 
   /**
    * Handle errors from the main clip processing try/catch.
@@ -426,6 +484,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         thumbnail: result.thumbnail,
         status: result.status,
         duration: result.duration,
+        caption: result.caption,
         error: result.error,
         localFilePath: result.localFilePath,
       });
@@ -485,14 +544,14 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       jobId: job.id,
       videoId: job.data.videoId,
       percent,
+      progress: percent,
+      stage: step,
       step,
-      ...(!isUploadJob && {
-        currentClip: {
-          id: clipId,
-          startTime: job.data.startTime,
-          endTime: job.data.endTime,
-          positionRatio: job.data.positionRatio,
-        },
+      currentClip: job.data.clipId ?? (isUploadJob ? undefined : {
+        id: clipId,
+        startTime: job.data.startTime,
+        endTime: job.data.endTime,
+        positionRatio: job.data.positionRatio,
       }),
     });
   }
@@ -625,5 +684,13 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       createdAt: new Date(),
       updatedAt: new Date(),
     };
+  }
+
+  private extractCloudinaryPublicId(url: string): string | null {
+    if (!url || !url.includes('res.cloudinary.com')) return null;
+    const uploaded = url.split('/upload/')[1];
+    if (!uploaded) return null;
+    const sanitized = uploaded.replace(/^v\d+\//, '');
+    return sanitized.replace(/\.[^/.]+$/, '');
   }
 }

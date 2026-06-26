@@ -18,6 +18,7 @@ const mockPrisma = {
     update: jest.fn(),
   },
   payout: { findFirst: jest.fn() },
+  clip: { findFirst: jest.fn() },
 };
 
 const mockStellar = { validateAddress: jest.fn() };

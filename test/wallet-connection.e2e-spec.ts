@@ -28,6 +28,9 @@ const mockPrisma = {
   payout: {
     findFirst: jest.fn(),
   },
+  clip: {
+    findFirst: jest.fn(),
+  },
 };
 
 const mockStellarService = {

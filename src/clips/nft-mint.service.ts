@@ -145,8 +145,11 @@ export class NftMintService {
       );
     }
 
-    // Fetch clip
-    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    // Fetch clip with clipPosts
+    const clip = await this.prisma.clip.findUnique({ 
+      where: { id: clipId },
+      include: { clipPosts: { select: { status: true } } },
+    });
 
     if (!clip) {
       throw new NotFoundException(`Clip with ID ${clipId} not found`);
@@ -157,6 +160,18 @@ export class NftMintService {
       throw new BadRequestException(
         'Clip is already being minted or has been minted',
       );
+    }
+
+    if (clip.mintAddress) {
+      throw new BadRequestException('Clip has already been minted on-chain');
+    }
+
+    // Prevent minting of posted clips
+    const isPosted = clip.postStatus === 'posted' || 
+      clip.clipPosts.some(post => post.status === 'published');
+    
+    if (isPosted) {
+      throw new BadRequestException('Posted clips cannot be minted.');
     }
 
     if (!clip.clipUrl) {
@@ -314,6 +329,19 @@ export class NftMintService {
     this.logger.log(`Confirming mint for clip ${clipId} with contract ${contractId}`);
 
     try {
+      const existingClip = await this.prisma.clip.findUnique({
+        where: { id: clipId },
+        select: { nftStatus: true, mintAddress: true },
+      });
+
+      if (!existingClip) {
+        throw new NotFoundException(`Clip with ID ${clipId} not found`);
+      }
+
+      if (existingClip.nftStatus === 'minted' || existingClip.mintAddress) {
+        throw new BadRequestException('Clip has already been minted on-chain');
+      }
+
       const clip = await this.prisma.clip.update({
         where: { id: clipId },
         data: {

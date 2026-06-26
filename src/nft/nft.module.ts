@@ -4,6 +4,7 @@ import { NftOwnershipModule } from './nft-ownership.module';
 import { NftConfig } from './nft.config';
 import { NftService } from './nft.service';
 import { NftController } from './nft.controller';
+import { NftMetadataService } from './nft-metadata.service';
 import { RoyaltyQueryService } from './royalty-query.service';
 import { PlatformRevenueService } from './platform-revenue.service';
 import { PlatformRevenueController } from './platform-revenue.controller';
@@ -22,6 +23,7 @@ import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.
     NftConfig,
     NftService,
     NftMintService,
+    NftMetadataService,
     RoyaltyQueryService,
     PlatformRevenueService,
     BatchRoyaltyService,
@@ -36,6 +38,7 @@ import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.
   exports: [
     NftService,
     NftMintService,
+    NftMetadataService,
     RoyaltyQueryService,
     PlatformRevenueService,
     BatchRoyaltyService,
