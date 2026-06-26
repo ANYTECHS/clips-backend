@@ -1,9 +1,3 @@
-jest.mock('../stellar/stellar.service', () => ({
-  StellarService: jest.fn().mockImplementation(() => ({
-    horizonUrl: 'https://horizon-testnet.stellar.org',
-    networkPassphrase: 'Test SDF Network ; September 2015',
-  })),
-}));
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getQueueToken } from '@nestjs/bullmq';
