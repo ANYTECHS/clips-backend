@@ -283,16 +283,15 @@ export class NftMintService {
     royaltyBps: number;
   }): NftMetadata {
     const platforms = this.extractPlatforms(clip.postStatus);
+    const viralityScore = clip.viralityScore ?? 0;
+
     const attributes: NftAttribute[] = [
-      { trait_type: 'clipDuration', value: clip.duration },
-      { trait_type: 'viralityScore', value: clip.viralityScore ?? 0 },
-      { trait_type: 'createdAt', value: clip.createdAt.toISOString() },
-      { trait_type: 'royaltyBps', value: clip.royaltyBps },
-      { trait_type: 'royaltyPercent', value: clip.royaltyBps / 100 },
-      {
-        trait_type: 'platformsPosted',
-        value: platforms.length ? platforms.join(',') : 'none',
-      },
+      { trait_type: 'Clip Duration', value: clip.duration },
+      { trait_type: 'Virality Score', value: viralityScore },
+      { trait_type: 'Creation Date', value: clip.createdAt.toISOString() },
+      { trait_type: 'Royalty BPS', value: clip.royaltyBps },
+      { trait_type: 'Royalty Percent', value: clip.royaltyBps / 100 },
+      { trait_type: 'Platforms Posted To', value: platforms.join(', ') },
     ];
 
     return {

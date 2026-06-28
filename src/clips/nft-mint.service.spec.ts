@@ -211,18 +211,164 @@ function makeService(): NftMintService {
       image: 'https://cdn.example.com/thumb.jpg',
       animation_url: 'https://cdn.example.com/video.mp4',
     });
-    expect((metadata as any).attributes).toEqual(
+
+    const attrs: Array<{ trait_type: string; value: string | number }> =
+      (metadata as any).attributes;
+
+    // Standard human-readable trait names
+    expect(attrs).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ trait_type: 'royaltyBps', value: 1000 }),
-        expect.objectContaining({ trait_type: 'royaltyPercent', value: 10 }),
+        { trait_type: 'Clip Duration', value: 27 },
+        { trait_type: 'Virality Score', value: 88 },
+        { trait_type: 'Creation Date', value: '2026-03-01T00:00:00.000Z' },
+        { trait_type: 'Royalty BPS', value: 1000 },
+        { trait_type: 'Royalty Percent', value: 10 },
+        { trait_type: 'Platforms Posted To', value: 'tiktok' },
       ]),
     );
+
+    // Legacy camelCase names must no longer be present
+    expect(attrs.map((a) => a.trait_type)).not.toContain('clipDuration');
+    expect(attrs.map((a) => a.trait_type)).not.toContain('viralityScore');
+    expect(attrs.map((a) => a.trait_type)).not.toContain('createdAt');
+    expect(attrs.map((a) => a.trait_type)).not.toContain('royaltyBps');
+    expect(attrs.map((a) => a.trait_type)).not.toContain('royaltyPercent');
+    expect(attrs.map((a) => a.trait_type)).not.toContain('platformsPosted');
+
     expect(prismaMock.clip.update).toHaveBeenCalledWith({
       where: { id: 5 },
       data: { metadataUri: 'ipfs://bafyTestCid123' },
     });
     expect(result).toEqual({ clipId: 5, cid: 'bafyTestCid123', metadataUri: 'ipfs://bafyTestCid123' });
   });
+
+  it('defaults Virality Score to 0 when viralityScore is null', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 7,
+      title: 'Clip',
+      caption: null,
+      clipUrl: 'https://cdn.example.com/v.mp4',
+      thumbnail: null,
+      duration: 15,
+      viralityScore: null,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      postStatus: null,
+    });
+    ipfsUploadMock.uploadMetadata.mockResolvedValue('ipfs://bafyNullVirality');
+    prismaMock.clip.update.mockResolvedValue({});
+
+    await service.uploadMetadataToIPFS(7);
+
+    const [meta] = ipfsUploadMock.uploadMetadata.mock.calls[0];
+    const virality = (meta as any).attributes.find(
+      (a: any) => a.trait_type === 'Virality Score',
+    );
+    expect(virality).toBeDefined();
+    expect(virality.value).toBe(0);
+  });
+
+  it('sets Platforms Posted To to empty string when no platforms are posted', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 8,
+      title: 'No Platforms',
+      caption: 'A clip',
+      clipUrl: 'https://cdn.example.com/v.mp4',
+      thumbnail: null,
+      duration: 10,
+      viralityScore: 50,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      postStatus: null,
+    });
+    ipfsUploadMock.uploadMetadata.mockResolvedValue('ipfs://bafyNoPlatforms');
+    prismaMock.clip.update.mockResolvedValue({});
+
+    await service.uploadMetadataToIPFS(8);
+
+    const [meta] = ipfsUploadMock.uploadMetadata.mock.calls[0];
+    const platforms = (meta as any).attributes.find(
+      (a: any) => a.trait_type === 'Platforms Posted To',
+    );
+    expect(platforms).toBeDefined();
+    expect(platforms.value).toBe('');
+  });
+
+  it('joins multiple platforms with comma-space separator', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 9,
+      title: 'Multi Platform',
+      caption: 'A clip',
+      clipUrl: 'https://cdn.example.com/v.mp4',
+      thumbnail: null,
+      duration: 30,
+      viralityScore: 75,
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      postStatus: { tiktok: true, instagram: true, youtube: true },
+    });
+    ipfsUploadMock.uploadMetadata.mockResolvedValue('ipfs://bafyMulti');
+    prismaMock.clip.update.mockResolvedValue({});
+
+    await service.uploadMetadataToIPFS(9);
+
+    const [meta] = ipfsUploadMock.uploadMetadata.mock.calls[0];
+    const platforms = (meta as any).attributes.find(
+      (a: any) => a.trait_type === 'Platforms Posted To',
+    );
+    expect(platforms.value).toContain(', ');
+    expect(platforms.value).not.toContain('none');
+  });
+
+  it('generates standards-compliant metadata with all required top-level fields', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 10,
+      title: 'Standards Clip',
+      caption: 'Testing standards',
+      clipUrl: 'https://cdn.example.com/v.mp4',
+      thumbnail: 'https://cdn.example.com/t.jpg',
+      duration: 60,
+      viralityScore: 90,
+      createdAt: new Date('2026-06-01T00:00:00.000Z'),
+      postStatus: {},
+    });
+    ipfsUploadMock.uploadMetadata.mockResolvedValue('ipfs://bafyStandards');
+    prismaMock.clip.update.mockResolvedValue({});
+
+    await service.uploadMetadataToIPFS(10);
+
+    const [meta] = ipfsUploadMock.uploadMetadata.mock.calls[0];
+    expect(meta).toHaveProperty('name');
+    expect(meta).toHaveProperty('description');
+    expect(meta).toHaveProperty('image');
+    expect(meta).toHaveProperty('animation_url');
+    expect(meta).toHaveProperty('attributes');
+    expect(Array.isArray((meta as any).attributes)).toBe(true);
+  });
+
+  it('uploads enriched metadata to IPFS and uses the resulting CID as metadataUri', async () => {
+    const expectedCid = 'bafyEnrichedCid456';
+    prismaMock.clip.findUnique.mockResolvedValue({
+      id: 11,
+      title: 'Enriched',
+      caption: 'Enriched clip',
+      clipUrl: 'https://cdn.example.com/v.mp4',
+      thumbnail: null,
+      duration: 45,
+      viralityScore: 92,
+      createdAt: new Date('2026-06-25T12:00:00.000Z'),
+      postStatus: { TikTok: true, Instagram: true, YouTube: true },
+    });
+    ipfsUploadMock.uploadMetadata.mockResolvedValue(`ipfs://${expectedCid}`);
+    prismaMock.clip.update.mockResolvedValue({});
+
+    const result = await service.uploadMetadataToIPFS(11);
+
+    expect(result.cid).toBe(expectedCid);
+    expect(result.metadataUri).toBe(`ipfs://${expectedCid}`);
+    expect(prismaMock.clip.update).toHaveBeenCalledWith({
+      where: { id: 11 },
+      data: { metadataUri: `ipfs://${expectedCid}` },
+    });
+  });
+});
 
 
 // ─── prepareMintTx ──────────────────────────────────────────────────────────
