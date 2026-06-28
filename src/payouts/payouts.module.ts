@@ -18,6 +18,7 @@ import { PAYOUT_RETRY_QUEUE, PAYOUT_RETRY_QUEUE_PRIORITY } from './payout-retry.
 import { StellarConfirmationProcessor } from './stellar-confirmation.processor';
 import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
 import { PayoutApprovalService } from './payout-approval.service';
+import { ConfigService } from '../config/config.service';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { PayoutApprovalService } from './payout-approval.service';
     PayoutRetryProcessor,
     StellarConfirmationProcessor,
     PayoutApprovalService,
+    ConfigService,
   ],
   exports: [PayoutsService, FeeService, PayoutMethodService],
 })

@@ -9,6 +9,7 @@ import { FeeService } from './fee.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { PayoutApprovalService } from './payout-approval.service';
 import { EarningsService } from '../earnings/earnings.service';
+import { ConfigService } from '../config/config.service';
 import {
   ConflictException,
   BadRequestException,
@@ -74,6 +75,8 @@ describe('PayoutsService', () => {
     add: jest.fn(),
   };
 
+  const mockConfigService = { minStellarPayout: 5 };
+
   const mockPlatformAddress = StellarSdk.Keypair.random().publicKey();
 
   beforeEach(async () => {
@@ -119,6 +122,10 @@ describe('PayoutsService', () => {
             processCreatorEarnings: jest.fn(),
           },
         },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
+        },
       ],
     }).compile();
 
@@ -131,6 +138,7 @@ describe('PayoutsService', () => {
     delete process.env.STELLAR_WALLET_ADDRESS;
     delete process.env.PLATFORM_WALLET_ADDRESS;
     jest.restoreAllMocks();
+    mockConfigService.minStellarPayout = 5;
   });
 
   it('should be defined', () => {
@@ -333,6 +341,287 @@ describe('PayoutsService', () => {
       );
     });
   });
+
+  // ─── Minimum Payout Enforcement ─────────────────────────────────────────────
+
+  describe('minimum payout enforcement', () => {
+    const MIN = 5;
+
+    describe('requestPayoutWithDetails', () => {
+      const setupConflictFree = () => {
+        mockPrismaService.payout.findFirst.mockResolvedValue(null);
+      };
+
+      it('throws BadRequestException when amount is below the configured minimum', async () => {
+        setupConflictFree();
+        await expect(
+          service.requestPayoutWithDetails(1, MIN - 0.01, 'USD', 'stellar'),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('error message reflects the configured threshold, not a hardcoded value', async () => {
+        setupConflictFree();
+        mockConfigService.minStellarPayout = 10;
+        await expect(
+          service.requestPayoutWithDetails(1, 4, 'USD', 'stellar'),
+        ).rejects.toThrow('Minimum payout amount is 10 USD equivalent.');
+      });
+
+      it('does not query the database for balance when amount is below threshold', async () => {
+        setupConflictFree();
+        await expect(
+          service.requestPayoutWithDetails(1, MIN - 1, 'USD', 'stellar'),
+        ).rejects.toThrow(BadRequestException);
+        expect(mockPrismaService.earning.aggregate).not.toHaveBeenCalled();
+        expect(mockPrismaService.payout.create).not.toHaveBeenCalled();
+      });
+
+      it('proceeds when amount exactly equals the configured minimum', async () => {
+        setupConflictFree();
+        mockPrismaService.earning.aggregate.mockResolvedValue({ _sum: { amount: 100 } });
+        mockPrismaService.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+        mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: 'GTEST...' });
+        mockPrismaService.payout.create.mockResolvedValue({
+          id: 1,
+          amount: MIN,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          createdAt: new Date(),
+          feeAmount: 0,
+          finalAmount: MIN,
+        });
+
+        const result = await service.requestPayoutWithDetails(1, MIN, 'USD', 'stellar');
+        expect(result.amount).toBe(MIN);
+      });
+
+      it('proceeds when amount exceeds the configured minimum', async () => {
+        setupConflictFree();
+        const amount = MIN + 100;
+        mockPrismaService.earning.aggregate.mockResolvedValue({ _sum: { amount: 1000 } });
+        mockPrismaService.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+        mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: 'GTEST...' });
+        mockPrismaService.payout.create.mockResolvedValue({
+          id: 2,
+          amount,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          createdAt: new Date(),
+          feeAmount: 0,
+          finalAmount: amount,
+        });
+
+        const result = await service.requestPayoutWithDetails(1, amount, 'USD', 'stellar');
+        expect(result.amount).toBe(amount);
+      });
+    });
+
+    describe('requestPayout', () => {
+      it('throws BadRequestException when available balance is below the minimum', async () => {
+        mockPrismaService.payout.findFirst.mockResolvedValue(null);
+        mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: 'GTEST...' });
+        mockPrismaService.earning.aggregate.mockResolvedValue({ _sum: { amount: MIN - 1 } });
+        mockPrismaService.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+
+        await expect(service.requestPayout(1)).rejects.toThrow(BadRequestException);
+        await expect(service.requestPayout(1)).rejects.toThrow('Minimum payout amount is 5 USD equivalent.');
+      });
+
+      it('does not create a payout when balance is below the minimum', async () => {
+        mockPrismaService.payout.findFirst.mockResolvedValue(null);
+        mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: 'GTEST...' });
+        mockPrismaService.earning.aggregate.mockResolvedValue({ _sum: { amount: MIN - 1 } });
+        mockPrismaService.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+
+        await expect(service.requestPayout(1)).rejects.toThrow(BadRequestException);
+        expect(mockPrismaService.payout.create).not.toHaveBeenCalled();
+      });
+
+      it('proceeds when available balance exactly equals the minimum', async () => {
+        mockPrismaService.payout.findFirst.mockResolvedValue(null);
+        mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: 'GTEST...' });
+        mockPrismaService.earning.aggregate.mockResolvedValue({ _sum: { amount: MIN } });
+        mockPrismaService.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+        mockPrismaService.payout.create.mockResolvedValue({
+          id: 3,
+          amount: MIN,
+          status: 'approved',
+          createdAt: new Date(),
+          feeAmount: 0,
+          finalAmount: MIN,
+        });
+
+        const result = await service.requestPayout(1);
+        expect(result.amount).toBe(MIN);
+      });
+    });
+
+    describe('initiateStellarPayout', () => {
+      const belowMinPayoutRecord = (amount: number) => ({
+        id: 77,
+        userId: 1,
+        amount,
+        currency: 'USD',
+        method: 'stellar',
+        status: 'approved',
+        wallet: { address: StellarSdk.Keypair.random().publicKey() },
+        transactionId: null,
+      });
+
+      beforeEach(() => {
+        process.env.STELLAR_PLATFORM_SECRET = 'SOME_SECRET';
+        process.env.STELLAR_WALLET_ADDRESS = mockPlatformAddress;
+      });
+
+      afterEach(() => {
+        delete process.env.STELLAR_PLATFORM_SECRET;
+        delete process.env.STELLAR_WALLET_ADDRESS;
+      });
+
+      it('throws BadRequestException when amount is below the configured minimum', async () => {
+        const amount = MIN - 1;
+        mockPrismaService.payout.findFirst.mockResolvedValue(
+          belowMinPayoutRecord(amount),
+        );
+
+        await expect(
+          service.initiateStellarPayout(1, 77, amount),
+        ).rejects.toThrow(BadRequestException);
+        await expect(
+          service.initiateStellarPayout(1, 77, amount),
+        ).rejects.toThrow('Minimum payout amount is 5 USD equivalent.');
+      });
+
+      it('does not query Stellar balance or build a transaction when amount is below minimum', async () => {
+        const amount = MIN - 1;
+        mockPrismaService.payout.findFirst.mockResolvedValue(
+          belowMinPayoutRecord(amount),
+        );
+
+        await expect(
+          service.initiateStellarPayout(1, 77, amount),
+        ).rejects.toThrow(BadRequestException);
+        expect(mockStellarService.getAccountBalance).not.toHaveBeenCalled();
+        expect(mockPrismaService.payout.update).not.toHaveBeenCalled();
+      });
+
+      it('proceeds when amount exactly equals the configured minimum', async () => {
+        const destination = StellarSdk.Keypair.random().publicKey();
+        mockPrismaService.payout.findFirst
+          .mockResolvedValueOnce({
+            id: 78,
+            userId: 1,
+            amount: MIN,
+            currency: 'USD',
+            method: 'stellar',
+            status: 'approved',
+            wallet: { address: destination },
+            transactionId: null,
+          })
+          .mockResolvedValueOnce(null);
+
+        jest.spyOn(mockStellarService as any, 'getAccountBalance').mockResolvedValue(250);
+        jest.spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount').mockResolvedValue({
+          sequenceNumber: () => '1',
+          accountId: () => mockPlatformAddress,
+        } as any);
+        jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
+          publicKey: () => mockPlatformAddress,
+          sign: () => Buffer.from([]),
+        } as any);
+        jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
+        jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () { return this; });
+        jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () { return this; });
+        jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
+          return {
+            sign: () => {},
+            hash: () => Buffer.from('aabbccdd', 'hex'),
+            toXDR: () => 'mock-xdr-min',
+          };
+        });
+        mockPrismaService.payout.update.mockResolvedValue({
+          id: 78,
+          amount: MIN,
+          status: 'pending',
+        });
+
+        const result = await service.initiateStellarPayout(1, 78, MIN);
+        expect(result.status).toBe('pending');
+      });
+    });
+
+    describe('processPayout', () => {
+      it('throws BadRequestException when payout amount is below the configured minimum', async () => {
+        mockPrismaService.payout.findUnique.mockResolvedValue({
+          id: 99,
+          amount: MIN - 1,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          retryCount: 0,
+          stellarXdr: null,
+          wallet: { address: StellarSdk.Keypair.random().publicKey() },
+          user: { id: 1, email: 'user@example.com' },
+        });
+
+        await expect(service.processPayout(99)).rejects.toThrow(BadRequestException);
+        await expect(service.processPayout(99)).rejects.toThrow('Minimum payout amount is 5 USD equivalent.');
+      });
+
+      it('does not build or submit a Stellar transaction when payout is below the minimum', async () => {
+        mockPrismaService.payout.findUnique.mockResolvedValue({
+          id: 99,
+          amount: MIN - 1,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          retryCount: 0,
+          stellarXdr: null,
+          wallet: { address: StellarSdk.Keypair.random().publicKey() },
+          user: { id: 1, email: 'user@example.com' },
+        });
+
+        await expect(service.processPayout(99)).rejects.toThrow(BadRequestException);
+        expect(mockPrismaService.payout.update).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('dynamic threshold', () => {
+      it('uses the configured threshold rather than a hardcoded value', async () => {
+        mockConfigService.minStellarPayout = 25;
+        mockPrismaService.payout.findFirst.mockResolvedValue(null);
+
+        await expect(
+          service.requestPayoutWithDetails(1, 24, 'USD', 'stellar'),
+        ).rejects.toThrow('Minimum payout amount is 25 USD equivalent.');
+      });
+
+      it('accepts amounts above a raised threshold', async () => {
+        mockConfigService.minStellarPayout = 1;
+        mockPrismaService.payout.findFirst.mockResolvedValue(null);
+        mockPrismaService.earning.aggregate.mockResolvedValue({ _sum: { amount: 100 } });
+        mockPrismaService.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+        mockPrismaService.wallet.findFirst.mockResolvedValue({ id: 1, address: 'GTEST...' });
+        mockPrismaService.payout.create.mockResolvedValue({
+          id: 10,
+          amount: 2,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'approved',
+          createdAt: new Date(),
+          feeAmount: 0,
+          finalAmount: 2,
+        });
+
+        const result = await service.requestPayoutWithDetails(1, 2, 'USD', 'stellar');
+        expect(result.amount).toBe(2);
+      });
+    });
+  });
+
+  // ─── initiateStellarPayout (existing tests) ──────────────────────────────────
 
   describe('initiateStellarPayout', () => {
     beforeEach(() => {

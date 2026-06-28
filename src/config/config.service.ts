@@ -4,6 +4,8 @@ import { Injectable } from '@nestjs/common';
 export class ConfigService {
   readonly earningsCacheTtlSeconds = parseInt(process.env.EARNINGS_CACHE_TTL ?? '3600', 10);
 
+  readonly minStellarPayout: number;
+
   readonly leaderboardEnabled = process.env.LEADERBOARD_ENABLED === 'true';
 
   readonly creatorRoyaltyBps = parseInt(process.env.CREATOR_ROYALTY_BPS ?? '1000', 10);
@@ -54,4 +56,15 @@ export class ConfigService {
   readonly redisPort = parseInt(process.env.REDIS_PORT ?? '6379', 10);
 
   readonly redisPassword = process.env.REDIS_PASSWORD;
+
+  constructor() {
+    const raw = process.env.MIN_STELLAR_PAYOUT ?? '5';
+    const parsed = parseFloat(raw);
+    if (!isFinite(parsed) || parsed <= 0) {
+      throw new Error(
+        `Invalid MIN_STELLAR_PAYOUT: "${raw}" — must be a positive number`,
+      );
+    }
+    this.minStellarPayout = parsed;
+  }
 }
