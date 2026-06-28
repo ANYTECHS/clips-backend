@@ -7,6 +7,7 @@ import {
 import { WalletManagementService } from './wallet-management.service';
 import { WalletValidationService } from './wallet-validation.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { DEFAULT_CHAIN, SUPPORTED_CHAINS } from './chain.constants';
 
 jest.mock('../prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
@@ -28,6 +29,7 @@ const mockPrisma = {
 
 const mockWalletValidationService = {
   validateStellarAddress: jest.fn(),
+  validateAddressForChain: jest.fn(),
 };
 
 const baseWallet = {
@@ -47,7 +49,7 @@ describe('WalletManagementService.disconnect', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockWalletValidationService.validateStellarAddress.mockImplementation(() => undefined);
+    mockWalletValidationService.validateAddressForChain.mockImplementation(() => undefined);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WalletManagementService,
@@ -115,7 +117,7 @@ describe('WalletManagementService.connect', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockWalletValidationService.validateStellarAddress.mockImplementation(() => undefined);
+    mockWalletValidationService.validateAddressForChain.mockImplementation(() => undefined);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WalletManagementService,
@@ -129,47 +131,116 @@ describe('WalletManagementService.connect', () => {
     service = module.get<WalletManagementService>(WalletManagementService);
   });
 
-  const dto = {
+  const stellarDto = {
     address: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
-    chain: 'stellar',
+    chain: 'stellar' as const,
     type: 'freighter',
   };
 
-  it('validates address before upsert', async () => {
-    mockWalletValidationService.validateStellarAddress.mockImplementation(() => {
-      throw new BadRequestException('Invalid Stellar address format');
+  it('rejects unsupported chain values before touching the database', async () => {
+    mockWalletValidationService.validateAddressForChain.mockImplementation(() => {
+      throw new BadRequestException('chain must be one of: stellar, solana, base');
     });
-    await expect(service.connect(42, dto)).rejects.toThrow(BadRequestException);
+    await expect(
+      service.connect(42, { ...stellarDto, chain: 'ethereum' as any }),
+    ).rejects.toThrow(BadRequestException);
     expect(mockPrisma.wallet.upsert).not.toHaveBeenCalled();
   });
 
-  it('upserts a wallet after validation', async () => {
-    mockPrisma.wallet.upsert.mockResolvedValue({ id: 1, userId: 42, ...dto });
+  it('defaults chain to stellar when not provided', async () => {
+    const dtoWithoutChain = { address: stellarDto.address, type: stellarDto.type };
+    mockPrisma.wallet.upsert.mockResolvedValue({ id: 1, ...dtoWithoutChain, chain: DEFAULT_CHAIN });
 
-    const result = await service.connect(42, dto);
+    await service.connect(42, dtoWithoutChain as any);
 
-    expect(mockWalletValidationService.validateStellarAddress).toHaveBeenCalledWith(
-      dto.address,
+    expect(mockPrisma.wallet.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          address_chain: {
+            address: stellarDto.address,
+            chain: DEFAULT_CHAIN,
+          },
+        },
+        create: expect.objectContaining({ chain: DEFAULT_CHAIN }),
+      }),
     );
+  });
+
+  it('calls validateAddressForChain with the resolved chain', async () => {
+    mockPrisma.wallet.upsert.mockResolvedValue({ id: 1, userId: 42, ...stellarDto });
+
+    await service.connect(42, stellarDto);
+
+    expect(mockWalletValidationService.validateAddressForChain).toHaveBeenCalledWith(
+      stellarDto.address,
+      'stellar',
+    );
+  });
+
+  it('aborts when validateAddressForChain throws', async () => {
+    mockWalletValidationService.validateAddressForChain.mockImplementation(() => {
+      throw new BadRequestException('Invalid Stellar address format');
+    });
+    await expect(service.connect(42, stellarDto)).rejects.toThrow(BadRequestException);
+    expect(mockPrisma.wallet.upsert).not.toHaveBeenCalled();
+  });
+
+  it('upserts a stellar wallet with explicit chain after validation', async () => {
+    mockPrisma.wallet.upsert.mockResolvedValue({ id: 1, userId: 42, ...stellarDto });
+
+    const result = await service.connect(42, stellarDto);
+
     expect(mockPrisma.wallet.upsert).toHaveBeenCalledWith({
       where: {
         address_chain: {
-          address: dto.address,
-          chain: dto.chain,
+          address: stellarDto.address,
+          chain: 'stellar',
         },
       },
       update: expect.objectContaining({
         userId: 42,
-        type: dto.type,
+        type: stellarDto.type,
         deletedAt: null,
       }),
       create: {
         userId: 42,
-        address: dto.address,
-        chain: dto.chain,
-        type: dto.type,
+        address: stellarDto.address,
+        chain: 'stellar',
+        type: stellarDto.type,
       },
     });
     expect(result.id).toBe(1);
+  });
+
+  it.each(SUPPORTED_CHAINS)(
+    'upserts a wallet for each supported chain "%s"',
+    async (chain) => {
+      const dto = { address: stellarDto.address, chain, type: 'freighter' };
+      mockPrisma.wallet.upsert.mockResolvedValue({ id: 1, userId: 42, ...dto });
+
+      await service.connect(42, dto);
+
+      expect(mockPrisma.wallet.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ chain }),
+        }),
+      );
+    },
+  );
+
+  it('masks the wallet address in the response', async () => {
+    const fullAddress = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
+    mockPrisma.wallet.upsert.mockResolvedValue({
+      id: 1,
+      userId: 42,
+      address: fullAddress,
+      chain: 'stellar',
+      type: 'freighter',
+    });
+
+    const result = await service.connect(42, { ...stellarDto, address: fullAddress });
+
+    expect(result.address).not.toBe(fullAddress);
+    expect(result.address).toContain('****');
   });
 });

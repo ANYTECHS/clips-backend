@@ -203,7 +203,7 @@ export class PayoutsService {
     }
 
     const wallet = await this.prisma.wallet.findFirst({
-      where: { userId, deletedAt: null },
+      where: { userId, chain: 'stellar', deletedAt: null },
     });
 
     if (!wallet) {
@@ -312,7 +312,7 @@ export class PayoutsService {
 
     if (method === 'stellar') {
       const wallet = await this.prisma.wallet.findFirst({
-        where: { userId, deletedAt: null },
+        where: { userId, chain: 'stellar', deletedAt: null },
       });
 
       if (!wallet) {

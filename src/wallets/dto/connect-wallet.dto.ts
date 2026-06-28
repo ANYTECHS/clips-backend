@@ -16,11 +16,17 @@ export class CreateWalletConnectionDto {
   @IsNotEmpty()
   address: string;
 
-  @ApiProperty({ description: 'The blockchain network', example: 'stellar' })
+  @ApiPropertyOptional({
+    description: `The blockchain network. Defaults to "${DEFAULT_CHAIN}" when omitted.`,
+    enum: SUPPORTED_CHAINS,
+    default: DEFAULT_CHAIN,
+  })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  @IsIn(['stellar'])
-  chain: string;
+  @IsIn([...SUPPORTED_CHAINS], {
+    message: `chain must be one of: ${SUPPORTED_CHAINS.join(', ')}`,
+  })
+  chain?: string;
 
   @ApiProperty({ description: 'The wallet provider type', example: 'freighter' })
   @IsString()

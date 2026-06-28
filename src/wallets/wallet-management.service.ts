@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectWalletDto } from './dto/connect-wallet.dto';
 import { WalletValidationService } from './wallet-validation.service';
+import { DEFAULT_CHAIN, SupportedChain } from './chain.constants';
 import { maskAddress } from './wallet.utils';
 
 export interface DisconnectResult {
@@ -92,13 +93,15 @@ export class WalletManagementService {
   }
 
   async connect(userId: number, dto: ConnectWalletDto) {
-    this.walletValidationService.validateStellarAddress(dto.address);
+    const chain = (dto.chain ?? DEFAULT_CHAIN) as SupportedChain;
+
+    this.walletValidationService.validateAddressForChain(dto.address, chain);
 
     const wallet = await this.prisma.wallet.upsert({
       where: {
         address_chain: {
           address: dto.address,
-          chain: dto.chain,
+          chain,
         },
       },
       update: {
@@ -110,7 +113,7 @@ export class WalletManagementService {
       create: {
         userId,
         address: dto.address,
-        chain: dto.chain,
+        chain,
         type: dto.type,
       },
     });
