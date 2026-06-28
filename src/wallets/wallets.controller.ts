@@ -1,6 +1,7 @@
 import {
   Controller,
   Delete,
+  Get,
   Param,
   ParseIntPipe,
   Req,
@@ -14,8 +15,10 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@ne
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
+import { WalletBalanceService } from './wallet-balance.service';
 import { CreateWalletConnectionDto } from './dto/connect-wallet.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
+import { WalletBalanceResult } from '../stellar/stellar.service';
 
 interface AuthRequest extends Request {
   user: { userId: number; email: string | null };
@@ -26,7 +29,42 @@ interface AuthRequest extends Request {
 @Controller('wallets')
 @Auth()
 export class WalletsController {
-  constructor(private readonly walletsService: WalletsService) {}
+  constructor(
+    private readonly walletsService: WalletsService,
+    private readonly walletBalanceService: WalletBalanceService,
+  ) {}
+
+  @Get(':id/balance')
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
+  @UseGuards(WalletOwnershipGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get wallet XLM balance',
+    description:
+      'Returns the current native XLM balance for the specified wallet and a warning flag when funds are below the 2 XLM threshold that may cause NFT mint failures.',
+  })
+  @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
+  @ApiResponse({
+    status: 200,
+    description: 'Balance retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        balance: { type: 'number', example: 5.2, description: 'Available XLM balance' },
+        warning: { type: 'boolean', example: false, description: 'True when balance is below 2 XLM' },
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Invalid wallet address stored on record' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Wallet not found or Stellar account does not exist' })
+  @ApiResponse({ status: 502, description: 'Horizon network request failed' })
+  async getBalance(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthRequest,
+  ): Promise<WalletBalanceResult> {
+    return this.walletBalanceService.getBalance(id, req.user.userId);
+  }
 
   @Delete(':id')
   @Throttle({ walletDisconnect: { limit: 10, ttl: 60000 } })

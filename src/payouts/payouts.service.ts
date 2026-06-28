@@ -14,9 +14,9 @@ import { StellarService } from '../stellar/stellar.service';
 import { PayoutReceiptService } from './payout-receipt.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
+import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
-import { ConfigService } from '../config/config.service';
 
 const OPEN_PAYOUT_STATUSES = [
   'pending',
@@ -178,6 +178,7 @@ export class PayoutsService {
         transactionId,
         stellarXdr,
         externalTransactionId: transactionId,
+        onChainTxHash: transactionId,
       },
     });
 
@@ -209,7 +210,7 @@ export class PayoutsService {
     }
 
     const wallet = await this.prisma.wallet.findFirst({
-      where: { userId, deletedAt: null },
+      where: { userId, chain: 'stellar', deletedAt: null },
     });
 
     if (!wallet) {
@@ -315,7 +316,7 @@ export class PayoutsService {
 
     if (method === 'stellar') {
       const wallet = await this.prisma.wallet.findFirst({
-        where: { userId, deletedAt: null },
+        where: { userId, chain: 'stellar', deletedAt: null },
       });
 
       if (!wallet) {
@@ -770,5 +771,81 @@ export class PayoutsService {
       id: updated.id,
       status: updated.status,
     };
+  }
+
+  async pollPendingStellarPayouts(): Promise<void> {
+    const pending = await this.prisma.payout.findMany({
+      where: {
+        method: 'stellar',
+        status: { in: ['pending', 'processing'] },
+        onChainTxHash: { not: null },
+        confirmedAt: null,
+      },
+      select: { id: true, onChainTxHash: true, retryCount: true },
+    });
+
+    if (pending.length === 0) return;
+
+    this.logger.log(`Polling ${pending.length} pending Stellar payout(s) for on-chain confirmation`);
+
+    for (const payout of pending) {
+      try {
+        await this.confirmOneStellarPayout(payout.id, payout.onChainTxHash!, payout.retryCount);
+      } catch (error) {
+        this.logger.error(
+          `Confirmation poll failed for payout ${payout.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  private async confirmOneStellarPayout(
+    payoutId: number,
+    txHash: string,
+    currentPollCount: number,
+  ): Promise<void> {
+    const result = await this.stellarService.getTransactionStatus(txHash);
+
+    if (result.found) {
+      if (result.successful) {
+        const updated = await this.prisma.payout.updateMany({
+          where: {
+            id: payoutId,
+            status: { in: ['pending', 'processing'] },
+            confirmedAt: null,
+          },
+          data: {
+            status: 'completed',
+            confirmedAt: result.confirmedAt ?? new Date(),
+          },
+        });
+        if (updated.count > 0) {
+          this.logger.log(`Payout ${payoutId} confirmed on-chain (tx: ${txHash})`);
+        }
+      } else {
+        await this.prisma.payout.updateMany({
+          where: { id: payoutId, status: { in: ['pending', 'processing'] } },
+          data: { status: 'failed' },
+        });
+        this.logger.warn(`Payout ${payoutId} rejected on-chain (tx: ${txHash})`);
+      }
+      return;
+    }
+
+    const newPollCount = currentPollCount + 1;
+    if (newPollCount >= STELLAR_CONFIRMATION_MAX_POLLS) {
+      await this.prisma.payout.updateMany({
+        where: { id: payoutId, status: { in: ['pending', 'processing'] } },
+        data: { status: 'failed', retryCount: newPollCount },
+      });
+      this.logger.warn(
+        `Payout ${payoutId} marked failed after ${newPollCount} unconfirmed polls (tx: ${txHash})`,
+      );
+    } else {
+      await this.prisma.payout.update({
+        where: { id: payoutId },
+        data: { retryCount: newPollCount, lastAttemptAt: new Date() },
+      });
+    }
   }
 }

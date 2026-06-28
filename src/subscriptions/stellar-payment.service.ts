@@ -34,8 +34,9 @@ export class StellarPaymentService {
   async createPaymentIntent(userId: number, dto: CreateStellarSubscriptionDto): Promise<StellarPaymentIntentDto> {
     // Get user's Stellar wallet
     const wallet = await this.prisma.wallet.findFirst({
-      where: { 
+      where: {
         userId,
+        chain: 'stellar',
         ...(dto.walletId && { id: parseInt(dto.walletId) }),
       },
     });
