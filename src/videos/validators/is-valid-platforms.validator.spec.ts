@@ -14,7 +14,7 @@ describe('IsValidPlatformsConstraint', () => {
     it('should return true for valid platforms array', () => {
       expect(validator.validate(['tiktok', 'instagram'])).toBe(true);
       expect(validator.validate(['youtube-shorts'])).toBe(true);
-      expect(validator.validate(['tiktok', 'instagram', 'youtube'])).toBe(true);
+      expect(validator.validate(['tiktok', 'instagram', 'youtube-shorts'])).toBe(true);
     });
 
     it('should return true for valid platforms with mixed case (normalized)', () => {

@@ -8,10 +8,6 @@ export const SUPPORTED_PLATFORMS = [
   'tiktok',
   'instagram',
   'youtube-shorts',
-  'youtube',
-  'facebook',
-  'twitter',
-  'snapchat',
 ] as const;
 
 export type SupportedPlatform = (typeof SUPPORTED_PLATFORMS)[number];
