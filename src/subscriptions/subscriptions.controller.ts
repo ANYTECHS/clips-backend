@@ -36,6 +36,20 @@ export class SubscriptionsController {
     return this.stellarPaymentService.createPaymentIntent(userId, dto);
   }
 
+  @Post('create-intent')
+  @ApiOperation({ summary: 'Create Stellar payment intent for subscription' })
+  @ApiResponse({
+    status: 201,
+    description: 'Payment intent created successfully',
+  })
+  async createPaymentIntent(
+    @Body() dto: CreateStellarSubscriptionDto,
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id ?? 0);
+    return this.stellarPaymentService.createPaymentIntent(userId, dto);
+  }
+
   @Get('stellar/pending')
   @ApiOperation({ summary: 'Get pending Stellar payment intents' })
   @ApiResponse({

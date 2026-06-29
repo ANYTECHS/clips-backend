@@ -4,47 +4,69 @@ import {
   IsOptional,
   IsString,
   ArrayNotEmpty,
+  ValidateNested,
   IsInt,
-  Min,
-  Max,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsValidRoyaltyBps,
+  CLIP_ROYALTY_BPS_MAX,
+} from '../../common/validators/decorators';
 
-export class BulkUpdateClipsDto {
-  /** IDs of clips to update — must all belong to the requesting user */
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsString({ each: true })
-  clipIds: string[];
-
+export class ClipUpdatesDto {
+  @ApiPropertyOptional({
+    description: 'Mark clips as curated/selected',
+    example: true,
+  })
   @IsOptional()
   @IsBoolean()
   selected?: boolean;
 
-  /**
-   * Freeform posting status.
-   * Simple values: 'pending' | 'posted' | 'failed'
-   * Or a platform-specific JSON object, e.g. { platform: 'tiktok', status: 'posted', postId: '...' }
-   */
+  @ApiPropertyOptional({
+    description: 'Posting status. Simple values: pending | posted | failed, or platform-specific JSON object',
+    example: { platform: 'tiktok', status: 'posted', postId: '12345' },
+  })
   @IsOptional()
   postStatus?: unknown;
 
-  /**
-   * User-editable caption. Auto-generated on clip creation from title + emojis.
-   * Pass a new value here to override it.
-   */
+  @ApiPropertyOptional({
+    description: 'User-editable caption to override the auto-generated one',
+    example: 'Check out this amazing clip! 🎬',
+  })
   @IsOptional()
   @IsString()
   caption?: string;
 
-  /**
-   * NFT royalty percentage in Basis Points (BPS).
-   * 1000 BPS = 10%, range: 0–1500 BPS (0–15%).
-   * Used when minting clips as NFTs on Soroban/Stellar.
-   * If not provided, defaults to 1000 (10%) at mint time.
-   */
+  @ApiPropertyOptional({
+    description: 'NFT royalty percentage in Basis Points (BPS). 1000 BPS = 10%, range: 0-1500 (0-15%)',
+    example: 1000,
+    minimum: 0,
+    maximum: 1500,
+  })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1500)
+  @Type(() => Number)
+  @IsValidRoyaltyBps({ max: CLIP_ROYALTY_BPS_MAX })
   royaltyBps?: number;
+}
+
+export class BulkUpdateClipsDto {
+  @ApiProperty({
+    description: 'IDs of clips to update — must all belong to the requesting user',
+    example: [1, 2, 3],
+    type: [Number],
+  })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsInt({ each: true })
+  @Type(() => Number)
+  clipIds: number[];
+
+  @ApiProperty({
+    description: 'Updates to apply to the specified clips',
+    type: () => ClipUpdatesDto,
+  })
+  @ValidateNested()
+  @Type(() => ClipUpdatesDto)
+  updates: ClipUpdatesDto;
 }

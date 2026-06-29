@@ -30,7 +30,7 @@ export interface Clip {
   /** Cloudinary thumbnail URL */
   thumbnail?: string;
   /** Clip processing status: 'pending', 'processing', 'success', 'failed', 'upload_failed' */
-  status?: 'pending' | 'processing' | 'success' | 'failed' | 'upload_failed';
+  status?: 'pending' | 'processing' | 'success' | 'failed' | 'upload_failed' | 'upload_processed';
   /** Error message if upload/processing failed */
   error?: string;
   /** Local file path as fallback when Cloudinary upload fails */

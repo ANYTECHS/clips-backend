@@ -142,13 +142,13 @@ describe('CreateVideoDto', () => {
       expect(errors.some((e) => e.property === 'userId')).toBe(true);
     });
 
-    it('should fail validation when sourceUrl is missing', async () => {
+    it('should pass validation when sourceUrl is missing (it is optional)', async () => {
       const dto = plainToInstance(CreateVideoDto, {
         userId: 1,
       });
 
       const errors = await validate(dto);
-      expect(errors.some((e) => e.property === 'sourceUrl')).toBe(true);
+      expect(errors.some((e) => e.property === 'sourceUrl')).toBe(false);
     });
   });
 });

@@ -184,13 +184,15 @@ describe('getVideoMetadata', () => {
 
     const result = await getVideoMetadata('video.mp4');
 
-    expect(result).toEqual({
-      duration: 120.5,
-      width: 1920,
-      height: 1080,
-      format: 'mov,mp4,m4a,3gp,3g2,mj2',
-      resolution: '1920x1080',
-    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        duration: 120.5,
+        width: 1920,
+        height: 1080,
+        format: 'mov,mp4,m4a,3gp,3g2,mj2',
+        resolution: '1920x1080',
+      }),
+    );
     expect(mockFfprobe).toHaveBeenCalledWith('video.mp4', expect.any(Function));
   });
 

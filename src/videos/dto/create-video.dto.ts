@@ -1,7 +1,7 @@
 import { IsString, IsOptional, IsInt, IsArray } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { IsValidPlatforms } from '../validators/decorators';
-import type { SupportedPlatform } from '../validators/is-valid-platforms.validator';
+import { IsValidPlatforms } from '../../common/validators/decorators';
+import type { SupportedPlatform } from '../../common/validators/is-valid-platform.validator';
 
 export class CreateVideoDto {
   @IsInt()

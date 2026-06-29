@@ -19,6 +19,10 @@ export class CreateStellarSubscriptionDto {
 
   @IsString()
   @IsOptional()
+  destinationAddress?: string;
+
+  @IsString()
+  @IsOptional()
   memo?: string;
 }
 

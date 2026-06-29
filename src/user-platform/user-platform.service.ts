@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from '../encryption/encryption.service';
+import { StellarService } from '../stellar/stellar.service';
+import { BadRequestException } from '@nestjs/common';
 
 export type UserPlatformCreateInput = {
   userId: number;
@@ -8,6 +10,7 @@ export type UserPlatformCreateInput = {
   username?: string;
   accessToken?: string;
   refreshToken?: string;
+  stellarAddress?: string;
 };
 
 export type UserPlatformUpdateInput = {
@@ -22,9 +25,17 @@ export class UserPlatformService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryptionService: EncryptionService,
+    private readonly stellarService: StellarService,
   ) {}
 
   async create(data: UserPlatformCreateInput) {
+    if (data.stellarAddress) {
+      const validation = this.stellarService.validateAddress(data.stellarAddress);
+      if (!validation.valid) {
+        throw new BadRequestException('Invalid Stellar address format');
+      }
+    }
+
     // Encrypt sensitive fields before storing
     const encryptedData = this.encryptionService.encryptObjectFields(data, [
       'accessToken',

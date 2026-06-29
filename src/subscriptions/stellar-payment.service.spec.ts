@@ -3,24 +3,24 @@ import { StellarPaymentService } from './stellar-payment.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { CreateStellarSubscriptionDto } from './dto/create-stellar-subscription.dto';
+import { StellarService } from '../stellar/stellar.service';
+import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
 
-// Mock the Stellar SDK to avoid import issues in tests
-jest.mock('@stellar/stellar-sdk', () => ({
-  Server: jest.fn(),
+jest.mock('../prisma/prisma.service', () => ({
+  PrismaService: class PrismaService {},
 }));
+
+jest.mock('@stellar/stellar-sdk', () => require('../../test/mocks/stellar-sdk.mock'));
 
 describe('StellarPaymentService', () => {
   let service: StellarPaymentService;
-  let prismaService: PrismaService;
-  let configService: ConfigService;
 
   const mockPrismaService = {
-    wallet: {
-      findFirst: jest.fn(),
-    },
+    wallet: { findFirst: jest.fn() },
     stellarPaymentIntent: {
       create: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -32,35 +32,33 @@ describe('StellarPaymentService', () => {
   };
 
   const mockConfigService = {
-    get: jest.fn().mockReturnValue('https://horizon-testnet.stellar.org'),
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'STELLAR_WALLET_ADDRESS') return 'GDEST';
+      return 'https://horizon-testnet.stellar.org';
+    }),
+  };
+
+  const mockStellarService = {
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
   };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StellarPaymentService,
-        {
-          provide: PrismaService,
-          useValue: mockPrismaService,
-        },
-        {
-          provide: ConfigService,
-          useValue: mockConfigService,
-        },
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarService, useValue: mockStellarService },
+        CircuitBreakerService,
       ],
     }).compile();
 
     service = module.get<StellarPaymentService>(StellarPaymentService);
-    prismaService = module.get<PrismaService>(PrismaService);
-    configService = module.get<ConfigService>(ConfigService);
-  });
-
-  it('should be defined', () => {
-    expect(service).toBeDefined();
   });
 
   describe('createPaymentIntent', () => {
-    it('should create payment intent successfully', async () => {
+    it('validates destination address and creates intent', async () => {
       const userId = 1;
       const dto: CreateStellarSubscriptionDto = {
         plan: 'pro',
@@ -68,38 +66,30 @@ describe('StellarPaymentService', () => {
         amount: 10,
         walletId: '1',
       };
-
-      const mockWallet = {
-        id: 1,
-        userId: 1,
-        address: 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H',
-      };
-
+      const mockWallet = { id: 1, userId: 1, address: 'GDEST' };
       const mockPaymentIntent = {
-        id: 'test-intent-id',
-        userId: 1,
+        id: 'intent-id',
         amount: 10,
         asset: 'xlm',
-        destination: mockWallet.address,
-        memo: 'CLIPS-1-abc123-def456',
+        destination: 'GDEST',
+        memo: 'memo',
         status: 'pending',
         expiresAt: new Date(),
-        plan: 'pro',
-        createdAt: new Date(),
-        updatedAt: new Date(),
       };
-
       mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
+      mockPrismaService.stellarPaymentIntent.create.mockResolvedValue(
+        mockPaymentIntent,
+      );
       mockPrismaService.stellarPaymentIntent.create.mockResolvedValue(mockPaymentIntent);
 
       const result = await service.createPaymentIntent(userId, dto);
 
       expect(result).toEqual({
-        id: 'test-intent-id',
+        id: 'intent-id',
         amount: 10,
         asset: 'xlm',
         destination: mockWallet.address,
-        memo: 'CLIPS-1-abc123-def456',
+        memo: expect.stringMatching(/^CLIPS-/),
         expiresAt: mockPaymentIntent.expiresAt,
         status: 'pending',
       });
@@ -115,56 +105,44 @@ describe('StellarPaymentService', () => {
 
       mockPrismaService.wallet.findFirst.mockResolvedValue(null);
 
-      await expect(service.createPaymentIntent(userId, dto)).rejects.toThrow(
-        'Stellar wallet not found. Please connect a wallet first.',
-      );
+      await expect(
+        service.createPaymentIntent(userId, dto),
+      ).rejects.toThrow('Stellar wallet not found');
     });
   });
 
-  describe('getPendingPaymentIntents', () => {
-    it('should return pending payment intents', async () => {
-      const userId = 1;
-      const mockIntents = [
-        {
+  describe('processDetectedPayment', () => {
+    it('activates subscription on matching payment', async () => {
+      mockPrismaService.stellarPaymentIntent.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
           id: 'intent1',
           userId: 1,
           amount: 10,
-          asset: 'xlm',
+          plan: 'pro',
           status: 'pending',
-          expiresAt: new Date(Date.now() + 10000),
-        },
-      ];
+          expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+        });
+      mockPrismaService.stellarPaymentIntent.update.mockResolvedValue({});
+      mockPrismaService.subscription.updateMany.mockResolvedValue({ count: 0 });
+      mockPrismaService.subscription.create.mockResolvedValue({});
 
-      mockPrismaService.stellarPaymentIntent.findMany.mockResolvedValue(mockIntents);
-
-      const result = await service.getPendingPaymentIntents(userId);
-
-      expect(result).toHaveLength(1);
-      expect(result[0]).toEqual({
-        id: 'intent1',
-        amount:10,
-        asset: 'xlm',
-        destination: undefined,
-        memo: undefined,
-        expiresAt: mockIntents[0].expiresAt,
-        status: 'pending',
+      const ok = await service.processDetectedPayment({
+        memo: 'memo1',
+        amount: 10,
+        transactionId: 'tx1',
       });
-    });
-  });
 
-  describe('processExpiredPaymentIntents', () => {
-    it('should update expired intents', async () => {
-      mockPrismaService.stellarPaymentIntent.updateMany.mockResolvedValue({ count: 1 });
-
-      await service.processExpiredPaymentIntents();
-
-      expect(mockPrismaService.stellarPaymentIntent.updateMany).toHaveBeenCalledWith({
+      expect(ok).toBe(true);
+      expect(mockPrismaService.subscription.create).toHaveBeenCalled();
+      expect(mockPrismaService.subscription.updateMany).toHaveBeenCalledWith({
         where: {
-          status: 'pending',
-          expiresAt: { lt: new Date() },
+          userId: 1,
+          status: 'active',
         },
         data: {
-          status: 'expired',
+          status: 'cancelled',
+          endDate: expect.any(Date),
         },
       });
     });

@@ -15,7 +15,7 @@ import { UserPlatformService } from './user-platform.service';
 import { AuthGuard } from '@nestjs/passport';
 import type { UserPlatformCreateInput, UserPlatformUpdateInput } from './user-platform.service';
 
-@Controller('user-platforms')
+@Controller(['user-platforms', 'user-platform'])
 @UseGuards(AuthGuard('jwt'))
 export class UserPlatformController {
   constructor(private readonly userPlatformService: UserPlatformService) {}

@@ -1,6 +1,6 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { NftConfig } from './nft.config';
-import { MintClipDto } from './dto/mint-clip.dto';
+import { CreateMintDto } from './dto/mint-clip.dto';
 
 /**
  * A single royalty recipient entry.
@@ -50,7 +50,7 @@ export class NftService {
    *
    * Both values are read from env so they can be changed without a deploy.
    */
-  async mintClip(dto: MintClipDto): Promise<MintResult> {
+  async mintClip(dto: CreateMintDto): Promise<MintResult> {
     this.validateConfig();
 
     const royalties = this.buildRoyalties(dto.creatorWallet);

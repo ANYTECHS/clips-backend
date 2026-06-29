@@ -1,11 +1,13 @@
 import { Module } from '@nestjs/common';
 import { StellarService } from './stellar.service';
-import { StellarPaymentListenerService } from './stellar-payment-listener.service';
+import { StellarConfig } from './stellar.config';
+import { StellarPaymentListener } from './stellar-payment.listener';
 import { PrismaModule } from '../prisma/prisma.module';
+import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
 
 @Module({
-  imports: [PrismaModule],
-  providers: [StellarService, StellarPaymentListenerService],
-  exports: [StellarService, StellarPaymentListenerService],
+  imports: [PrismaModule, CircuitBreakerModule],
+  providers: [StellarService, StellarConfig, StellarPaymentListener],
+  exports: [StellarService, StellarConfig, StellarPaymentListener],
 })
 export class StellarModule {}
