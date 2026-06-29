@@ -2,6 +2,8 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueConfigService } from './queue-config.service';
+import { RetryBackoffConfigService } from './retry-backoff-config.service';
+import { QueueHealthService } from './queue-health.service';
 import {
   CLIP_GENERATION_QUEUE,
   CLIP_GENERATION_QUEUE_PRIORITY,
@@ -64,7 +66,7 @@ export const REGISTERED_QUEUE_NAMES = [
       },
     ),
   ],
-  providers: [QueueConfigService],
-  exports: [BullModule, QueueConfigService],
+  providers: [QueueConfigService, RetryBackoffConfigService, QueueHealthService],
+  exports: [BullModule, QueueConfigService, RetryBackoffConfigService, QueueHealthService],
 })
 export class QueueModule {}

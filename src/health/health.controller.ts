@@ -8,6 +8,11 @@ import {
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RedisMemoryService, RedisMemoryStats } from './redis-memory.service';
 import { RedisService } from '../redis/redis.service';
+import { QueueHealthService } from '../queue/queue-health.service';
+import {
+  QueueHealthResponseDto,
+  QueueStatisticsResponseDto,
+} from '../queue/dtos/queue-stats.dto';
 
 interface HealthResponse {
   status: 'ok' | 'degraded';
@@ -28,6 +33,7 @@ export class HealthController {
   constructor(
     private readonly redisMemoryService: RedisMemoryService,
     private readonly redisService: RedisService,
+    private readonly queueHealthService: QueueHealthService,
   ) {}
 
   /**
@@ -112,5 +118,77 @@ export class HealthController {
     }
 
     return { status: 'ok', connected: true, latencyMs };
+  }
+
+  @Get('queues')
+  @ApiOperation({
+    summary: 'Queue health check',
+    description:
+      'Returns health metrics for all BullMQ queues including job counts, failure rates, and overall status.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Queue health metrics retrieved successfully.',
+    type: QueueHealthResponseDto,
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'One or more queues are unavailable.',
+  })
+  async checkQueueHealth(): Promise<QueueHealthResponseDto> {
+    try {
+      const health = await this.queueHealthService.getQueueHealth();
+
+      if (health.status === 'unhealthy') {
+        throw new HttpException(health, HttpStatus.SERVICE_UNAVAILABLE);
+      }
+
+      return health;
+    } catch (err) {
+      this.logger.error(
+        `Queue health check failed: ${(err as Error).message}`,
+      );
+
+      if (err instanceof HttpException) {
+        throw err;
+      }
+
+      throw new HttpException(
+        {
+          status: 'degraded',
+          message: 'Queue health check failed',
+          error: (err as Error).message,
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
+  @Get('queues/statistics')
+  @ApiOperation({
+    summary: 'Queue statistics',
+    description:
+      'Returns detailed statistics for all BullMQ queues including job counts, processing times, and failure analysis.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Queue statistics retrieved successfully.',
+    type: QueueStatisticsResponseDto,
+  })
+  async getQueueStatistics(): Promise<QueueStatisticsResponseDto> {
+    try {
+      return await this.queueHealthService.getQueueStatistics();
+    } catch (err) {
+      this.logger.error(
+        `Queue statistics retrieval failed: ${(err as Error).message}`,
+      );
+      throw new HttpException(
+        {
+          message: 'Failed to retrieve queue statistics',
+          error: (err as Error).message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }
