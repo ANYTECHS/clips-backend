@@ -44,10 +44,10 @@ export class RetryBackoffConfigService {
   // Define default configurations for each queue type
   private readonly defaultConfigs: Record<string, RetryConfig> = {
     'clip-generation': {
-      attempts: 5,
+      attempts: 3,
       backoff: {
         type: 'exponential',
-        delay: 2000,
+        delay: 1000,
         multiplier: 2,
       },
     },
