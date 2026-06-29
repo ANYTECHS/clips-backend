@@ -77,7 +77,7 @@ Source video uploads or platform imports owned by users.
 | `fileSize` | `BigInt` | No | | Video file size in bytes |
 | `status` | `String` | Yes | `@default("pending")` `@index` | Processing status: `pending`, `processing`, `completed`, `failed` |
 | `processingError` | `String` | No | | Error details if processing failed |
-| `processingStats` | `Json` | No | | Metadata processing statistics |
+| `processingStats` | `Json` | No | | Metadata processing statistics. Schema: `{ momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, errorDetails?: string, uploadStarted?: string }` |
 | `targetPlatforms` | `Json` | No | | Target networks for clips (e.g. `["tiktok"]`) |
 | `createdAt` | `DateTime` | Yes | `@default(now())` | Import timestamp |
 | `updatedAt` | `DateTime` | Yes | `@updatedAt` | Last update timestamp |

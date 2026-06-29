@@ -192,8 +192,11 @@ export class VideoUploadService {
             bitrate: validation.metadata!.bitrate,
           },
           processingStats: {
+            momentsFound: 0,
             inputQuality: `${validation.metadata!.height}p`,
             durationSec: validation.metadata!.duration,
+            clipsGenerated: 0,
+            timeTakenMs: 0,
             uploadStarted: new Date().toISOString(),
           },
         },
