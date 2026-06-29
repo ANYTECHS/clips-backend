@@ -17,6 +17,7 @@ import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } fro
 import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
+import { ConfigService } from '../config/config.service';
 
 const OPEN_PAYOUT_STATUSES = [
   'pending',
@@ -506,20 +507,45 @@ export class PayoutsService {
       transaction.sign(sourceKeyPair);
 
       const submitResult = await server.submitTransaction(transaction);
+      const txHash = submitResult.hash;
+
+      this.logger.log(`Verifying transaction ${txHash} for payout ${payoutId}`);
+      const verification = await this.verifyTransaction(txHash);
+
+      if (!verification.successful) {
+        await this.prisma.earningsAuditLog.create({
+          data: {
+            userId: payout.user.id,
+            amount: payout.amount,
+            actionType: 'payout_verification_failed',
+          },
+        });
+        throw new Error(`Transaction verification failed for hash ${txHash}`);
+      }
+
+      await this.prisma.earningsAuditLog.create({
+        data: {
+          userId: payout.user.id,
+          amount: payout.amount,
+          actionType: 'payout_verification_success',
+        },
+      });
+
+      const confirmedTime = verification.confirmedAt || new Date();
 
       await this.prisma.payout.update({
         where: { id: payoutId },
         data: {
           status: 'completed',
           transactionId: transaction.hash().toString('hex'),
-          externalTransactionId: submitResult.hash,
-          onChainTxHash: submitResult.hash,
-          confirmedAt: new Date(),
+          externalTransactionId: txHash,
+          onChainTxHash: txHash,
+          confirmedAt: confirmedTime,
         },
       });
 
       this.logger.log(
-        `Payout ${payoutId} completed. Transaction hash: ${submitResult.hash}`,
+        `Payout ${payoutId} completed. Transaction hash: ${txHash}`,
       );
 
       void this.payoutReceiptService.generateAndSendReceipt({
@@ -528,8 +554,8 @@ export class PayoutsService {
         currency: payout.currency,
         method: payout.method,
         transactionId: transaction.hash().toString('hex'),
-        onChainTxHash: submitResult.hash,
-        confirmedAt: new Date(),
+        onChainTxHash: txHash,
+        confirmedAt: confirmedTime,
         recipientEmail: payout.user.email,
         walletAddress: payout.wallet.address,
       });
@@ -538,8 +564,8 @@ export class PayoutsService {
         id: payout.id,
         status: 'completed',
         transactionId: transaction.hash().toString('hex'),
-        externalTransactionId: submitResult.hash,
-        onChainTxHash: submitResult.hash,
+        externalTransactionId: txHash,
+        onChainTxHash: txHash,
       };
     } catch (error) {
       this.logger.error(`Stellar payout failed for ${payoutId}:`, error);
@@ -701,19 +727,44 @@ export class PayoutsService {
           transaction.sign(sourceKeyPair);
 
           const submitResult = await server.submitTransaction(transaction);
+          const txHash = submitResult.hash;
+
+          this.logger.log(`Verifying transaction ${txHash} for batch payout ${payoutId}`);
+          const verification = await this.verifyTransaction(txHash);
+
+          if (!verification.successful) {
+            await tx.earningsAuditLog.create({
+              data: {
+                userId: payout.user.id,
+                amount: payout.amount,
+                actionType: 'payout_verification_failed',
+              },
+            });
+            throw new Error(`Transaction verification failed for hash ${txHash}`);
+          }
+
+          await tx.earningsAuditLog.create({
+            data: {
+              userId: payout.user.id,
+              amount: payout.amount,
+              actionType: 'payout_verification_success',
+            },
+          });
+
+          const confirmedTime = verification.confirmedAt || new Date();
 
           await tx.payout.update({
             where: { id: payoutId },
             data: {
               status: 'completed',
               transactionId: transaction.hash().toString('hex'),
-              onChainTxHash: submitResult.hash,
-              confirmedAt: new Date(),
+              onChainTxHash: txHash,
+              confirmedAt: confirmedTime,
             },
           });
 
           this.logger.log(
-            `Payout ${payoutId} completed in batch. Transaction hash: ${submitResult.hash}`,
+            `Payout ${payoutId} completed in batch. Transaction hash: ${txHash}`,
           );
 
           void this.payoutReceiptService.generateAndSendReceipt({
@@ -722,8 +773,8 @@ export class PayoutsService {
             currency: payout.currency,
             method: payout.method,
             transactionId: transaction.hash().toString('hex'),
-            onChainTxHash: submitResult.hash,
-            confirmedAt: new Date(),
+            onChainTxHash: txHash,
+            confirmedAt: confirmedTime,
             recipientEmail: payout.user.email,
             walletAddress: payout.wallet.address,
           });
@@ -781,7 +832,7 @@ export class PayoutsService {
         onChainTxHash: { not: null },
         confirmedAt: null,
       },
-      select: { id: true, onChainTxHash: true, retryCount: true },
+      select: { id: true, onChainTxHash: true, retryCount: true, userId: true, amount: true },
     });
 
     if (pending.length === 0) return;
@@ -790,7 +841,7 @@ export class PayoutsService {
 
     for (const payout of pending) {
       try {
-        await this.confirmOneStellarPayout(payout.id, payout.onChainTxHash!, payout.retryCount);
+        await this.confirmOneStellarPayout(payout.id, payout.onChainTxHash!, payout.retryCount, payout.userId, payout.amount);
       } catch (error) {
         this.logger.error(
           `Confirmation poll failed for payout ${payout.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -803,6 +854,8 @@ export class PayoutsService {
     payoutId: number,
     txHash: string,
     currentPollCount: number,
+    userId: number,
+    amount: number,
   ): Promise<void> {
     const result = await this.stellarService.getTransactionStatus(txHash);
 
@@ -821,31 +874,84 @@ export class PayoutsService {
         });
         if (updated.count > 0) {
           this.logger.log(`Payout ${payoutId} confirmed on-chain (tx: ${txHash})`);
+          await this.prisma.earningsAuditLog.create({
+            data: {
+              userId,
+              amount,
+              actionType: 'payout_verification_success',
+            },
+          });
         }
       } else {
-        await this.prisma.payout.updateMany({
+        const updated = await this.prisma.payout.updateMany({
           where: { id: payoutId, status: { in: ['pending', 'processing'] } },
           data: { status: 'failed' },
         });
-        this.logger.warn(`Payout ${payoutId} rejected on-chain (tx: ${txHash})`);
+        if (updated.count > 0) {
+          this.logger.warn(`Payout ${payoutId} rejected on-chain (tx: ${txHash})`);
+          await this.prisma.earningsAuditLog.create({
+            data: {
+              userId,
+              amount,
+              actionType: 'payout_verification_failed',
+            },
+          });
+        }
       }
       return;
     }
 
     const newPollCount = currentPollCount + 1;
     if (newPollCount >= STELLAR_CONFIRMATION_MAX_POLLS) {
-      await this.prisma.payout.updateMany({
+      const updated = await this.prisma.payout.updateMany({
         where: { id: payoutId, status: { in: ['pending', 'processing'] } },
         data: { status: 'failed', retryCount: newPollCount },
       });
-      this.logger.warn(
-        `Payout ${payoutId} marked failed after ${newPollCount} unconfirmed polls (tx: ${txHash})`,
-      );
+      if (updated.count > 0) {
+        this.logger.warn(
+          `Payout ${payoutId} marked failed after ${newPollCount} unconfirmed polls (tx: ${txHash})`,
+        );
+        await this.prisma.earningsAuditLog.create({
+          data: {
+            userId,
+            amount,
+            actionType: 'payout_verification_failed',
+          },
+        });
+      }
     } else {
       await this.prisma.payout.update({
         where: { id: payoutId },
         data: { retryCount: newPollCount, lastAttemptAt: new Date() },
       });
     }
+  }
+
+  private async verifyTransaction(
+    txHash: string,
+  ): Promise<{ successful: boolean; confirmedAt?: Date }> {
+    const maxPolls = 3;
+    const pollIntervalMs = 1000;
+
+    for (let attempt = 1; attempt <= maxPolls; attempt++) {
+      try {
+        const status = await this.stellarService.getTransactionStatus(txHash);
+        if (status.found) {
+          return {
+            successful: !!status.successful,
+            confirmedAt: status.confirmedAt,
+          };
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Transaction status check attempt ${attempt} failed for ${txHash}: ${err.message}`,
+        );
+      }
+      if (attempt < maxPolls) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+    }
+
+    return { successful: false };
   }
 }
