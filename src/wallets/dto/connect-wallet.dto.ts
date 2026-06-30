@@ -1,5 +1,6 @@
-import { IsString, IsNotEmpty, IsIn, Matches, Length } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsIn, Matches, Length, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DEFAULT_CHAIN, SUPPORTED_CHAINS } from '../chain.constants';
 
 /** Stellar ED25519 public key: starts with G, exactly 56 Base32 characters */
 const STELLAR_PUBLIC_KEY_REGEX = /^G[A-Z2-7]{55}$/;
