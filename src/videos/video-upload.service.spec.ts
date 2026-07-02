@@ -287,6 +287,14 @@ describe('VideoUploadService', () => {
           status: 'pending',
           duration: 300,
           fileSize: BigInt(100 * 1024 * 1024),
+          processingStats: {
+            momentsFound: 0,
+            inputQuality: '1080p',
+            durationSec: 300,
+            clipsGenerated: 0,
+            timeTakenMs: 0,
+            uploadStarted: expect.any(String),
+          },
         }),
       });
 

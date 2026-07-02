@@ -223,15 +223,25 @@ export class ClipsService {
     try {
       const video = await this.prisma.video.findUnique({
         where: { id: Number(payload.videoId) },
-        select: { status: true },
+        select: { status: true, processingStats: true },
       });
 
       if (video && video.status !== 'cancelled') {
+        const currentStats = (video.processingStats as Record<string, any>) || {};
         await this.prisma.video.update({
           where: { id: Number(payload.videoId) },
           data: {
             status: 'failed',
             processingError: payload.failedReason,
+            processingStats: {
+              ...currentStats,
+              errorDetails: payload.failedReason,
+              momentsFound: currentStats.momentsFound ?? 0,
+              inputQuality: currentStats.inputQuality ?? 'unknown',
+              durationSec: currentStats.durationSec ?? 0,
+              clipsGenerated: currentStats.clipsGenerated ?? 0,
+              timeTakenMs: currentStats.timeTakenMs ?? 0,
+            },
             updatedAt: new Date(),
           },
         });
