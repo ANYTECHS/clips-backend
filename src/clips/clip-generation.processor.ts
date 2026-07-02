@@ -521,7 +521,7 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
     const backoffDelay = job.opts.backoff
       ? typeof job.opts.backoff === 'number'
         ? job.opts.backoff
-        : (job.opts.backoff.delay ?? 2000) * Math.pow(2, job.attemptsMade - 1)
+        : (job.opts.backoff.delay ?? 1000) * Math.pow(2, job.attemptsMade - 1)
       : 0;
 
     this.logger.warn(

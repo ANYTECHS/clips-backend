@@ -48,11 +48,11 @@ export const CLIP_GENERATION_WORKER_OPTIONS = {
  *                   post-mortem inspection and manual retry.
  */
 export const CLIP_JOB_OPTIONS = {
-  attempts: 5,
+  attempts: 3,
   backoff: {
     type: 'exponential' as const,
     /** Base delay in ms — doubles on every retry */
-    delay: 2000,
+    delay: 1000,
   },
   priority: CLIP_GENERATION_QUEUE_PRIORITY,
   removeOnComplete: { count: 100 },
