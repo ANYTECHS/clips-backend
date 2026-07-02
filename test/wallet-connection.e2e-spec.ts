@@ -7,6 +7,9 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { StellarService } from '../src/stellar/stellar.service';
 import { JwtAuthGuard } from '../src/auth/guards/jwt-auth.guard';
 import { WalletOwnershipGuard } from '../src/wallets/guards/wallet-ownership.guard';
+import { WalletManagementService } from '../src/wallets/wallet-management.service';
+import { WalletValidationService } from '../src/wallets/wallet-validation.service';
+import { WalletBalanceService } from '../src/wallets/wallet-balance.service';
 
 /**
  * E2E / integration tests for the wallet connection flow.
@@ -63,6 +66,9 @@ describe('Wallet connection flow (E2E)', () => {
       controllers: [WalletsController],
       providers: [
         WalletsService,
+        WalletManagementService,
+        WalletValidationService,
+        WalletBalanceService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: StellarService, useValue: mockStellarService },
       ],
@@ -99,7 +105,14 @@ describe('Wallet connection flow (E2E)', () => {
       try {
         await request(unauthApp.getHttpServer())
           .post('/wallets/connect')
-          .send({ address: VALID_STELLAR_ADDRESS, chain: 'stellar', type: 'freighter' })
+          .send({
+            address: VALID_STELLAR_ADDRESS,
+            chain: 'stellar',
+            type: 'freighter',
+            publicKey: VALID_STELLAR_ADDRESS,
+            signature: 'mock-sig',
+            signedMessage: 'mock-msg',
+          })
           .expect(403); // NestJS returns 403 when canActivate returns false
       } finally {
         await unauthApp.close();
@@ -111,21 +124,42 @@ describe('Wallet connection flow (E2E)', () => {
 
       await request(authedApp.getHttpServer())
         .post('/wallets/connect')
-        .send({ address: 'not-a-valid-address', chain: 'stellar', type: 'freighter' })
+        .send({
+          address: 'not-a-valid-address',
+          chain: 'stellar',
+          type: 'freighter',
+          publicKey: VALID_STELLAR_ADDRESS,
+          signature: 'mock-sig',
+          signedMessage: 'mock-msg',
+        })
         .expect(400);
     });
 
     it('returns 400 for unsupported chain', async () => {
       await request(authedApp.getHttpServer())
         .post('/wallets/connect')
-        .send({ address: VALID_STELLAR_ADDRESS, chain: 'ethereum', type: 'freighter' })
+        .send({
+          address: VALID_STELLAR_ADDRESS,
+          chain: 'ethereum',
+          type: 'freighter',
+          publicKey: VALID_STELLAR_ADDRESS,
+          signature: 'mock-sig',
+          signedMessage: 'mock-msg',
+        })
         .expect(400);
     });
 
     it('returns 400 for unsupported wallet type', async () => {
       await request(authedApp.getHttpServer())
         .post('/wallets/connect')
-        .send({ address: VALID_STELLAR_ADDRESS, chain: 'stellar', type: 'metamask' })
+        .send({
+          address: VALID_STELLAR_ADDRESS,
+          chain: 'stellar',
+          type: 'metamask',
+          publicKey: VALID_STELLAR_ADDRESS,
+          signature: 'mock-sig',
+          signedMessage: 'mock-msg',
+        })
         .expect(400);
     });
 
@@ -143,11 +177,18 @@ describe('Wallet connection flow (E2E)', () => {
 
       const res = await request(authedApp.getHttpServer())
         .post('/wallets/connect')
-        .send({ address: VALID_STELLAR_ADDRESS, chain: 'stellar', type: 'freighter' })
+        .send({
+          address: VALID_STELLAR_ADDRESS,
+          chain: 'stellar',
+          type: 'freighter',
+          publicKey: VALID_STELLAR_ADDRESS,
+          signature: 'mock-sig',
+          signedMessage: 'mock-msg',
+        })
         .expect(200);
 
       expect(res.body.id).toBe(1);
-      expect(res.body.address).toBe(VALID_STELLAR_ADDRESS);
+      expect(res.body.address).toBe('GC6X********UHTZF3');
 
       // Verify the DB upsert was called with the correct userId
       expect(mockPrisma.wallet.upsert).toHaveBeenCalledWith(
@@ -171,7 +212,14 @@ describe('Wallet connection flow (E2E)', () => {
 
       const res = await request(authedApp.getHttpServer())
         .post('/wallets/connect')
-        .send({ address: VALID_STELLAR_ADDRESS, chain: 'stellar', type: 'freighter' })
+        .send({
+          address: VALID_STELLAR_ADDRESS,
+          chain: 'stellar',
+          type: 'freighter',
+          publicKey: VALID_STELLAR_ADDRESS,
+          signature: 'mock-sig',
+          signedMessage: 'mock-msg',
+        })
         .expect(200);
 
       // The upsert update payload must clear deletedAt to reactivate

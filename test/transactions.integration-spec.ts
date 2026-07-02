@@ -8,6 +8,7 @@ import { TransactionsService } from '../src/transactions/transactions.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StellarService } from '../src/stellar/stellar.service';
 import { EncryptionService } from '../src/encryption/encryption.service';
+import { RedisService } from '../src/redis/redis.service';
 
 jest.mock('../src/prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
@@ -62,6 +63,14 @@ class InMemoryPrisma {
   }
 }
 
+const mockRedisService = {
+  get: jest.fn().mockResolvedValue(null),
+  setex: jest.fn().mockResolvedValue(undefined),
+  getClient: jest.fn().mockReturnValue({
+    incrbyfloat: jest.fn().mockResolvedValue(undefined),
+  }),
+};
+
 describe('Transactions integration', () => {
   let service: TransactionsService;
   let prisma: InMemoryPrisma;
@@ -70,6 +79,10 @@ describe('Transactions integration', () => {
 
   beforeEach(async () => {
     prisma = new InMemoryPrisma();
+    mockRedisService.get.mockReset();
+    mockRedisService.get.mockResolvedValue(null);
+    mockRedisService.setex.mockReset();
+    mockRedisService.setex.mockResolvedValue(undefined);
 
     stellarService = {
       validateAddress: jest.fn().mockReturnValue({ valid: true }),
@@ -87,6 +100,7 @@ describe('Transactions integration', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: StellarService, useValue: stellarService },
         { provide: EncryptionService, useValue: encryptionService },
+        { provide: RedisService, useValue: mockRedisService },
       ],
     }).compile();
 

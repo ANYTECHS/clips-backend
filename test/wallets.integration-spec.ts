@@ -7,9 +7,11 @@ import {
 import { WalletsService } from '../src/wallets/wallets.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StellarService } from '../src/stellar/stellar.service';
+import { WalletManagementService } from '../src/wallets/wallet-management.service';
+import { WalletValidationService } from '../src/wallets/wallet-validation.service';
 
 jest.mock('../src/prisma/prisma.service', () => ({
-  PrismaService: class PrismaService {},
+  PrismaService: class PrismaService { },
 }));
 
 // A valid 56-char Stellar public key (G...)
@@ -115,6 +117,8 @@ describe('Wallets integration', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WalletsService,
+        WalletManagementService,
+        WalletValidationService,
         { provide: PrismaService, useValue: prisma },
         { provide: StellarService, useValue: stellarService },
       ],
@@ -131,7 +135,7 @@ describe('Wallets integration', () => {
       const result = await service.connect(1, dto);
 
       expect(result.id).toBeDefined();
-      expect(result.address).toBe(VALID_ADDRESS);
+      expect(result.address).toBe('GC6X********UHTZF3');
       expect(result.userId).toBe(1);
       expect(prisma._getWallets()).toHaveLength(1);
     });
