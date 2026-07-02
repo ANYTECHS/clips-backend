@@ -13,6 +13,11 @@ import {
   STELLAR_CONFIRMATION_MAX_POLLS,
 } from './stellar-confirmation.queue';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
+import { EarningsService } from '../earnings/earnings.service';
+import { ConfigService } from '../config/config.service';
+import { PayoutReceiptService } from './payout-receipt.service';
+import { FeeService } from './fee.service';
+import { PayoutApprovalService } from './payout-approval.service';
 
 const TX_HASH = 'abc123deadbeef';
 const CONFIRMED_AT = new Date('2025-01-15T10:00:00.000Z');
@@ -30,6 +35,7 @@ const mockPrismaService = {
   wallet: { findFirst: jest.fn() },
   user: { findUnique: jest.fn() },
   earning: { aggregate: jest.fn() },
+  earningsAuditLog: { create: jest.fn() },
   $transaction: jest.fn(),
 };
 
@@ -56,20 +62,24 @@ function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingMo
       { provide: StellarService, useValue: mockStellarService },
       { provide: CircuitBreakerService, useValue: { execute: jest.fn() } },
       {
-        provide: 'PayoutReceiptService',
+        provide: PayoutReceiptService,
         useValue: { generateAndSendReceipt: jest.fn() },
       },
       {
-        provide: 'FeeService',
+        provide: FeeService,
         useValue: { calculateFee: jest.fn() },
       },
       {
-        provide: 'PayoutApprovalService',
+        provide: PayoutApprovalService,
         useValue: { resolveInitialStatus: jest.fn(), requiresManualApproval: jest.fn() },
       },
       {
-        provide: 'EarningsService',
+        provide: EarningsService,
         useValue: {},
+      },
+      {
+        provide: ConfigService,
+        useValue: { minStellarPayout: 5 },
       },
       { provide: getQueueToken(STELLAR_CONFIRMATION_QUEUE), useValue: mockQueue },
       { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
@@ -137,18 +147,19 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
         { provide: StellarService, useValue: mockStellarService },
         { provide: CircuitBreakerService, useValue: { execute: jest.fn() } },
         {
-          provide: 'PayoutReceiptService',
+          provide: PayoutReceiptService,
           useValue: { generateAndSendReceipt: jest.fn() },
         },
         {
-          provide: 'FeeService',
+          provide: FeeService,
           useValue: { calculateFee: jest.fn() },
         },
         {
-          provide: 'PayoutApprovalService',
+          provide: PayoutApprovalService,
           useValue: { resolveInitialStatus: jest.fn(), requiresManualApproval: jest.fn() },
         },
-        { provide: 'EarningsService', useValue: {} },
+        { provide: EarningsService, useValue: {} },
+        { provide: ConfigService, useValue: { minStellarPayout: 5 } },
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
       ],
     }).compile();
@@ -188,7 +199,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
   describe('successful on-chain confirmation', () => {
     it('should mark payout as completed with confirmedAt from Horizon', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 1, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 1, onChainTxHash: TX_HASH, retryCount: 0, userId: 10, amount: 25 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -196,6 +207,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
         confirmedAt: CONFIRMED_AT,
       });
       mockPrismaService.payout.updateMany.mockResolvedValue({ count: 1 });
+      mockPrismaService.earningsAuditLog.create.mockResolvedValue({ id: 1 });
 
       await service.pollPendingStellarPayouts();
 
@@ -208,6 +220,14 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
         data: {
           status: 'completed',
           confirmedAt: CONFIRMED_AT,
+        },
+      });
+
+      expect(mockPrismaService.earningsAuditLog.create).toHaveBeenCalledWith({
+        data: {
+          userId: 10,
+          amount: 25,
+          actionType: 'payout_verification_success',
         },
       });
     });
@@ -254,19 +274,28 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
   describe('failed on-chain transaction', () => {
     it('should mark payout as failed when transaction is rejected on-chain', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 4, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 4, onChainTxHash: TX_HASH, retryCount: 0, userId: 10, amount: 25 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
         successful: false,
       });
       mockPrismaService.payout.updateMany.mockResolvedValue({ count: 1 });
+      mockPrismaService.earningsAuditLog.create.mockResolvedValue({ id: 1 });
 
       await service.pollPendingStellarPayouts();
 
       expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith({
         where: { id: 4, status: { in: ['pending', 'processing'] } },
         data: { status: 'failed' },
+      });
+
+      expect(mockPrismaService.earningsAuditLog.create).toHaveBeenCalledWith({
+        data: {
+          userId: 10,
+          amount: 25,
+          actionType: 'payout_verification_failed',
+        },
       });
     });
 

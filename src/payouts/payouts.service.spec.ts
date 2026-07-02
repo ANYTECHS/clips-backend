@@ -39,6 +39,9 @@ describe('PayoutsService', () => {
     earning: {
       aggregate: jest.fn(),
     },
+    earningsAuditLog: {
+      create: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -46,6 +49,7 @@ describe('PayoutsService', () => {
     horizonUrl: 'https://horizon-testnet.stellar.org',
     networkPassphrase: 'Test SDF Network ; September 2015',
     getAccountBalance: jest.fn(),
+    getTransactionStatus: jest.fn(),
     validateAddress: jest.fn().mockReturnValue({ valid: true }),
   };
 
@@ -167,6 +171,7 @@ describe('PayoutsService', () => {
     });
 
     it('should create payout with available balance after fees', async () => {
+      mockConfigService.minStellarPayout = 1;
       mockPrismaService.payout.findFirst.mockResolvedValue(null);
       mockPrismaService.wallet.findFirst.mockResolvedValue({
         id: 1,
@@ -339,6 +344,132 @@ describe('PayoutsService', () => {
       await expect(service.processPayout(1)).rejects.toThrow(
         InternalServerErrorException,
       );
+    });
+
+    it('should successfully verify and complete payout, logging payout_verification_success', async () => {
+      process.env.STELLAR_PLATFORM_SECRET = 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+      const destination = StellarSdk.Keypair.random().publicKey();
+
+      const payout = {
+        id: 101,
+        amount: 100,
+        currency: 'USD',
+        method: 'stellar',
+        status: 'approved',
+        wallet: { address: destination },
+        user: { id: 1, email: 'user@example.com' },
+        retryCount: 0,
+      };
+
+      mockPrismaService.payout.findUnique.mockResolvedValue(payout);
+      mockPrismaService.payout.update.mockResolvedValue({ id: 101, status: 'completed' });
+      mockPrismaService.earningsAuditLog.create = jest.fn().mockResolvedValue({ id: 1 });
+
+      jest.spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount').mockResolvedValue({
+        sequenceNumber: () => '1',
+        accountId: () => mockPlatformAddress,
+      } as any);
+      jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
+        publicKey: () => mockPlatformAddress,
+        sign: () => Buffer.from([]),
+      } as any);
+      jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
+        return this;
+      });
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
+        return this;
+      });
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
+        return {
+          sign: () => {},
+          hash: () => Buffer.from('abc123deadbeef', 'hex'),
+        } as any;
+      });
+      jest.spyOn(StellarSdk.Horizon.Server.prototype, 'submitTransaction').mockResolvedValue({
+        hash: 'abc123deadbeef',
+      } as any);
+      mockStellarService.getTransactionStatus.mockResolvedValue({
+        found: true,
+        successful: true,
+        confirmedAt: new Date('2026-06-29T12:00:00.000Z'),
+      });
+
+      const result = await service.processPayout(101);
+
+      expect(result.status).toBe('completed');
+      expect(result.externalTransactionId).toBe('abc123deadbeef');
+
+      expect(mockPrismaService.earningsAuditLog.create).toHaveBeenCalledWith({
+        data: {
+          userId: 1,
+          amount: 100,
+          actionType: 'payout_verification_success',
+        },
+      });
+
+      delete process.env.STELLAR_PLATFORM_SECRET;
+    });
+
+    it('should fail if transaction verification fails, logging payout_verification_failed and throwing error', async () => {
+      process.env.STELLAR_PLATFORM_SECRET = 'SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
+      const destination = StellarSdk.Keypair.random().publicKey();
+
+      const payout = {
+        id: 102,
+        amount: 100,
+        currency: 'USD',
+        method: 'stellar',
+        status: 'approved',
+        wallet: { address: destination },
+        user: { id: 1, email: 'user@example.com' },
+        retryCount: 0,
+      };
+
+      mockPrismaService.payout.findUnique.mockResolvedValue(payout);
+      mockPrismaService.payout.update.mockResolvedValue({ id: 102, status: 'failed' });
+      mockPrismaService.earningsAuditLog.create = jest.fn().mockResolvedValue({ id: 2 });
+
+      jest.spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount').mockResolvedValue({
+        sequenceNumber: () => '1',
+        accountId: () => mockPlatformAddress,
+      } as any);
+      jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
+        publicKey: () => mockPlatformAddress,
+        sign: () => Buffer.from([]),
+      } as any);
+      jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
+        return this;
+      });
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
+        return this;
+      });
+      jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
+        return {
+          sign: () => {},
+          hash: () => Buffer.from('abc123deadbeef', 'hex'),
+        } as any;
+      });
+      jest.spyOn(StellarSdk.Horizon.Server.prototype, 'submitTransaction').mockResolvedValue({
+        hash: 'abc123deadbeef',
+      } as any);
+      mockStellarService.getTransactionStatus.mockResolvedValue({
+        found: true,
+        successful: false,
+      });
+
+      await expect(service.processPayout(102)).rejects.toThrow();
+
+      expect(mockPrismaService.earningsAuditLog.create).toHaveBeenCalledWith({
+        data: {
+          userId: 1,
+          amount: 100,
+          actionType: 'payout_verification_failed',
+        },
+      });
+
+      delete process.env.STELLAR_PLATFORM_SECRET;
     });
   });
 
