@@ -429,7 +429,7 @@ describe('NftMintService.prepareMintTx', () => {
     });
     expect(prismaMock.clip.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { nftStatus: 'minting' },
+      data: { nftStatus: 'minting', royaltyBps: 1000 },
     });
   });
 

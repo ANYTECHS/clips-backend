@@ -16,6 +16,7 @@ import type { Request } from 'express';
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
+import { ConfirmMintDto } from './dto/confirm-mint.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -78,6 +79,29 @@ export class NftController {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
     return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
+  }
+
+  /**
+   * POST /nfts/confirm-mint
+   * Finalizes mint tracking after the client submits a signed Soroban tx.
+   * Sets mintAddress, mintedAt, and nftStatus=minted. Rejects duplicates.
+   */
+  @UseGuards(LoginGuard)
+  @Post('confirm-mint')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
+  @ApiOperation({ summary: 'Confirm a completed on-chain NFT mint' })
+  @ApiResponse({ status: 200, description: 'Mint confirmed; clip mint fields updated' })
+  @ApiResponse({ status: 400, description: 'Clip already minted or invalid request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Clip not found' })
+  async confirmMint(
+    @Body() dto: ConfirmMintDto,
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    return this.nftMintService.confirmMint(dto.clipId, dto.mintAddress);
   }
 
   /**

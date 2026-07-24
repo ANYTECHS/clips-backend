@@ -77,7 +77,7 @@ model Clip {
   endTime       Float
   duration      Float
   viralityScore Float?
-  royaltyBps    Int?
+  royaltyBps    Int?       @default(1000)
   postStatus    Json?
   postedAt      DateTime?
   metadataUri   String?
