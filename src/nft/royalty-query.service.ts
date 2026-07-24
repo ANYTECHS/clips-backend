@@ -8,10 +8,13 @@ import { StellarService } from '../stellar/stellar.service';
 import { RedisService } from '../redis/redis.service';
 import StellarSdk from '@stellar/stellar-sdk';
 import { CacheKeyBuilder } from './cache-key.util';
-import Redis from 'ioredis';
-import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
+import {
+  CircuitBreakerService,
+  CircuitBreakerConfig,
+} from '../common/circuit-breaker/circuit-breaker.service';
 
-const CACHE_TTL_SECONDS = 300; // 5 minutes
+/** Redis cache TTL for on-chain royalty responses (5 minutes). */
+const CACHE_TTL_SECONDS = 300;
 
 export interface RoyaltyInfo {
   royaltyBps: number;
@@ -21,7 +24,6 @@ export interface RoyaltyInfo {
 @Injectable()
 export class RoyaltyQueryService {
   private readonly logger = new Logger(RoyaltyQueryService.name);
-  private readonly redis: Redis;
 
   private readonly CONTRACT_ID =
     process.env.SOROBAN_NFT_CONTRACT_ID ||
@@ -36,15 +38,9 @@ export class RoyaltyQueryService {
 
   constructor(
     private readonly stellarService: StellarService,
+    private readonly redisService: RedisService,
     private readonly circuitBreakerService: CircuitBreakerService,
-  ) {
-    this.redis = new Redis({
-      host: process.env.REDIS_HOST ?? 'localhost',
-      port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-      password: process.env.REDIS_PASSWORD || undefined,
-      lazyConnect: true,
-    });
-  }
+  ) {}
 
   /**
    * Returns royalty info for a given NFT mint address (token ID).
@@ -53,7 +49,7 @@ export class RoyaltyQueryService {
   async getRoyaltyInfo(mintAddress: string): Promise<RoyaltyInfo> {
     const cacheKey = CacheKeyBuilder.royalty(mintAddress);
 
-    const cached = await this.redis.get(cacheKey);
+    const cached = await this.redisService.get(cacheKey);
     if (cached) {
       this.logger.debug(`Cache hit for royalty:${mintAddress}`);
       return JSON.parse(cached) as RoyaltyInfo;
@@ -61,7 +57,11 @@ export class RoyaltyQueryService {
 
     const result = await this.queryOnChainRoyalty(mintAddress);
 
-    await this.redis.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(result));
+    await this.redisService.setex(
+      cacheKey,
+      CACHE_TTL_SECONDS,
+      JSON.stringify(result),
+    );
 
     return result;
   }
@@ -100,22 +100,24 @@ export class RoyaltyQueryService {
 
     let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
     try {
-      // Simulate transaction with circuit breaker protection
       simulation = await this.circuitBreakerService.execute(
         this.sorobanCircuitBreakerConfig,
         async () => server.simulateTransaction(tx),
       );
     } catch (err) {
-      // Handle ServiceUnavailableException from circuit breaker
       if (err.name === 'ServiceUnavailableException') {
-        this.logger.error(`Soroban service unavailable during royalty query for ${mintAddress}`);
+        this.logger.error(
+          `Soroban service unavailable during royalty query for ${mintAddress}`,
+        );
         throw new InternalServerErrorException(
           'Soroban service temporarily unavailable. Please try again later.',
         );
       }
 
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Soroban simulation failed for token ${mintAddress}: ${msg}`);
+      this.logger.error(
+        `Soroban simulation failed for token ${mintAddress}: ${msg}`,
+      );
       throw new InternalServerErrorException(
         `Failed to query royalty from contract: ${msg}`,
       );
@@ -127,9 +129,8 @@ export class RoyaltyQueryService {
       );
     }
 
-    const results = (
-      simulation as { results?: Array<{ xdr: string }> }
-    ).results;
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
 
     if (!results?.[0]?.xdr) {
       throw new InternalServerErrorException(
@@ -138,9 +139,10 @@ export class RoyaltyQueryService {
     }
 
     const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
-    const royaltyMap = StellarSdk.scValToNative(returnValue) as Map<string, bigint> | Record<string, bigint>;
+    const royaltyMap = StellarSdk.scValToNative(returnValue) as
+      | Map<string, bigint>
+      | Record<string, bigint>;
 
-    // Extract first (creator) entry from the royalty map
     const entries: [string, bigint][] =
       royaltyMap instanceof Map
         ? Array.from(royaltyMap.entries())

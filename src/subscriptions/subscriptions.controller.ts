@@ -23,7 +23,9 @@ export class SubscriptionsController {
   constructor(private readonly stellarPaymentService: StellarPaymentService) {}
 
   @Post('create-stellar')
-  @ApiOperation({ summary: 'Create Stellar payment intent for subscription' })
+  @ApiOperation({
+    summary: 'Create Stellar payment intent for subscription (XLM, USDC, or custom asset)',
+  })
   @ApiResponse({
     status: 201,
     description: 'Payment intent created successfully',
@@ -62,12 +64,15 @@ export class SubscriptionsController {
   }
 
   @Post('stellar/verify')
-  @ApiOperation({ summary: 'Verify Stellar payment transaction' })
+  @ApiOperation({
+    summary: 'Verify Stellar payment and activate subscription on success',
+  })
   @ApiQuery({ name: 'paymentIntentId', description: 'Payment intent ID' })
   @ApiQuery({ name: 'transactionHash', description: 'Stellar transaction hash' })
   @ApiResponse({
     status: 200,
-    description: 'Payment verification result',
+    description:
+      'Payment verification result. verified=true activates the subscription; verified=false leaves it inactive.',
   })
   @HttpCode(HttpStatus.OK)
   async verifyStellarPayment(

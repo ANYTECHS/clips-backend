@@ -16,9 +16,17 @@ import { NftMintGuard } from './guards/nft-mint.guard';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
-  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
+  imports: [
+    PrismaModule,
+    StellarModule,
+    CircuitBreakerModule,
+    IpfsUploadModule,
+    NftOwnershipModule,
+    RedisModule,
+  ],
   providers: [
     NftConfig,
     NftService,

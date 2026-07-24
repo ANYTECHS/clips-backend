@@ -11,6 +11,7 @@ interface ClipData {
   viralityScore: number | null;
   createdAt: Date;
   royaltyBps: number;
+  royaltyRecipient?: string | null;
 }
 
 /**
@@ -25,18 +26,28 @@ export class NftMetadataService {
    * with wallets, explorers, and marketplaces.
    */
   build(clip: ClipData): NftMetadata {
+    const royaltyBps = clip.royaltyBps;
+    const royaltyRecipient = clip.royaltyRecipient?.trim() || undefined;
+
     return {
       name: clip.title?.trim() || `Clip #${clip.id}`,
       description: clip.caption?.trim() || `ClipCash generated clip ${clip.id}`,
       image: clip.thumbnail ?? clip.clipUrl,
       animation_url: clip.clipUrl,
       attributes: [
-        { trait_type: 'clipId', value: clip.id },
-        { trait_type: 'duration', value: clip.duration },
-        { trait_type: 'viralityScore', value: clip.viralityScore ?? 0 },
-        { trait_type: 'royaltyBps', value: clip.royaltyBps },
-        { trait_type: 'createdAt', value: clip.createdAt.toISOString() },
+        { trait_type: 'Clip Duration', value: clip.duration },
+        { trait_type: 'Virality Score', value: clip.viralityScore ?? 0 },
+        { trait_type: 'Creation Date', value: clip.createdAt.toISOString() },
+        { trait_type: 'Royalty BPS', value: royaltyBps },
+        { trait_type: 'Royalty Percent', value: royaltyBps / 100 },
       ],
+      seller_fee_basis_points: royaltyBps,
+      ...(royaltyRecipient ? { fee_recipient: royaltyRecipient } : {}),
+      royalty: {
+        bps: royaltyBps,
+        percent: royaltyBps / 100,
+        ...(royaltyRecipient ? { recipient: royaltyRecipient } : {}),
+      },
     };
   }
 }

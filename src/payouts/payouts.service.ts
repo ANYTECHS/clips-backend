@@ -142,16 +142,9 @@ export class PayoutsService {
       );
     }
 
-    const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
-    if (!platformSecret) {
-      throw new InternalServerErrorException(
-        'STELLAR_PLATFORM_SECRET environment variable is not set',
-      );
-    }
-
-    const sourceKeyPair = StellarSdk.Keypair.fromSecret(platformSecret);
+    // Build an *unsigned* payment transaction for the platform (or ops) to sign later.
     const server = new StellarSdk.Horizon.Server(this.stellarService.horizonUrl);
-    const sourceAccount = await server.loadAccount(sourceKeyPair.publicKey());
+    const sourceAccount = await server.loadAccount(platformAddress);
 
     const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: StellarSdk.BASE_FEE,
@@ -166,8 +159,6 @@ export class PayoutsService {
       )
       .setTimeout(60)
       .build();
-
-    transaction.sign(sourceKeyPair);
 
     const transactionId = transaction.hash().toString('hex');
     const stellarXdr = transaction.toXDR();
