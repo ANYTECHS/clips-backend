@@ -24,12 +24,14 @@ import { ClipsService } from './clips.service.js';
 import type { ClipSortField, SortOrder } from './clips.service.js';
 import { CreateClipDto } from './dto/create-clip.dto.js';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto.js';
+import { UpdateClipRoyaltyDto } from './dto/update-clip-royalty.dto.js';
 import { LoginGuard } from '../auth/guards/login.guard.js';
 import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto.js';
 import { PublishClipDto } from './dto/publish-clip.dto.js';
 import { ClipPublishService } from './clip-publish.service.js';
 import type { ClipGenerationJob } from './clip-generation.processor';
 import { QueueRateLimitGuard, QueueRateLimit } from '../common/guards/queue-rate-limit.guard';
+import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto.js';
 
 @ApiTags('clips')
 @ApiBearerAuth('access-token')
@@ -180,5 +182,32 @@ export class ClipsController {
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
     return this.clipsService.updateCaption(Number(id), userId, caption);
+  }
+
+  @Patch(':id/royalty')
+  @ApiOperation({
+    summary: 'Update clip NFT royalty BPS',
+    description:
+      'Configure creator royalty (0–1500 BPS) for a clip before minting. Defaults to 1000 (10%) when omitted.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID' })
+  @ApiResponse({ status: 200, description: 'Royalty updated' })
+  @ApiResponse({ status: 400, description: 'Invalid royaltyBps (must be 0–1500)' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Clip not found' })
+  async updateRoyalty(
+    @Param('id') id: string,
+    @Body() dto: UpdateClipRoyaltyDto,
+    @Req() req: Request,
+  ) {
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipsService.updateRoyalty(
+      Number(id),
+      userId,
+      dto.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
+    );
   }
 }

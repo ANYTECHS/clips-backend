@@ -1,6 +1,9 @@
 import { IsString, IsNotEmpty, IsOptional, IsUrl } from 'class-validator';
 import { Type } from 'class-transformer';
-import { IsValidRoyaltyBps } from '../../common/validators/decorators';
+import {
+  IsValidRoyaltyBps,
+  CLIP_ROYALTY_BPS_MAX,
+} from '../../common/validators/decorators';
 
 /** @deprecated Use CreateMintDto */
 export type MintClipDto = CreateMintDto;
@@ -22,11 +25,11 @@ export class CreateMintDto {
   metadataUri?: string;
 
   /**
-   * NFT royalty in Basis Points (BPS). 0–10000 (0–100%).
+   * NFT royalty in Basis Points (BPS). 0–1500 (0–15%).
    * Defaults to 1000 (10%) if not provided.
    */
   @IsOptional()
   @Type(() => Number)
-  @IsValidRoyaltyBps()
+  @IsValidRoyaltyBps({ max: CLIP_ROYALTY_BPS_MAX })
   royaltyBps?: number;
 }

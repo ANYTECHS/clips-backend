@@ -567,6 +567,48 @@ export class ClipsService {
     return { id, caption };
   }
 
+  /**
+   * Persist NFT royalty BPS on a clip owned by the authenticated user.
+   * Validated range is 0–1500; callers should pass DTO-validated values.
+   */
+  async updateRoyalty(
+    id: number,
+    userId: number,
+    royaltyBps: number,
+  ): Promise<{ id: number; royaltyBps: number }> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        nftStatus: true,
+        mintAddress: true,
+        video: { select: { userId: true } },
+      },
+    });
+
+    if (!clip) {
+      throw new NotFoundException(`Clip ${id} not found`);
+    }
+
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException('You do not have permission to update this clip');
+    }
+
+    if (clip.nftStatus === 'minted' || clip.nftStatus === 'minting' || clip.mintAddress) {
+      throw new BadRequestException(
+        'Cannot change royalty after minting has started or completed',
+      );
+    }
+
+    await this.prisma.clip.update({
+      where: { id },
+      data: { royaltyBps, updatedAt: new Date() },
+    });
+
+    this.logger.log(`Clip ${id} royaltyBps updated to ${royaltyBps}`);
+    return { id, royaltyBps };
+  }
+
   async cancelVideo(
     videoId: string,
     userId?: number,

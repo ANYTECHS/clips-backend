@@ -22,6 +22,7 @@ import { PrismaService } from '../prisma/prisma.service';
 // Removed duplicate type import of VideoService (line 21) and duplicate constructor block (lines 108-114). Updated processUploadedVideo to use injected videoService.
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto';
 
 export interface ClipGenerationJob {
   videoId: string;
@@ -487,6 +488,7 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
         caption: result.caption,
         error: result.error,
         localFilePath: result.localFilePath,
+        royaltyBps: result.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
       });
     } catch (error) {
       this.logger.error(`Failed to update clip ${clipId} after successful generation: ${error.message}`);
@@ -624,6 +626,10 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
+      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      nftStatus: 'none',
+      mintAddress: null,
+      mintedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

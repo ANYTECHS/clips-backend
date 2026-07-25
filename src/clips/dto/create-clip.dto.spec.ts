@@ -55,4 +55,34 @@ describe('CreateClipDto validation', () => {
     const errors = await validate(makeValid({ startTime: 0, endTime: 300 }));
     expect(errors).toHaveLength(0);
   });
+
+  it('passes without royaltyBps (optional, defaults to 1000 at persist)', async () => {
+    const errors = await validate(makeValid());
+    expect(errors.some((e) => e.property === 'royaltyBps')).toBe(false);
+  });
+
+  it('passes with royaltyBps = 0', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 0 }));
+    expect(errors).toHaveLength(0);
+  });
+
+  it('passes with royaltyBps = 1000 (default 10%)', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 1000 }));
+    expect(errors).toHaveLength(0);
+  });
+
+  it('passes with royaltyBps = 1500 (max 15%)', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 1500 }));
+    expect(errors).toHaveLength(0);
+  });
+
+  it('fails with royaltyBps = -1', async () => {
+    const errors = await validate(makeValid({ royaltyBps: -1 }));
+    expect(errors.some((e) => e.property === 'royaltyBps')).toBe(true);
+  });
+
+  it('fails with royaltyBps = 1501 (>15%)', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 1501 }));
+    expect(errors.some((e) => e.property === 'royaltyBps')).toBe(true);
+  });
 });

@@ -189,10 +189,16 @@ export class NftMintService {
       );
     }
 
-    // Set minting state before blockchain interaction
+    // Set minting state before blockchain interaction; persist resolved royalty default
+    const resolvedRoyaltyBps =
+      this.royaltyConfigurationService.getCreatorRoyaltyBps(clip.royaltyBps);
+
     await this.prisma.clip.update({
       where: { id: clipId },
-      data: { nftStatus: 'minting' },
+      data: {
+        nftStatus: 'minting',
+        royaltyBps: resolvedRoyaltyBps,
+      },
     });
 
     try {
@@ -213,7 +219,7 @@ export class NftMintService {
 
       const royaltyMapEntries = this.royaltyConfigurationService.buildRoyaltyMap(
         walletAddress,
-        clip.royaltyBps,
+        resolvedRoyaltyBps,
       );
 
       const op = contract.call(
@@ -241,6 +247,7 @@ export class NftMintService {
         clipId: clip.id,
         tokenId: clip.id,
         metadataUri,
+        royaltyBps: resolvedRoyaltyBps,
         to: walletAddress,
         contractId: this.CONTRACT_ID,
         network: this.stellarService.network,
