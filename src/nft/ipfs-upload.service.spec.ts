@@ -28,7 +28,9 @@ describe('IpfsUploadService', () => {
     description: 'Test clip',
     image: 'https://cdn.example.com/thumb.jpg',
     animation_url: 'https://cdn.example.com/video.mp4',
-    attributes: [{ trait_type: 'royaltyBps', value: 1000 }],
+    attributes: [{ trait_type: 'Royalty BPS', value: 1000 }],
+    seller_fee_basis_points: 1000,
+    royalty: { bps: 1000, percent: 10 },
   };
 
   beforeEach(() => {
@@ -131,6 +133,8 @@ describe('IpfsUploadService', () => {
         { trait_type: 'Creation Date', value: '2026-06-25T12:00:00Z' },
         { trait_type: 'Platforms Posted To', value: 'TikTok, Instagram' },
       ],
+      seller_fee_basis_points: 1000,
+      royalty: { bps: 1000, percent: 10 },
     };
 
     it('does not throw for valid metadata', () => {
@@ -234,6 +238,14 @@ describe('IpfsUploadService', () => {
 
       const uri = await service.uploadMetadata(validMetadata, 10);
       expect(uri).toBe('ipfs://bafyValidCid');
+    });
+
+    it('throws when royalty info is missing', () => {
+      const { royalty: _royalty, seller_fee_basis_points: _bps, ...rest } =
+        validMetadata;
+      expect(() =>
+        service.validateMetadata(rest as NftMetadata),
+      ).toThrow(BadRequestException);
     });
   });
 });

@@ -156,7 +156,7 @@ describe('Payouts E2E', () => {
       .expect(400);
   });
 
-  it('POST /payouts/initiate-stellar prepares a pending Stellar payout transaction', async () => {
+  it('POST /payouts/initiate-stellar prepares a pending unsigned Stellar payout transaction', async () => {
     const destination = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
     mockPrisma.payout.findFirst
@@ -183,10 +183,6 @@ describe('Payouts E2E', () => {
       sequenceNumber: () => '1',
       accountId: () => 'GPLATFORM',
     } as any);
-    jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
-      publicKey: () => 'GPLATFORM',
-      sign: () => Buffer.from([]),
-    } as any);
     jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
     jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
       return this;
@@ -194,15 +190,15 @@ describe('Payouts E2E', () => {
     jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
       return this;
     });
+    const signSpy = jest.fn();
     jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
       return {
-        sign: () => {},
+        sign: signSpy,
         hash: () => Buffer.from('abcd', 'hex'),
         toXDR: () => 'mock-stellar-xdr',
       };
     });
 
-    process.env.STELLAR_PLATFORM_SECRET = 'SOME_SECRET';
     process.env.STELLAR_WALLET_ADDRESS = 'GPLATFORM';
 
     const res = await request(app.getHttpServer())
@@ -213,6 +209,7 @@ describe('Payouts E2E', () => {
     expect(res.body.status).toBe('pending');
     expect(res.body.stellarXdr).toBe('mock-stellar-xdr');
     expect(res.body.transactionId).toBe('abcd');
+    expect(signSpy).not.toHaveBeenCalled();
   });
 });
 

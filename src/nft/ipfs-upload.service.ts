@@ -10,6 +10,12 @@ export interface NftMetadataAttribute {
   value: string | number;
 }
 
+export interface NftRoyaltyInfo {
+  bps: number;
+  percent: number;
+  recipient?: string;
+}
+
 export interface NftMetadata {
   name: string;
   description: string;
@@ -17,6 +23,12 @@ export interface NftMetadata {
   animation_url: string;
   external_url?: string;
   attributes: NftMetadataAttribute[];
+  /** OpenSea-compatible creator royalty in basis points (e.g. 1000 = 10%). */
+  seller_fee_basis_points: number;
+  /** Optional royalty recipient (Stellar G... address when known). */
+  fee_recipient?: string;
+  /** Explicit royalty block for marketplaces / mint clients. */
+  royalty: NftRoyaltyInfo;
 }
 
 export type IpfsProvider = 'pinata' | 'nftstorage';
@@ -90,6 +102,24 @@ export class IpfsUploadService {
           `NFT metadata attribute "${attr.trait_type}" has a null or undefined value`,
         );
       }
+    }
+    if (
+      typeof metadata.seller_fee_basis_points !== 'number' ||
+      !Number.isFinite(metadata.seller_fee_basis_points) ||
+      metadata.seller_fee_basis_points < 0
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing required royalty field: seller_fee_basis_points',
+      );
+    }
+    if (
+      !metadata.royalty ||
+      typeof metadata.royalty.bps !== 'number' ||
+      typeof metadata.royalty.percent !== 'number'
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing required royalty info (royalty.bps / royalty.percent)',
+      );
     }
   }
 

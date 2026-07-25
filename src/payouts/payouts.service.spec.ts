@@ -602,12 +602,10 @@ describe('PayoutsService', () => {
       });
 
       beforeEach(() => {
-        process.env.STELLAR_PLATFORM_SECRET = 'SOME_SECRET';
         process.env.STELLAR_WALLET_ADDRESS = mockPlatformAddress;
       });
 
       afterEach(() => {
-        delete process.env.STELLAR_PLATFORM_SECRET;
         delete process.env.STELLAR_WALLET_ADDRESS;
       });
 
@@ -658,16 +656,11 @@ describe('PayoutsService', () => {
           sequenceNumber: () => '1',
           accountId: () => mockPlatformAddress,
         } as any);
-        jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
-          publicKey: () => mockPlatformAddress,
-          sign: () => Buffer.from([]),
-        } as any);
         jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
         jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () { return this; });
         jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () { return this; });
         jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
           return {
-            sign: () => {},
             hash: () => Buffer.from('aabbccdd', 'hex'),
             toXDR: () => 'mock-xdr-min',
           };
@@ -680,6 +673,7 @@ describe('PayoutsService', () => {
 
         const result = await service.initiateStellarPayout(1, 78, MIN);
         expect(result.status).toBe('pending');
+        expect(result.stellarXdr).toBe('mock-xdr-min');
       });
     });
 
@@ -756,16 +750,14 @@ describe('PayoutsService', () => {
 
   describe('initiateStellarPayout', () => {
     beforeEach(() => {
-      process.env.STELLAR_PLATFORM_SECRET = 'SOME_SECRET';
       process.env.STELLAR_WALLET_ADDRESS = mockPlatformAddress;
     });
 
     afterEach(() => {
-      delete process.env.STELLAR_PLATFORM_SECRET;
       delete process.env.STELLAR_WALLET_ADDRESS;
     });
 
-    it('should create a pending payout transaction and store XDR', async () => {
+    it('should create a pending payout transaction and store unsigned XDR', async () => {
       const destination = StellarSdk.Keypair.random().publicKey();
       mockPrismaService.payout.findFirst
         .mockResolvedValueOnce({
@@ -791,10 +783,6 @@ describe('PayoutsService', () => {
         sequenceNumber: () => '1',
         accountId: () => mockPlatformAddress,
       } as any);
-      jest.spyOn(StellarSdk.Keypair, 'fromSecret').mockReturnValue({
-        publicKey: () => mockPlatformAddress,
-        sign: () => Buffer.from([]),
-      } as any);
       jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
       jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
         return this;
@@ -802,9 +790,10 @@ describe('PayoutsService', () => {
       jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
         return this;
       });
+      const signSpy = jest.fn();
       jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
         return {
-          sign: () => {},
+          sign: signSpy,
           hash: () => Buffer.from('deadbeef', 'hex'),
           toXDR: () => 'mock-xdr',
         };
@@ -815,6 +804,7 @@ describe('PayoutsService', () => {
       expect(result.status).toBe('pending');
       expect(result.stellarXdr).toBe('mock-xdr');
       expect(result.transactionId).toBe('deadbeef');
+      expect(signSpy).not.toHaveBeenCalled();
       expect(mockPrismaService.payout.update).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: 44 },

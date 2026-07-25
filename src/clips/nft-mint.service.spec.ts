@@ -148,6 +148,7 @@ const nftOwnershipMock = {
 
 const royaltyConfigMock = {
   getCreatorRoyaltyBps: jest.fn().mockReturnValue(1000),
+  getPlatformWallet: jest.fn().mockReturnValue('GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6'),
   buildRoyaltyMap: jest.fn(),
 };
 
@@ -210,6 +211,13 @@ function makeService(): NftMintService {
       description: 'A test clip',
       image: 'https://cdn.example.com/thumb.jpg',
       animation_url: 'https://cdn.example.com/video.mp4',
+      seller_fee_basis_points: 1000,
+      fee_recipient: 'GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6',
+      royalty: {
+        bps: 1000,
+        percent: 10,
+        recipient: 'GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6',
+      },
     });
 
     const attrs: Array<{ trait_type: string; value: string | number }> =
@@ -340,6 +348,8 @@ function makeService(): NftMintService {
     expect(meta).toHaveProperty('image');
     expect(meta).toHaveProperty('animation_url');
     expect(meta).toHaveProperty('attributes');
+    expect(meta).toHaveProperty('seller_fee_basis_points');
+    expect(meta).toHaveProperty('royalty');
     expect(Array.isArray((meta as any).attributes)).toBe(true);
   });
 

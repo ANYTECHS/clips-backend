@@ -67,6 +67,16 @@ export class NftMintService {
       );
     }
 
+    const royaltyBps = this.royaltyConfigurationService.getCreatorRoyaltyBps(
+      clip.royaltyBps,
+    );
+    let royaltyRecipient: string | undefined;
+    try {
+      royaltyRecipient = this.royaltyConfigurationService.getPlatformWallet();
+    } catch {
+      royaltyRecipient = undefined;
+    }
+
     const metadata = this.buildMetadata({
       id: clip.id,
       title: clip.title,
@@ -77,9 +87,8 @@ export class NftMintService {
       viralityScore: clip.viralityScore,
       createdAt: clip.createdAt,
       postStatus: clip.postStatus,
-      royaltyBps: this.royaltyConfigurationService.getCreatorRoyaltyBps(
-        clip.royaltyBps,
-      ),
+      royaltyBps,
+      royaltyRecipient,
     });
 
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
@@ -281,9 +290,11 @@ export class NftMintService {
     createdAt: Date;
     postStatus: unknown;
     royaltyBps: number;
+    royaltyRecipient?: string | null;
   }): NftMetadata {
     const platforms = this.extractPlatforms(clip.postStatus);
     const viralityScore = clip.viralityScore ?? 0;
+    const royaltyRecipient = clip.royaltyRecipient?.trim() || undefined;
 
     const attributes: NftAttribute[] = [
       { trait_type: 'Clip Duration', value: clip.duration },
@@ -300,6 +311,13 @@ export class NftMintService {
       image: clip.thumbnail || clip.clipUrl,
       animation_url: clip.clipUrl,
       attributes,
+      seller_fee_basis_points: clip.royaltyBps,
+      ...(royaltyRecipient ? { fee_recipient: royaltyRecipient } : {}),
+      royalty: {
+        bps: clip.royaltyBps,
+        percent: clip.royaltyBps / 100,
+        ...(royaltyRecipient ? { recipient: royaltyRecipient } : {}),
+      },
     };
   }
 

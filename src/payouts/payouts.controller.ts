@@ -44,8 +44,8 @@ export class PayoutsController {
   }
 
   @Post('initiate-stellar')
-  @ApiOperation({ summary: 'Prepare a Stellar payout transaction' })
-  @ApiResponse({ status: 201, description: 'Stellar payout transaction prepared' })
+  @ApiOperation({ summary: 'Prepare an unsigned Stellar payout transaction' })
+  @ApiResponse({ status: 201, description: 'Unsigned Stellar payout XDR returned; payout marked pending' })
   @ApiResponse({ status: 400, description: 'Invalid payout request or insufficient balance' })
   @ApiResponse({ status: 404, description: 'Payout not found' })
   async initiateStellarPayout(
