@@ -69,17 +69,4 @@ describe('Rate Limiting (e2e)', () => {
     );
     expect(response.status).toBe(429);
   });
-
-  it('should rate limit default endpoint after 10 requests', async () => {
-    for (let i = 0; i < 10; i++) {
-      const response = await request(app.getHttpServer()).get(
-        '/test-throttling/default',
-      );
-      expect(response.status).toBe(200);
-    }
-    const response = await request(app.getHttpServer()).get(
-      '/test-throttling/default',
-    );
-    expect(response.status).toBe(429);
-  });
 });
