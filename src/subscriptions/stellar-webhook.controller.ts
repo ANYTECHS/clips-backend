@@ -20,7 +20,8 @@ export class StellarWebhookController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Receive Stellar payment webhook',
-    description: 'Endpoint for receiving Stellar payment webhooks with signature verification',
+    description:
+      'Endpoint for receiving Stellar payment webhooks with signature verification',
   })
   @ApiHeader({
     name: 'X-Webhook-Signature',
