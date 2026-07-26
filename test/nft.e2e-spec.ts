@@ -37,8 +37,6 @@ describe('NFT mint preparation (e2e)', () => {
         { provide: NftMetadataService, useValue: {} },
         { provide: IpfsUploadService, useValue: {} },
         { provide: RoyaltyQueryService, useValue: { getRoyaltyInfo: jest.fn() } },
-        LoginGuard,
-        NftMintGuard,
       ],
     })
       .overrideGuard(LoginGuard)

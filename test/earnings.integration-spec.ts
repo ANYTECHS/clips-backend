@@ -3,6 +3,7 @@ import { EarningsService } from '../src/earnings/earnings.service';
 import { EarningsAggregationService } from '../src/earnings/earnings-aggregation.service';
 import { EarningsExportService } from '../src/earnings/earnings-export.service';
 import { CurrencyConversionService } from '../src/earnings/currency-conversion.service';
+import { TaxReportExportService } from '../src/earnings/tax-report-export.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RedisService } from '../src/redis/redis.service';
 import { ConfigService } from '../src/config/config.service';
@@ -74,6 +75,7 @@ describe('EarningsService (integration)', () => {
         EarningsAggregationService,
         EarningsExportService,
         CurrencyConversionService,
+        TaxReportExportService,
         { provide: PrismaService, useValue: prisma },
         {
           provide: RedisService,
@@ -107,6 +109,7 @@ describe('EarningsService (integration)', () => {
         prisma._seedEarning({
           id: i + 1,
           amount: (i + 1) * 10,   // 10, 20, 30
+          currency: 'USD',
           source: 'royalty',
           _userId: 1,
           deletedAt: null,

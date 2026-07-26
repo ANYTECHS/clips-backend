@@ -81,6 +81,9 @@ class InMemoryPrisma {
   };
 
   video = {
+    findUnique: jest.fn(async ({ where }: any) =>
+      this.videos.find((v) => v.id === where.id) ?? null,
+    ),
     update: jest.fn(async ({ where, data }: any) => {
       const idx = this.videos.findIndex((v) => v.id === where.id);
       if (idx !== -1) this.videos[idx] = { ...this.videos[idx], ...data };
@@ -103,6 +106,15 @@ function makeClipsService(queue: InMemoryQueue, prisma: InMemoryPrisma) {
   const emitter = new EventEmitter2();
   const metricsService = { incrementClipsGenerated: jest.fn(), setQueueDepth: jest.fn() };
   const cloudinaryService = { deleteClip: jest.fn(), deleteLocalFile: jest.fn() };
+  const queueOverflowService = {
+    enqueue: jest.fn(async ({ queue: q, jobName, data, baseOptions }: any) => {
+      const job = await q.add(jobName, data, baseOptions);
+      return { jobId: job.id, delayed: false, delayMs: 0 };
+    }),
+  };
+  const configService = {
+    get: jest.fn((_key: string, def?: string) => def),
+  };
 
   return new ClipsService(
     queue as any,
@@ -110,6 +122,8 @@ function makeClipsService(queue: InMemoryQueue, prisma: InMemoryPrisma) {
     prisma as any,
     cloudinaryService as any,
     metricsService as any,
+    queueOverflowService as any,
+    configService as any,
   );
 }
 
@@ -205,15 +219,23 @@ describe('Prisma + BullMQ integration', () => {
 
   describe('transaction consistency', () => {
     it('bulkUpdate applies all changes atomically via seeded clips', async () => {
-      service._seed([
-        { id: '10', videoId: 1, userId: 'u1', selected: false, postStatus: null },
-        { id: '11', videoId: 1, userId: 'u1', selected: false, postStatus: null },
+      prisma.clips.push(
+        { id: 10, videoId: 1, selected: false, postStatus: null, updatedAt: new Date() },
+        { id: 11, videoId: 1, selected: false, postStatus: null, updatedAt: new Date() },
+      );
+      prisma.clip.findMany.mockResolvedValue([
+        { id: 10 },
+        { id: 11 },
       ]);
-
-      const result = await service.bulkUpdate('u1' as any, {
-        clipIds: ['10', '11'],
-        selected: true,
+      prisma.$transaction.mockImplementation(async (ops: any) => {
+        if (typeof ops === 'function') return ops(prisma);
+        return Promise.all(ops);
       });
+
+      const result = await service.bulkUpdate(1 as any, {
+        clipIds: [10, 11],
+        updates: { selected: true },
+      } as any);
 
       expect(result.updatedCount).toBe(2);
       expect(result.notFoundIds).toHaveLength(0);
@@ -231,14 +253,23 @@ describe('Prisma + BullMQ integration', () => {
       prisma.$transaction.mockRejectedValueOnce(new Error('DB constraint violation'));
 
       await expect(
-        service.bulkUpdate(1 as any, { clipIds: ['20'], selected: true }),
+        service.bulkUpdate(1 as any, {
+          clipIds: [20],
+          updates: { selected: true },
+        } as any),
       ).rejects.toThrow('DB constraint violation');
     });
   });
 
   describe('failed job handling', () => {
     it('handleClipGenerationFailed updates video status to failed in Prisma', async () => {
-      prisma.videos.push({ id: 1, status: 'processing', processingError: null, updatedAt: new Date() });
+      prisma.videos.push({
+        id: 1,
+        status: 'processing',
+        processingError: null,
+        processingStats: {},
+        updatedAt: new Date(),
+      });
 
       await (service as any).handleClipGenerationFailed({
         jobId: 'job-1',

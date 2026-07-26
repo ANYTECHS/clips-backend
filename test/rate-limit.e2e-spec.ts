@@ -6,7 +6,7 @@ import {
   Post,
   Module,
 } from '@nestjs/common';
-import * as request from 'supertest';
+import request from 'supertest';
 import { ThrottlerModule, ThrottlerGuard, Throttle } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 
@@ -54,7 +54,7 @@ class ThrottlerTestModule {}
 describe('Rate Limiting (e2e)', () => {
   let app: INestApplication;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [ThrottlerTestModule],
     }).compile();
@@ -63,8 +63,8 @@ describe('Rate Limiting (e2e)', () => {
     await app.init();
   });
 
-  afterAll(async () => {
-    await app.close();
+  afterEach(async () => {
+    await app?.close();
   });
 
   it('should rate limit strict auth endpoint after 5 requests', async () => {
@@ -80,7 +80,9 @@ describe('Rate Limiting (e2e)', () => {
       '/test-throttling/strict',
     );
     expect(response.status).toBe(429);
-    expect(response.header).toHaveProperty('retry-after');
+    expect(
+      response.header['retry-after'] ?? response.header['retry-after-auth'],
+    ).toBeDefined();
   });
 
   it('should rate limit default endpoint after 10 requests', async () => {
@@ -96,6 +98,8 @@ describe('Rate Limiting (e2e)', () => {
       '/test-throttling/default',
     );
     expect(response.status).toBe(429);
-    expect(response.header).toHaveProperty('retry-after');
+    expect(
+      response.header['retry-after'] ?? response.header['retry-after-default'],
+    ).toBeDefined();
   });
 });
