@@ -16,6 +16,9 @@ import {
   ApiTags,
   ApiConsumes,
   ApiBody,
+  ApiUnauthorizedResponse,
+  ApiBadRequestResponse,
+  ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -23,7 +26,10 @@ import { extname } from 'path';
 import type { Request } from 'express';
 import { LoginGuard } from '../auth/guards/login.guard.js';
 import { VideoUploadService } from './video-upload.service';
-import { UploadVideoResponseDto, UploadVideoErrorDto } from './dto/upload-video.dto.js';
+import {
+  UploadVideoResponseDto,
+  UploadVideoErrorDto,
+} from './dto/upload-video.dto.js';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -32,6 +38,8 @@ const ALLOWED_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm'];
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
 
 @ApiTags('videos')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseGuards(LoginGuard)
 @Controller('videos')
 export class VideoUploadController {
@@ -51,8 +59,16 @@ export class VideoUploadController {
       required: ['file'],
     },
   })
-  @ApiResponse({ status: 202, description: 'Video upload accepted', type: UploadVideoResponseDto })
-  @ApiResponse({ status: 400, description: 'Invalid file', type: UploadVideoErrorDto })
+  @ApiResponse({
+    status: 202,
+    description: 'Video upload accepted',
+    type: UploadVideoResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid file',
+    type: UploadVideoErrorDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseInterceptors(
     FileInterceptor('file', {
@@ -63,7 +79,7 @@ export class VideoUploadController {
             await fs.mkdir(tempDir, { recursive: true });
             cb(null, tempDir);
           } catch (error) {
-            cb(error as any, tempDir);
+            cb(error, tempDir);
           }
         },
         filename: (req, file, cb) => {
@@ -78,7 +94,12 @@ export class VideoUploadController {
         if (ALLOWED_EXTENSIONS.includes(ext)) {
           cb(null, true);
         } else {
-          cb(new BadRequestException(`Invalid file format "${ext}". Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`), false);
+          cb(
+            new BadRequestException(
+              `Invalid file format "${ext}". Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`,
+            ),
+            false,
+          );
         }
       },
     }),
@@ -89,16 +110,29 @@ export class VideoUploadController {
     @Req() req: any,
   ): Promise<UploadVideoResponseDto> {
     if (!file) {
-      throw new BadRequestException({ status: 'error', message: 'No file uploaded', code: 'UPLOAD_FAILED' });
+      throw new BadRequestException({
+        status: 'error',
+        message: 'No file uploaded',
+        code: 'UPLOAD_FAILED',
+      });
     }
 
     const userId = Number(req.user?.id ?? 0);
     if (!userId) {
-      throw new BadRequestException({ status: 'error', message: 'User not authenticated', code: 'UPLOAD_FAILED' });
+      throw new BadRequestException({
+        status: 'error',
+        message: 'User not authenticated',
+        code: 'UPLOAD_FAILED',
+      });
     }
 
     try {
-      const result = await this.videoUploadService.processUpload(file.path, file.originalname, userId, title);
+      const result = await this.videoUploadService.processUpload(
+        file.path,
+        file.originalname,
+        userId,
+        title,
+      );
       return {
         jobId: result.jobId,
         videoId: result.videoId,
@@ -108,7 +142,11 @@ export class VideoUploadController {
       };
     } catch (error) {
       if (!(error instanceof BadRequestException)) {
-        throw new BadRequestException({ status: 'error', message: (error as Error).message || 'Upload failed', code: 'UPLOAD_FAILED' });
+        throw new BadRequestException({
+          status: 'error',
+          message: (error as Error).message || 'Upload failed',
+          code: 'UPLOAD_FAILED',
+        });
       }
       throw error;
     }

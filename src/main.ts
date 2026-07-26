@@ -134,6 +134,15 @@ async function bootstrap() {
     .addTag('stellar', 'Stellar network interactions')
     .addTag('jobs', 'Background job management')
     .addTag('platforms', 'Social platform integrations')
+    .addTag('admin', 'Admin-only endpoints')
+    .addTag('queues', 'BullMQ queue management')
+    .addTag('circuit-breaker', 'Circuit breaker monitoring and management')
+    .addTag('metrics', 'Prometheus metrics endpoint')
+    .addTag('user-platforms', 'Social platform connections')
+    .addTag('platform', 'Platform revenue queries')
+    .addTag('health', 'System health checks')
+    .addTag('transactions', 'Blockchain transactions')
+    .addTag('payout-methods', 'Payout method management')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

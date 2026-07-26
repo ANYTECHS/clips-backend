@@ -18,6 +18,8 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiParam,
+  ApiUnauthorizedResponse,
+  ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { ClipsService } from './clips.service.js';
@@ -30,11 +32,16 @@ import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto.js';
 import { PublishClipDto } from './dto/publish-clip.dto.js';
 import { ClipPublishService } from './clip-publish.service.js';
 import type { ClipGenerationJob } from './clip-generation.processor';
-import { QueueRateLimitGuard, QueueRateLimit } from '../common/guards/queue-rate-limit.guard';
+import {
+  QueueRateLimitGuard,
+  QueueRateLimit,
+} from '../common/guards/queue-rate-limit.guard';
 import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto.js';
 
 @ApiTags('clips')
 @ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseGuards(LoginGuard)
 @Controller('clips')
 export class ClipsController {
@@ -48,9 +55,13 @@ export class ClipsController {
   @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
   @ApiOperation({
     summary: 'Generate a clip',
-    description: 'Enqueue a clip-generation job with automatic retry + exponential backoff. Returns the BullMQ job ID immediately; processing happens asynchronously.',
+    description:
+      'Enqueue a clip-generation job with automatic retry + exponential backoff. Returns the BullMQ job ID immediately; processing happens asynchronously.',
   })
-  @ApiResponse({ status: 201, description: 'Clip generation job queued successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Clip generation job queued successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 429, description: 'Too many active jobs' })
@@ -61,14 +72,35 @@ export class ClipsController {
   @Get()
   @ApiOperation({
     summary: 'List clips',
-    description: 'List clips sorted by viralityScore descending by default. Supports filtering by videoId and custom sorting.',
+    description:
+      'List clips sorted by viralityScore descending by default. Supports filtering by videoId and custom sorting.',
   })
-  @ApiResponse({ status: 200, description: 'List of clips returned successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of clips returned successfully',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiQuery({ name: 'videoId', required: false, description: 'Filter to a specific source video' })
-  @ApiQuery({ name: 'sort', required: false, description: 'Sort format: field:order (e.g., viralityScore:desc, createdAt:asc)' })
-  @ApiQuery({ name: 'sortBy', required: false, description: 'Legacy: viralityScore | createdAt | duration' })
-  @ApiQuery({ name: 'order', required: false, description: 'Legacy: asc | desc' })
+  @ApiQuery({
+    name: 'videoId',
+    required: false,
+    description: 'Filter to a specific source video',
+  })
+  @ApiQuery({
+    name: 'sort',
+    required: false,
+    description:
+      'Sort format: field:order (e.g., viralityScore:desc, createdAt:asc)',
+  })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    description: 'Legacy: viralityScore | createdAt | duration',
+  })
+  @ApiQuery({
+    name: 'order',
+    required: false,
+    description: 'Legacy: asc | desc',
+  })
   list(
     @Query('videoId') videoId?: string,
     @Query('sort') sort?: string,
@@ -117,7 +149,8 @@ export class ClipsController {
   @Post('bulk-update')
   @ApiOperation({
     summary: 'Bulk update clips',
-    description: 'Bulk update selected and/or postStatus for multiple clips in one transaction. Returns update statistics including notFoundIds for invalid clip IDs.',
+    description:
+      'Bulk update selected and/or postStatus for multiple clips in one transaction. Returns update statistics including notFoundIds for invalid clip IDs.',
   })
   @ApiResponse({ status: 200, description: 'Clips updated successfully' })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
@@ -146,7 +179,8 @@ export class ClipsController {
   @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
   @ApiOperation({
     summary: 'Regenerate a clip',
-    description: 'Re-run FFmpeg cut for a single clip using original timestamps.',
+    description:
+      'Re-run FFmpeg cut for a single clip using original timestamps.',
   })
   @ApiParam({ name: 'id', description: 'Clip ID' })
   @ApiResponse({ status: 200, description: 'Clip regeneration started' })
@@ -163,7 +197,8 @@ export class ClipsController {
   @Patch(':id/caption')
   @ApiOperation({
     summary: 'Update clip caption',
-    description: 'Update the auto-generated caption for a clip. Useful for customizing social media posts.',
+    description:
+      'Update the auto-generated caption for a clip. Useful for customizing social media posts.',
   })
   @ApiParam({ name: 'id', description: 'Clip ID' })
   @ApiResponse({ status: 200, description: 'Caption updated' })
@@ -192,7 +227,10 @@ export class ClipsController {
   })
   @ApiParam({ name: 'id', description: 'Clip ID' })
   @ApiResponse({ status: 200, description: 'Royalty updated' })
-  @ApiResponse({ status: 400, description: 'Invalid royaltyBps (must be 0–1500)' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid royaltyBps (must be 0–1500)',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Clip not found' })
