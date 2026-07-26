@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { StellarService } from '../stellar/stellar.service';
 import { ConfigService } from '../config/config.service';
 import {
@@ -30,6 +30,8 @@ export class NftOwnershipService {
     private readonly stellarService: StellarService,
     private readonly config: ConfigService,
     private readonly circuitBreakerService: CircuitBreakerService,
+    @Optional()
+    @Inject(NFT_OWNERSHIP_STRATEGY)
     strategy?: NftOwnershipVerificationStrategy,
   ) {
     this.strategy =
