@@ -57,34 +57,9 @@ jest.mock('@stellar/stellar-sdk', () => {
 
 const VALID_WALLET = 'GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGMQ6NX4XUQN7Q6XHPVMUF';
 
-const configMock = {
-  sorobanNftContractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
-  platformWallet: VALID_WALLET,
-  platformRoyaltyBps: 100,
-  creatorRoyaltyBps: 1000,
-};
-
 // ── NftMintService uploadMetadataToIPFS ───────────────────────────────────────
 
-describe('NftMintService uploadMetadataToIPFS', () => {
-  const prismaMock = {
-    clip: {
-      findUnique: jest.fn(),
-      update: jest.fn(),
-    },
-  };
-});
-
 import StellarSdk from '@stellar/stellar-sdk';
-
-const VALID_WALLET = 'GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6';
-
-const prismaMock = {
-  clip: {
-    findUnique: jest.fn(),
-    update: jest.fn(),
-  },
-};
 
 const stellarMock = {
   validateAddress: jest.fn().mockReturnValue({ valid: true }),
@@ -99,6 +74,13 @@ const metricsMock = {
 
 const circuitBreakerMock = {
   execute: jest.fn().mockImplementation((_config: unknown, fn: () => unknown) => fn()),
+};
+
+const prismaMock = {
+  clip: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  },
 };
 
 function makeService(): NftMintService {
@@ -595,6 +577,9 @@ describe('NftMintService verifyNFTOwnership', () => {
       metricsMock as any,
       circuitBreakerMock as any,
       configMock as any,
+      { uploadMetadata: jest.fn() } as any,
+      { verifyNFTOwnership: jest.fn() } as any,
+      { getCreatorRoyaltyBps: jest.fn(), getPlatformWallet: jest.fn(), buildRoyaltyMap: jest.fn() } as any,
     );
   });
 
