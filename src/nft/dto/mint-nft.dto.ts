@@ -8,6 +8,7 @@ import {
   Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 /**
  * DTO for POST /nfts/mint requests.
@@ -16,26 +17,39 @@ import { Type } from 'class-transformer';
  * pre-built metadata URI, and an optional royalty override in basis points.
  */
 export class MintNftDto {
-  /** Numeric ID of the clip being minted as an NFT */
+  @ApiProperty({
+    description: 'Numeric ID of the clip being minted as an NFT',
+    example: 42,
+    minimum: 1,
+  })
   @IsInt()
   @Min(1)
   @Type(() => Number)
   clipId: number;
 
-  /** Stellar wallet address that will receive the NFT and the creator royalty */
+  @ApiProperty({
+    description:
+      'Stellar wallet address that will receive the NFT and the creator royalty',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
   @IsString()
   @IsNotEmpty()
   creatorWallet: string;
 
-  /** Optional IPFS / Arweave metadata URI — built automatically if omitted */
+  @ApiPropertyOptional({
+    description: 'Optional IPFS / Arweave metadata URI — built automatically if omitted',
+    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
   @IsOptional()
   @IsUrl()
   metadataUri?: string;
 
-  /**
-   * Creator royalty in basis points (0–1500).
-   * Defaults to 1000 (10 %) when not provided.
-   */
+  @ApiPropertyOptional({
+    description: 'Creator royalty in basis points (0–1500). Defaults to 1000 (10%).',
+    example: 1000,
+    minimum: 0,
+    maximum: 1500,
+  })
   @IsOptional()
   @IsInt()
   @Min(0)

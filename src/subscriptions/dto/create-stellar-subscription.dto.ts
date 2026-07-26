@@ -21,17 +21,23 @@ export class CreateStellarSubscriptionDto {
   @IsNotEmpty()
   amount: number;
 
-  @ApiPropertyOptional({ description: 'Connected Stellar wallet ID' })
+  @ApiPropertyOptional({ description: 'Connected Stellar wallet ID', example: 'wallet_abc123' })
   @IsString()
   @IsOptional()
   walletId?: string;
 
-  @ApiPropertyOptional({ description: 'Override destination Stellar address' })
+  @ApiPropertyOptional({
+    description: 'Override destination Stellar address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
   @IsString()
   @IsOptional()
   destinationAddress?: string;
 
-  @ApiPropertyOptional({ description: 'Payment memo for tracking' })
+  @ApiPropertyOptional({
+    description: 'Payment memo for tracking',
+    example: 'sub-pro-2026-07',
+  })
   @IsString()
   @IsOptional()
   memo?: string;
@@ -56,12 +62,39 @@ export class CreateStellarSubscriptionDto {
 }
 
 export class StellarPaymentIntentDto {
+  @ApiProperty({ example: 'pi_01HXYZ', description: 'Payment intent ID' })
   id: string;
+
+  @ApiProperty({ example: 10, description: 'Payment amount' })
   amount: number;
+
+  @ApiProperty({ example: 'xlm', enum: ['xlm', 'usdc', 'custom'] })
   asset: string;
+
+  @ApiProperty({
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+    description: 'Destination Stellar address',
+  })
   destination: string;
+
+  @ApiProperty({ example: 'sub-pro-2026-07', description: 'Payment memo' })
   memo: string;
+
+  @ApiProperty({
+    example: '2026-07-26T13:00:00.000Z',
+    description: 'Intent expiry timestamp',
+  })
   expiresAt: Date;
+
+  @ApiProperty({
+    example: 'pending',
+    enum: ['pending', 'completed', 'expired'],
+  })
   status: 'pending' | 'completed' | 'expired';
+
+  @ApiPropertyOptional({
+    example: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
+    description: 'Asset issuer when using a custom asset',
+  })
   assetIssuer?: string | null;
 }

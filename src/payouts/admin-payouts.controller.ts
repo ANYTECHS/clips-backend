@@ -8,6 +8,8 @@ import {
   ApiUnauthorizedResponse,
   ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
+  ApiBadRequestResponse,
+  ApiNotFoundResponse,
 } from '@nestjs/swagger';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { PayoutsService } from './payouts.service';
