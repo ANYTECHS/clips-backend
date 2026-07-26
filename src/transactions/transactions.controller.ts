@@ -12,6 +12,11 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiInternalServerErrorResponse,
+  ApiUnauthorizedResponse,
+  ApiBadRequestResponse,
+  ApiNotFoundResponse,
+  ApiUnprocessableEntityResponse,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
