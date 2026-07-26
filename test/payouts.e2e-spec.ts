@@ -263,9 +263,12 @@ describe('PayoutsService processPayout (unit)', () => {
 
     payoutsService = new PayoutsService(
       prismaMock as any,
+      {} as any,
       mockStellarSvc,
       mockReceiptService as any,
       mockFeeService as any,
+      { resolveInitialStatus: () => 'approved' } as any,
+      { minStellarPayout: 10, platformWallet: 'GPLATFORM' } as any,
       mockQueue as any,
     );
   });
