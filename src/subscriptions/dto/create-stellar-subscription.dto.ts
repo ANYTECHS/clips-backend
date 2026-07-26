@@ -56,12 +56,27 @@ export class CreateStellarSubscriptionDto {
 }
 
 export class StellarPaymentIntentDto {
+  @ApiProperty({ description: 'Payment intent ID', example: 'pi_123456789' })
   id: string;
+
+  @ApiProperty({ description: 'Payment amount in the selected asset', example: 10 })
   amount: number;
+
+  @ApiProperty({ description: 'Payment asset (xlm, usdc, custom)', example: 'xlm' })
   asset: string;
+
+  @ApiProperty({ description: 'Stellar destination address', example: 'G...' })
   destination: string;
+
+  @ApiProperty({ description: 'Payment memo for tracking', example: 'sub_xyz' })
   memo: string;
+
+  @ApiProperty({ description: 'Expiration date and time', example: '2023-12-31T23:59:59.000Z' })
   expiresAt: Date;
+
+  @ApiProperty({ description: 'Payment intent status', enum: ['pending', 'completed', 'expired'], example: 'pending' })
   status: 'pending' | 'completed' | 'expired';
+
+  @ApiPropertyOptional({ description: 'Required when asset is custom — issuing account public key', example: 'G...' })
   assetIssuer?: string | null;
 }
