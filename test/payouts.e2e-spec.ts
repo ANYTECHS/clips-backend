@@ -11,6 +11,7 @@ import { FeeService } from '../src/payouts/fee.service';
 import { EarningsService } from '../src/earnings/earnings.service';
 import { PayoutApprovalService } from '../src/payouts/payout-approval.service';
 import { PAYOUT_RETRY_QUEUE } from '../src/payouts/payout-retry.queue';
+import { ConfigService } from '../src/config/config.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 
 const USER_ID = 9001;
@@ -73,6 +74,7 @@ describe('Payouts E2E', () => {
         { provide: EarningsService, useValue: {} },
         { provide: FeeService, useValue: mockFeeService },
         { provide: PayoutApprovalService, useValue: { resolveInitialStatus: () => 'approved' } },
+        { provide: ConfigService, useValue: { minStellarPayout: 10, platformWallet: 'GPLATFORM' } },
         { provide: PAYOUT_RETRY_QUEUE, useValue: mockQueue },
         // InjectQueue uses a Bull-specific token of the form `BullQueue_${queueName}`
         { provide: `BullQueue_${PAYOUT_RETRY_QUEUE}`, useValue: mockQueue },
@@ -226,7 +228,7 @@ describe('PayoutsService processPayout (unit)', () => {
           id: 123,
           amount: 10,
           currency: 'USD',
-          status: 'pending',
+          status: 'approved',
           stellarXdr: null,
           retryCount: 0,
           wallet: { address: validPk },

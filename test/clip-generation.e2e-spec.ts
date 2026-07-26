@@ -16,8 +16,7 @@ jest.mock('../src/common/circuit-breaker/circuit-breaker.service', () => ({
   },
 }));
 
-// Import and configure FFmpeg mock before other imports
-jest.mock('fluent-ffmpeg', () => require('./__mocks__/fluent-ffmpeg'));
+// fluent-ffmpeg is mapped via test/jest-e2e.json to test/__mocks__/fluent-ffmpeg.ts
 
 // Mock ffmpeg.util with actual implementations that use our mocked fluent-ffmpeg
 jest.mock('../src/clips/ffmpeg.util', () => {
@@ -48,6 +47,10 @@ import { MetricsService } from '../src/metrics/metrics.service';
 import { CloudinaryService } from '../src/clips/cloudinary.service';
 import { ClipGenerationProcessor } from '../src/clips/clip-generation.processor';
 import { ClipsGateway } from '../src/clips/clips.gateway';
+import { QueueOverflowService } from '../src/common/queue/queue-overflow.service';
+import { ConfigService } from '@nestjs/config';
+import { VideoService } from '../src/videos/video.service';
+import { GracefulShutdownService } from '../src/common/shutdown/graceful-shutdown.service';
 import {
   mockFFmpegSuccess,
   mockFFmpegError,
@@ -98,6 +101,9 @@ class FakePrisma {
   };
 
   video = {
+    findUnique: jest.fn(async ({ where }: any) =>
+      this.videos.find((v) => v.id === where.id) ?? null,
+    ),
     update: jest.fn(async ({ where, data }: any) => {
       const idx = this.videos.findIndex((v) => v.id === where.id);
       if (idx !== -1) this.videos[idx] = { ...this.videos[idx], ...data };
@@ -144,6 +150,27 @@ describe('Clip Generation E2E', () => {
         { provide: MetricsService, useValue: metricsService },
         { provide: CloudinaryService, useValue: cloudinaryService },
         { provide: ClipsGateway, useValue: { emitProgressToUser: jest.fn() } },
+        {
+          provide: QueueOverflowService,
+          useValue: {
+            enqueue: jest.fn(async ({ queue: q, jobName, data, baseOptions }: any) => {
+              const job = await q.add(jobName, data, baseOptions);
+              return { jobId: job.id, delayed: false, delayMs: 0 };
+            }),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((_k: string, d?: string) => d) },
+        },
+        { provide: VideoService, useValue: { findById: jest.fn(), update: jest.fn() } },
+        {
+          provide: GracefulShutdownService,
+          useValue: {
+            registerWorker: jest.fn(),
+            isShuttingDown: jest.fn().mockReturnValue(false),
+          },
+        },
       ],
     }).compile();
 
@@ -155,7 +182,7 @@ describe('Clip Generation E2E', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   afterEach(() => {

@@ -1,11 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, ConflictException } from '@nestjs/common';
 import { EarningsService } from '../src/earnings/earnings.service';
+import { EarningsAggregationService } from '../src/earnings/earnings-aggregation.service';
+import { EarningsExportService } from '../src/earnings/earnings-export.service';
+import { CurrencyConversionService } from '../src/earnings/currency-conversion.service';
+import { TaxReportExportService } from '../src/earnings/tax-report-export.service';
 import { WalletsService } from '../src/wallets/wallets.service';
+import { WalletManagementService } from '../src/wallets/wallet-management.service';
+import { WalletValidationService } from '../src/wallets/wallet-validation.service';
 import { PayoutMethodService } from '../src/payouts/payout-method.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StellarService } from '../src/stellar/stellar.service';
 import { EncryptionService } from '../src/encryption/encryption.service';
+import { RedisService } from '../src/redis/redis.service';
+import { ConfigService } from '../src/config/config.service';
 
 jest.mock('../src/prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
@@ -52,7 +60,9 @@ class InMemoryPrisma {
 
   wallet = {
     findUnique: jest.fn(async ({ where }) => {
-      return this.wallets.find((w) => w.id === where.id) ?? null;
+      const wallet = this.wallets.find((w) => w.id === where.id) ?? null;
+      if (!wallet) return null;
+      return { ...wallet, payouts: wallet.payouts ?? [] };
     }),
     findFirst: jest.fn(async ({ where } = {}) => {
       let results = [...this.wallets];
@@ -184,9 +194,38 @@ describe('Soft Delete Integration', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EarningsService,
+        EarningsAggregationService,
+        EarningsExportService,
+        CurrencyConversionService,
+        TaxReportExportService,
         WalletsService,
+        WalletManagementService,
+        {
+          provide: WalletValidationService,
+          useValue: {
+            validateAddressForChain: jest.fn(),
+            validateStellarAddress: jest.fn(),
+            validateConnect: jest.fn(),
+            assertSupportedChain: jest.fn(),
+          },
+        },
         PayoutMethodService,
         { provide: PrismaService, useValue: prisma },
+        {
+          provide: RedisService,
+          useValue: {
+            get: jest.fn().mockResolvedValue(null),
+            setex: jest.fn(),
+            del: jest.fn(),
+          },
+        },
+        {
+          provide: ConfigService,
+          useValue: {
+            earningsCacheTtlSeconds: 3600,
+            leaderboardEnabled: true,
+          },
+        },
         {
           provide: StellarService,
           useValue: {
@@ -236,34 +275,30 @@ describe('Soft Delete Integration', () => {
       expect(record.id).toBe(1);
     });
 
-    it('throws NotFoundException when earning does not exist', async () => {
+    it('throws when earning does not exist', async () => {
       await expect(earningsService.softDelete(999, 42)).rejects.toThrow(
-        NotFoundException,
+        'Earning 999 not found',
       );
     });
 
-    it('throws NotFoundException when earning belongs to another user', async () => {
+    it('throws when earning belongs to another user', async () => {
       prisma._seedEarning(baseEarning({ clip: { video: { userId: 99 } } }));
 
       await expect(earningsService.softDelete(1, 42)).rejects.toThrow(
-        NotFoundException,
+        'Earning 1 not found',
       );
     });
 
-    it('throws NotFoundException when earning is already soft-deleted', async () => {
+    it('throws when earning is already soft-deleted', async () => {
       prisma._seedEarning(baseEarning({ deletedAt: new Date() }));
 
       await expect(earningsService.softDelete(1, 42)).rejects.toThrow(
-        NotFoundException,
+        'Earning 1 not found',
       );
     });
   });
 
   describe('EarningsService.getLeaderboard', () => {
-    beforeEach(() => {
-      process.env.LEADERBOARD_ENABLED = 'true';
-    });
-
     it('excludes soft-deleted earnings from leaderboard', async () => {
       prisma._seedEarning({
         id: 1,
