@@ -12,9 +12,6 @@ import { NftService } from '../src/nft/nft.service';
 import { NftMetadataService } from '../src/nft/nft-metadata.service';
 import { IpfsUploadService } from '../src/nft/ipfs-upload.service';
 import { RoyaltyQueryService } from '../src/nft/royalty-query.service';
-import { NftOwnershipVerificationService } from '../src/nft/nft-ownership-verification.service';
-import { PrismaService } from '../src/prisma/prisma.service';
-import { RoyaltyConfigurationService } from '../src/nft/royalty-configuration.service';
 import { NftMintService } from '../src/clips/nft-mint.service';
 import { LoginGuard } from '../src/auth/guards/login.guard';
 import { NftMintGuard } from '../src/nft/guards/nft-mint.guard';
@@ -37,21 +34,9 @@ describe('NFT mint preparation (e2e)', () => {
       providers: [
         { provide: NftService, useValue: { mintClip: jest.fn() } },
         { provide: NftMintService, useValue: nftMintService },
-        { provide: NftMetadataService, useValue: { build: jest.fn() } },
+        { provide: NftMetadataService, useValue: {} },
         { provide: IpfsUploadService, useValue: {} },
         { provide: RoyaltyQueryService, useValue: { getRoyaltyInfo: jest.fn() } },
-        {
-          provide: NftOwnershipVerificationService,
-          useValue: { verifyNFTOwnership: jest.fn() },
-        },
-        { provide: PrismaService, useValue: { clip: { findUnique: jest.fn() } } },
-        {
-          provide: RoyaltyConfigurationService,
-          useValue: {
-            getCreatorRoyaltyBps: jest.fn().mockReturnValue(1000),
-            getPlatformWallet: jest.fn(),
-          },
-        },
       ],
     })
       .overrideGuard(LoginGuard)
