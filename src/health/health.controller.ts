@@ -5,7 +5,12 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
 import { RedisMemoryService, RedisMemoryStats } from './redis-memory.service';
 import { RedisService } from '../redis/redis.service';
 import { QueueHealthService } from '../queue/queue-health.service';
@@ -26,6 +31,7 @@ interface RedisHealthResponse {
 }
 
 @ApiTags('health')
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('health')
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);
@@ -145,9 +151,7 @@ export class HealthController {
 
       return health;
     } catch (err) {
-      this.logger.error(
-        `Queue health check failed: ${(err as Error).message}`,
-      );
+      this.logger.error(`Queue health check failed: ${(err as Error).message}`);
 
       if (err instanceof HttpException) {
         throw err;

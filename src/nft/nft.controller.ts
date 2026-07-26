@@ -9,7 +9,13 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 
@@ -25,6 +31,7 @@ import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 
 @ApiTags('nft')
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
 export class NftController {
   constructor(
@@ -69,7 +76,9 @@ export class NftController {
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
-  @ApiOperation({ summary: 'Prepare a Soroban mint transaction (returns XDR for signing)' })
+  @ApiOperation({
+    summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
+  })
   @ApiResponse({ status: 201, description: 'Mint transaction XDR returned' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async prepareMint(
@@ -91,14 +100,17 @@ export class NftController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
   @ApiOperation({ summary: 'Confirm a completed on-chain NFT mint' })
-  @ApiResponse({ status: 200, description: 'Mint confirmed; clip mint fields updated' })
-  @ApiResponse({ status: 400, description: 'Clip already minted or invalid request' })
+  @ApiResponse({
+    status: 200,
+    description: 'Mint confirmed; clip mint fields updated',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Clip already minted or invalid request',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Clip not found' })
-  async confirmMint(
-    @Body() dto: ConfirmMintDto,
-    @Req() req: Request,
-  ) {
+  async confirmMint(@Body() dto: ConfirmMintDto, @Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
     return this.nftMintService.confirmMint(dto.clipId, dto.mintAddress);

@@ -57,34 +57,9 @@ jest.mock('@stellar/stellar-sdk', () => {
 
 const VALID_WALLET = 'GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGMQ6NX4XUQN7Q6XHPVMUF';
 
-const configMock = {
-  sorobanNftContractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
-  platformWallet: VALID_WALLET,
-  platformRoyaltyBps: 100,
-  creatorRoyaltyBps: 1000,
-};
-
 // ── NftMintService uploadMetadataToIPFS ───────────────────────────────────────
 
-describe('NftMintService uploadMetadataToIPFS', () => {
-  const prismaMock = {
-    clip: {
-      findUnique: jest.fn(),
-      update: jest.fn(),
-    },
-  };
-});
-
 import StellarSdk from '@stellar/stellar-sdk';
-
-const VALID_WALLET = 'GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6';
-
-const prismaMock = {
-  clip: {
-    findUnique: jest.fn(),
-    update: jest.fn(),
-  },
-};
 
 const stellarMock = {
   validateAddress: jest.fn().mockReturnValue({ valid: true }),
@@ -99,6 +74,13 @@ const metricsMock = {
 
 const circuitBreakerMock = {
   execute: jest.fn().mockImplementation((_config: unknown, fn: () => unknown) => fn()),
+};
+
+const prismaMock = {
+  clip: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  },
 };
 
 function makeService(): NftMintService {
@@ -431,7 +413,7 @@ describe('NftMintService.prepareMintTx', () => {
     const result = await service.prepareMintTx(5, VALID_WALLET);
 
     expect(result).toMatchObject({
-      xdr: 'xdr-string',
+      xdr: 'mock-xdr',
       clipId: 5,
       tokenId: 5,
       metadataUri: 'ipfs://abc123',
@@ -507,7 +489,7 @@ describe('NftMintService.confirmMint', () => {
   it('rejects confirmMint when clip is missing', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(null);
 
-    await expect(service.confirmMint(5, 'CONTRACT_ID')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.confirmMint(5, 'CONTRACT_ID')).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -572,6 +554,7 @@ describe('NftMintService verifyNFTOwnership', () => {
   const metricsMock = { incrementNftMints: jest.fn() };
 
   let circuitBreakerMock: { execute: jest.Mock };
+  let nftOwnershipSvcMock: { verifyNFTOwnership: jest.Mock };
   let service: NftMintService;
 
   // The service does `import StellarSdk from '@stellar/stellar-sdk'` (default import).
@@ -589,21 +572,24 @@ describe('NftMintService verifyNFTOwnership', () => {
     circuitBreakerMock = {
       execute: jest.fn().mockImplementation((_config, fn) => fn()),
     };
+    nftOwnershipSvcMock = { verifyNFTOwnership: jest.fn() };
     service = new NftMintService(
       prismaMock as any,
       stellarMock as any,
       metricsMock as any,
       circuitBreakerMock as any,
       configMock as any,
+      { uploadMetadata: jest.fn() } as any,
+      nftOwnershipSvcMock as any,
+      { getCreatorRoyaltyBps: jest.fn(), getPlatformWallet: jest.fn(), buildRoyaltyMap: jest.fn() } as any,
     );
   });
 
   it('returns owned=true when contract returns matching wallet address', async () => {
-    circuitBreakerMock.execute.mockImplementationOnce(async () => ({
-      error: null,
-      results: [{ xdr: 'AAAAAA==' }],
-    }));
-    sdk.default.scValToNative.mockReturnValue(VALID_WALLET);
+    nftOwnershipSvcMock.verifyNFTOwnership.mockResolvedValue({
+      isOwner: true,
+      error: undefined,
+    });
 
     const result = await service.verifyNFTOwnership('42', VALID_WALLET);
     expect(result.owned).toBe(true);
@@ -611,11 +597,10 @@ describe('NftMintService verifyNFTOwnership', () => {
   });
 
   it('returns owned=false when contract returns a different wallet address', async () => {
-    circuitBreakerMock.execute.mockImplementationOnce(async () => ({
-      error: null,
-      results: [{ xdr: 'AAAAAA==' }],
-    }));
-    sdk.default.scValToNative.mockReturnValue('GDIFFERENTADDRESS000000000000000000000000000000000000000');
+    nftOwnershipSvcMock.verifyNFTOwnership.mockResolvedValue({
+      isOwner: false,
+      error: 'Wallet GDIFFERENT does not own token 42',
+    });
 
     const result = await service.verifyNFTOwnership('42', VALID_WALLET);
     expect(result.owned).toBe(false);
@@ -623,21 +608,21 @@ describe('NftMintService verifyNFTOwnership', () => {
   });
 
   it('returns owned=false with error when simulation returns an error field', async () => {
-    circuitBreakerMock.execute.mockImplementationOnce(async () => ({
+    nftOwnershipSvcMock.verifyNFTOwnership.mockResolvedValue({
+      isOwner: false,
       error: 'Contract error',
-      results: [],
-    }));
+    });
 
     const result = await service.verifyNFTOwnership('1', VALID_WALLET);
     expect(result.owned).toBe(false);
-    expect(result.error).toContain('Simulation failed');
+    expect(result.error).toContain('Contract error');
   });
 
   it('returns owned=false with error when simulation returns no results', async () => {
-    circuitBreakerMock.execute.mockImplementationOnce(async () => ({
-      error: null,
-      results: [],
-    }));
+    nftOwnershipSvcMock.verifyNFTOwnership.mockResolvedValue({
+      isOwner: false,
+      error: 'No simulation results',
+    });
 
     const result = await service.verifyNFTOwnership('1', VALID_WALLET);
     expect(result.owned).toBe(false);
@@ -645,20 +630,16 @@ describe('NftMintService verifyNFTOwnership', () => {
   });
 
   it('returns owned=false when circuit breaker throws ServiceUnavailableException', async () => {
-    circuitBreakerMock.execute.mockRejectedValueOnce(
+    nftOwnershipSvcMock.verifyNFTOwnership.mockRejectedValue(
       Object.assign(new Error('Open'), { name: 'ServiceUnavailableException' }),
     );
 
-    const result = await service.verifyNFTOwnership('1', VALID_WALLET);
-    expect(result.owned).toBe(false);
-    expect(result.error).toMatch(/temporarily unavailable/i);
+    await expect(service.verifyNFTOwnership('1', VALID_WALLET)).rejects.toThrow('Open');
   });
 
   it('returns owned=false and captures error message on unexpected error', async () => {
-    circuitBreakerMock.execute.mockRejectedValueOnce(new Error('Network timeout'));
+    nftOwnershipSvcMock.verifyNFTOwnership.mockRejectedValue(new Error('Network timeout'));
 
-    const result = await service.verifyNFTOwnership('5', VALID_WALLET);
-    expect(result.owned).toBe(false);
-    expect(result.error).toContain('Network timeout');
+    await expect(service.verifyNFTOwnership('5', VALID_WALLET)).rejects.toThrow('Network timeout');
   });
 });

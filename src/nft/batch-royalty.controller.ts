@@ -5,6 +5,14 @@ import {
   Logger,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiBadRequestResponse,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
 import { BatchRoyaltyService } from './batch-royalty.service';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -13,10 +21,8 @@ class BatchRoyaltyQueryDto {
   tokenIds: (string | number)[];
 }
 
-/**
- * Controller for batch querying royalty information from the NFT smart contract.
- * Allows frontends to fetch royalty data for multiple tokens in a single API call.
- */
+@ApiTags('nft')
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nft')
 @Auth()
 export class BatchRoyaltyController {
@@ -24,44 +30,46 @@ export class BatchRoyaltyController {
 
   constructor(private readonly batchRoyaltyService: BatchRoyaltyService) {}
 
-  /**
-   * POST /nft/batch-royalty
-   * 
-   * Fetch royalty information for multiple NFT tokens in a single request.
-   * This is a public endpoint - no authentication required.
-   * 
-   * Request Body:
-   * {
-   *   "tokenIds": [1, 2, 3, 4, 5]
-   * }
-   * 
-   * Response:
-   * [
-   *   {
-   *     "tokenId": "1",
-   *     "recipient": "GABC...",
-   *     "feeNumerator": 500,
-   *     "feeDenominator": 10000,
-   *     "royaltyPercentage": "5.00%"
-   *   },
-   *   {
-   *     "tokenId": "2",
-   *     "recipient": "GDEF...",
-   *     "feeNumerator": 1000,
-   *     "feeDenominator": 10000,
-   *     "royaltyPercentage": "10.00%"
-   *   },
-   *   ...
-   * ]
-   * 
-   * Notes:
-   * - Maximum batch size: 100 tokens
-   * - Results are returned in the same order as input
-   * - Non-existent tokens return zero values (recipient = zero address, fees = 0)
-   * - Results are cached for 5 minutes
-   */
   @Public()
   @Post('batch-royalty')
+  @ApiOperation({
+    summary: 'Batch query NFT royalty info',
+    description:
+      'Fetch royalty information for multiple NFT tokens in a single request. Maximum batch size: 100 tokens.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        tokenIds: {
+          type: 'array',
+          items: { type: 'number' },
+          example: [1, 2, 3],
+        },
+      },
+      required: ['tokenIds'],
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Batch royalty info returned',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          tokenId: { type: 'string' },
+          recipient: { type: 'string' },
+          feeNumerator: { type: 'number' },
+          feeDenominator: { type: 'number' },
+          royaltyPercentage: { type: 'string' },
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid request body — tokenIds array required',
+  })
   async getBatchRoyalty(@Body() body: BatchRoyaltyQueryDto) {
     if (!body.tokenIds || !Array.isArray(body.tokenIds)) {
       throw new BadRequestException(
@@ -69,9 +77,7 @@ export class BatchRoyaltyController {
       );
     }
 
-    this.logger.log(
-      `Batch royalty query for ${body.tokenIds.length} tokens`,
-    );
+    this.logger.log(`Batch royalty query for ${body.tokenIds.length} tokens`);
 
     return this.batchRoyaltyService.getBatchRoyaltyInfo(body.tokenIds);
   }

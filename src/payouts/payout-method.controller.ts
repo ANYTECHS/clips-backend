@@ -9,7 +9,14 @@ import {
   Req,
   ParseIntPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutMethodService } from './payout-method.service';
 import { CreatePayoutMethodDto } from './dto/create-payout-method.dto';
@@ -21,9 +28,11 @@ interface RequestWithUser extends Request {
 }
 
 @ApiTags('payout-methods')
+@ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('payout-methods')
 @Auth()
-@ApiBearerAuth()
 export class PayoutMethodController {
   constructor(private readonly payoutMethodService: PayoutMethodService) {}
 

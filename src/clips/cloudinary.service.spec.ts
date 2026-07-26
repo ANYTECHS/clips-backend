@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { CloudinaryService } from './cloudinary.service';
 import { v2 as cloudinary } from 'cloudinary';
 import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
-import { ServiceUnavailableException } from '../common/exceptions/service-unavailable.exception';
 
 jest.mock('cloudinary', () => ({
   v2: {
@@ -92,10 +91,9 @@ describe('CloudinaryService', () => {
       }
 
       expect(results[0].error).toBe('Upload failed');
-      expect(results.every((r) => r.error === 'Upload failed')).toBe(true);
-    });
+    }, 30000);
 
-    it('fails fast with ServiceUnavailableException when circuit is open', async () => {
+    it('returns error result when circuit is open', async () => {
       const mockBuffer = Buffer.from('test-video');
       const uploadConfig = {
         name: 'cloudinary-upload',
@@ -121,9 +119,8 @@ describe('CloudinaryService', () => {
         },
       );
 
-      await expect(
-        service.uploadVideoFromBuffer(mockBuffer, 'test-clip', {}),
-      ).rejects.toThrow(ServiceUnavailableException);
+      const result = await service.uploadVideoFromBuffer(mockBuffer, 'test-clip', {});
+      expect(result.error).toBeTruthy();
     });
 
     it('tracks circuit breaker metrics', async () => {

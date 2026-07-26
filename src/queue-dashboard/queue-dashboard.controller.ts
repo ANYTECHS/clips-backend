@@ -1,11 +1,30 @@
-import { Controller, Get, Req, Res, Next, Post, Body, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Req,
+  Res,
+  Next,
+  Post,
+  Body,
+  BadRequestException,
+} from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { QueueDashboardService } from './queue-dashboard.service';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
 
 @ApiTags('queues')
 @ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiForbiddenResponse({ description: 'Forbidden — admin access required' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('admin/queues')
 @Auth('admin')
 export class QueueDashboardController {
@@ -25,7 +44,10 @@ export class QueueDashboardController {
   }
 
   @Post('pause')
-  @ApiOperation({ summary: 'Pause queue processing', description: 'Pause a specific queue or all queues' })
+  @ApiOperation({
+    summary: 'Pause queue processing',
+    description: 'Pause a specific queue or all queues',
+  })
   async pause(@Body() body: { queue?: string }) {
     if (body.queue) {
       try {
@@ -41,7 +63,10 @@ export class QueueDashboardController {
   }
 
   @Post('resume')
-  @ApiOperation({ summary: 'Resume queue processing', description: 'Resume a specific queue or all queues' })
+  @ApiOperation({
+    summary: 'Resume queue processing',
+    description: 'Resume a specific queue or all queues',
+  })
   async resume(@Body() body: { queue?: string }) {
     if (body.queue) {
       try {
