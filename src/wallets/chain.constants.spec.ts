@@ -29,9 +29,12 @@ describe('isSupportedChain', () => {
 });
 
 describe('assertSupportedChain', () => {
-  it.each([...SUPPORTED_CHAINS])('returns the chain value for "%s"', (chain) => {
-    expect(assertSupportedChain(chain)).toBe(chain);
-  });
+  it.each([...SUPPORTED_CHAINS])(
+    'returns the chain value for "%s"',
+    (chain) => {
+      expect(assertSupportedChain(chain)).toBe(chain);
+    },
+  );
 
   it('throws when chain is not supported', () => {
     expect(() => assertSupportedChain('ethereum')).toThrow(

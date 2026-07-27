@@ -2,7 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BatchRoyaltyService } from './batch-royalty.service';
 import { StellarService } from '../stellar/stellar.service';
 import { RedisService } from '../redis/redis.service';
-import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 
 describe('BatchRoyaltyService', () => {
   let service: BatchRoyaltyService;
@@ -57,16 +60,16 @@ describe('BatchRoyaltyService', () => {
     });
 
     it('should throw BadRequestException for non-array input', async () => {
-      await expect(
-        service.getBatchRoyaltyInfo(null as any),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.getBatchRoyaltyInfo(null as any)).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should throw BadRequestException for batch size exceeding limit', async () => {
       const largeArray = Array.from({ length: 101 }, (_, i) => i + 1);
-      await expect(
-        service.getBatchRoyaltyInfo(largeArray),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.getBatchRoyaltyInfo(largeArray)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 
@@ -95,7 +98,9 @@ describe('BatchRoyaltyService', () => {
         ],
       });
 
-      await expect(module.compile()).rejects.toThrow(InternalServerErrorException);
+      await expect(module.compile()).rejects.toThrow(
+        InternalServerErrorException,
+      );
     });
   });
 });

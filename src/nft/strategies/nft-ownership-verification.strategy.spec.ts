@@ -8,7 +8,8 @@ describe('NftOwnershipService with strategy', () => {
   };
 
   const mockConfig = {
-    sorobanNftContractId: 'CCCSorobanTestContractIdPlaceholder000000000000000000000',
+    sorobanNftContractId:
+      'CCCSorobanTestContractIdPlaceholder000000000000000000000',
   };
 
   const mockCircuitBreaker = {

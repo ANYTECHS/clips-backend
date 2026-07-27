@@ -25,7 +25,10 @@ describe('WalletsService', () => {
   });
 
   it('delegates disconnect to WalletManagementService', async () => {
-    const expected = { message: 'Wallet disconnected successfully', walletId: 1 };
+    const expected = {
+      message: 'Wallet disconnected successfully',
+      walletId: 1,
+    };
     mockWalletManagementService.disconnect.mockResolvedValue(expected);
 
     const result = await service.disconnect(1, 42);
@@ -40,7 +43,11 @@ describe('WalletsService', () => {
       chain: 'stellar',
       type: 'freighter',
     };
-    mockWalletManagementService.connect.mockResolvedValue({ id: 1, userId: 42, ...dto });
+    mockWalletManagementService.connect.mockResolvedValue({
+      id: 1,
+      userId: 42,
+      ...dto,
+    });
 
     const result = await service.connect(42, dto);
 

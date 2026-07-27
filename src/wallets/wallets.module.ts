@@ -17,6 +17,11 @@ import { StellarModule } from '../stellar/stellar.module';
     WalletsService,
   ],
   controllers: [WalletsController],
-  exports: [WalletValidationService, WalletManagementService, WalletBalanceService, WalletsService],
+  exports: [
+    WalletValidationService,
+    WalletManagementService,
+    WalletBalanceService,
+    WalletsService,
+  ],
 })
 export class WalletsModule {}

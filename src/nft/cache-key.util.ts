@@ -7,12 +7,10 @@ export const CACHE_PREFIXES = {
 } as const;
 
 export const CacheKeyBuilder = {
-  royalty: (mintAddress: string) =>
-    `${CACHE_PREFIXES.ROYALTY}:${mintAddress}`,
+  royalty: (mintAddress: string) => `${CACHE_PREFIXES.ROYALTY}:${mintAddress}`,
 
   batchRoyalty: (tokenIds: string[]) =>
     `${CACHE_PREFIXES.BATCH_ROYALTY}:${tokenIds.join(',')}`,
 
-  platformRevenue: () =>
-    `${CACHE_PREFIXES.PLATFORM_REVENUE}:total`,
+  platformRevenue: () => `${CACHE_PREFIXES.PLATFORM_REVENUE}:total`,
 };

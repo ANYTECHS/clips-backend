@@ -24,7 +24,10 @@ import {
 
 import type { Request } from 'express';
 import { StellarPaymentService } from './stellar-payment.service';
-import { CreateStellarSubscriptionDto, StellarPaymentIntentDto } from './dto/create-stellar-subscription.dto';
+import {
+  CreateStellarSubscriptionDto,
+  StellarPaymentIntentDto,
+} from './dto/create-stellar-subscription.dto';
 import { LoginGuard } from '../auth/guards/login.guard';
 
 @ApiTags('subscriptions')
@@ -54,7 +57,9 @@ export class SubscriptionsController {
     description: 'Payment intent pending confirmation (Pending response)',
     type: StellarPaymentIntentDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid input or unsupported asset (Failure response)' })
+  @ApiBadRequestResponse({
+    description: 'Invalid input or unsupported asset (Failure response)',
+  })
   async createStellarPaymentIntent(
     @Body() dto: CreateStellarSubscriptionDto,
     @Req() req: Request,
@@ -79,7 +84,9 @@ export class SubscriptionsController {
     description: 'Payment intent pending confirmation (Pending response)',
     type: StellarPaymentIntentDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid input or unsupported asset (Failure response)' })
+  @ApiBadRequestResponse({
+    description: 'Invalid input or unsupported asset (Failure response)',
+  })
   async createPaymentIntent(
     @Body() dto: CreateStellarSubscriptionDto,
     @Req() req: Request,
@@ -150,9 +157,12 @@ export class SubscriptionsController {
     },
   })
   @ApiBadRequestResponse({
-    description: 'Missing paymentIntentId or transactionHash (Failure response)',
+    description:
+      'Missing paymentIntentId or transactionHash (Failure response)',
   })
-  @ApiNotFoundResponse({ description: 'Payment intent not found (Failure response)' })
+  @ApiNotFoundResponse({
+    description: 'Payment intent not found (Failure response)',
+  })
   @HttpCode(HttpStatus.OK)
   async verifyStellarPayment(
     @Query('paymentIntentId') paymentIntentId: string,

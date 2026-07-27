@@ -19,7 +19,8 @@ export class CreateMintDto {
   clipId: string;
 
   @ApiProperty({
-    description: "Creator's wallet address — receives the creator royalty share",
+    description:
+      "Creator's wallet address — receives the creator royalty share",
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @IsString()
@@ -35,7 +36,8 @@ export class CreateMintDto {
   metadataUri?: string;
 
   @ApiPropertyOptional({
-    description: 'NFT royalty in Basis Points (BPS). 0–1500 (0–15%). Defaults to 1000 (10%).',
+    description:
+      'NFT royalty in Basis Points (BPS). 0–1500 (0–15%). Defaults to 1000 (10%).',
     example: 1000,
     minimum: 0,
     maximum: 1500,

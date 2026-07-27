@@ -21,6 +21,7 @@ import {
   ApiUnauthorizedResponse,
   ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
+  ApiConflictResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
@@ -164,9 +165,23 @@ export class WalletsController {
       'Soft-deletes the wallet (sets deletedAt). Blocked if pending payouts or active NFTs still depend on the wallet.',
   })
   @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
-  @ApiResponse({ status: 200, description: 'Wallet disconnected successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet disconnected successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Wallet disconnected successfully' },
+        walletId: { type: 'number', example: 1 },
+      },
+    },
+  })
   @ApiBadRequestResponse({
     description: 'Cannot disconnect - pending payouts or active NFTs exist',
+  })
+  @ApiConflictResponse({
+    description:
+      'Wallet is already disconnected, has pending payouts, or has active NFTs',
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   @ApiNotFoundResponse({
