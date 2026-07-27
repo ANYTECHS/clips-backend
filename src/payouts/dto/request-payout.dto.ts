@@ -1,5 +1,7 @@
+import { Type } from 'class-transformer';
 import { IsNumber, IsString, IsEnum, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { TrimString } from '../../common/decorators/trim-string.decorator';
 
 /** @deprecated Use CreatePayoutDto */
 export type RequestPayoutDto = CreatePayoutDto;
@@ -10,6 +12,7 @@ export class CreatePayoutDto {
     example: 100.0,
     minimum: 0.01,
   })
+  @Type(() => Number)
   @IsNumber()
   @Min(0.01)
   amount: number;
@@ -18,6 +21,7 @@ export class CreatePayoutDto {
     description: 'Currency code',
     example: 'USD',
   })
+  @TrimString()
   @IsString()
   currency: string;
 
@@ -26,6 +30,7 @@ export class CreatePayoutDto {
     enum: ['fiat', 'stellar'],
     example: 'stellar',
   })
+  @TrimString()
   @IsEnum(['fiat', 'stellar'])
   method: 'fiat' | 'stellar';
 }

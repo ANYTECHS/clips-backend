@@ -32,6 +32,7 @@ import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto.js';
 import { PublishClipDto } from './dto/publish-clip.dto.js';
 import { ClipPublishService } from './clip-publish.service.js';
 import type { ClipGenerationJob } from './clip-generation.processor';
+import { ClipResponseDto } from './dto/clip-response.dto.js';
 import {
   QueueRateLimitGuard,
   QueueRateLimit,
@@ -78,6 +79,8 @@ export class ClipsController {
   @ApiResponse({
     status: 200,
     description: 'List of clips returned successfully',
+    type: ClipResponseDto,
+    isArray: true,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiQuery({
@@ -137,7 +140,11 @@ export class ClipsController {
   @Get(':id')
   @ApiOperation({ summary: 'Get clip by ID' })
   @ApiParam({ name: 'id', description: 'Clip ID' })
-  @ApiResponse({ status: 200, description: 'Clip found and returned' })
+  @ApiResponse({
+    status: 200,
+    description: 'Clip found and returned',
+    type: ClipResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Clip not found' })
   async findOne(@Param('id') id: string) {
