@@ -14,8 +14,12 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBody,
+  ApiParam,
   ApiUnauthorizedResponse,
   ApiInternalServerErrorResponse,
+  ApiBadRequestResponse,
+  ApiNotFoundResponse,
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutMethodService } from './payout-method.service';
@@ -38,11 +42,12 @@ export class PayoutMethodController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new payout method' })
+  @ApiBody({ type: CreatePayoutMethodDto })
   @ApiResponse({
     status: 201,
     description: 'Payout method created successfully',
   })
-  @ApiResponse({ status: 400, description: 'Invalid input' })
+  @ApiBadRequestResponse({ description: 'Invalid input' })
   async create(
     @Req() req: RequestWithUser,
     @Body() createDto: CreatePayoutMethodDto,
@@ -66,18 +71,19 @@ export class PayoutMethodController {
     status: 200,
     description: 'Default payout method',
   })
-  @ApiResponse({ status: 404, description: 'No default payout method found' })
+  @ApiNotFoundResponse({ description: 'No default payout method found' })
   async getDefault(@Req() req: RequestWithUser) {
     return this.payoutMethodService.getDefaultMethod(req.user.userId);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a specific payout method' })
+  @ApiParam({ name: 'id', description: 'Payout method ID', example: 1 })
   @ApiResponse({
     status: 200,
     description: 'Payout method details',
   })
-  @ApiResponse({ status: 404, description: 'Payout method not found' })
+  @ApiNotFoundResponse({ description: 'Payout method not found' })
   async findOne(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,
@@ -87,11 +93,13 @@ export class PayoutMethodController {
 
   @Put(':id')
   @ApiOperation({ summary: 'Update a payout method' })
+  @ApiParam({ name: 'id', description: 'Payout method ID', example: 1 })
+  @ApiBody({ type: UpdatePayoutMethodDto })
   @ApiResponse({
     status: 200,
     description: 'Payout method updated successfully',
   })
-  @ApiResponse({ status: 404, description: 'Payout method not found' })
+  @ApiNotFoundResponse({ description: 'Payout method not found' })
   async update(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,
@@ -102,11 +110,12 @@ export class PayoutMethodController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete a payout method' })
+  @ApiParam({ name: 'id', description: 'Payout method ID', example: 1 })
   @ApiResponse({
     status: 200,
     description: 'Payout method deleted successfully',
   })
-  @ApiResponse({ status: 404, description: 'Payout method not found' })
+  @ApiNotFoundResponse({ description: 'Payout method not found' })
   async remove(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,

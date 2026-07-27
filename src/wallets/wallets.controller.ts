@@ -46,6 +46,70 @@ export class WalletsController {
     private readonly walletBalanceService: WalletBalanceService,
   ) {}
 
+  @Get()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List all wallets for the authenticated user',
+    description:
+      'Returns all active (non-deleted) wallets belonging to the current user. ' +
+      'Wallet addresses are partially masked for privacy. ' +
+      'Each wallet includes its chain (stellar | solana | base) and provider type.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of wallets',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'number' },
+          address: { type: 'string', example: '******KPRQ6A' },
+          chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+          type: { type: 'string', example: 'freighter' },
+          connectedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async listWallets(@Req() req: AuthRequest) {
+    return this.walletsService.listWallets(req.user.userId);
+  }
+
+  @Get(':id')
+  @UseGuards(WalletOwnershipGuard)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get a single wallet by ID',
+    description:
+      'Returns details of a specific wallet. The wallet must belong to the authenticated user. ' +
+      'Includes chain information (stellar | solana | base) and provider type.',
+  })
+  @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet details',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number' },
+        address: { type: 'string', example: '******KPRQ6A' },
+        chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+        type: { type: 'string', example: 'freighter' },
+        connectedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  async getWallet(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthRequest,
+  ) {
+    return this.walletsService.getWalletById(id, req.user.userId);
+  }
+
   @Get(':id/balance')
   @Throttle({ default: { limit: 30, ttl: 60000 } })
   @UseGuards(WalletOwnershipGuard)
@@ -122,6 +186,10 @@ export class WalletsController {
   @ApiOperation({
     summary: 'Connect wallet',
     description:
+      'Connect or update a wallet for the authenticated user. ' +
+      'Supports Stellar (freighter, lobstr, albedo), Solana (phantom, solflare, backpack), ' +
+      'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
+      'If a wallet with the same address+chain already exists it is re-activated.',
       'Connect or update a wallet for the authenticated user. Supports Stellar wallets via Freighter, Lobstr, or Albedo.',
   })
   @ApiResponse({ status: 200, description: 'Wallet connected successfully' })

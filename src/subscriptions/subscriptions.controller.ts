@@ -19,11 +19,12 @@ import {
   ApiBadRequestResponse,
   ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
+  ApiBody,
 } from '@nestjs/swagger';
 
 import type { Request } from 'express';
 import { StellarPaymentService } from './stellar-payment.service';
-import { CreateStellarSubscriptionDto } from './dto/create-stellar-subscription.dto';
+import { CreateStellarSubscriptionDto, StellarPaymentIntentDto } from './dto/create-stellar-subscription.dto';
 import { LoginGuard } from '../auth/guards/login.guard';
 
 @ApiTags('subscriptions')
@@ -42,26 +43,18 @@ export class SubscriptionsController {
     description:
       'Creates a payment intent for a Stellar-based subscription. Supports XLM, USDC, and custom assets.',
   })
+  @ApiBody({ type: CreateStellarSubscriptionDto })
   @ApiResponse({
     status: 201,
-    description: 'Payment intent created successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'string', description: 'Payment intent ID' },
-        amount: { type: 'number', example: 10 },
-        asset: { type: 'string', example: 'xlm' },
-        destination: {
-          type: 'string',
-          description: 'Stellar destination address',
-        },
-        memo: { type: 'string', description: 'Payment memo' },
-        expiresAt: { type: 'string', format: 'date-time' },
-        status: { type: 'string', example: 'pending' },
-      },
-    },
+    description: 'Payment intent created successfully (Success response)',
+    type: StellarPaymentIntentDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid input or unsupported asset' })
+  @ApiResponse({
+    status: 202,
+    description: 'Payment intent pending confirmation (Pending response)',
+    type: StellarPaymentIntentDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid input or unsupported asset (Failure response)' })
   async createStellarPaymentIntent(
     @Body() dto: CreateStellarSubscriptionDto,
     @Req() req: Request,
@@ -75,11 +68,18 @@ export class SubscriptionsController {
     summary: 'Create Stellar payment intent for subscription',
     description: 'Alias for create-stellar endpoint',
   })
+  @ApiBody({ type: CreateStellarSubscriptionDto })
   @ApiResponse({
     status: 201,
-    description: 'Payment intent created successfully',
+    description: 'Payment intent created successfully (Success response)',
+    type: StellarPaymentIntentDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid input or unsupported asset' })
+  @ApiResponse({
+    status: 202,
+    description: 'Payment intent pending confirmation (Pending response)',
+    type: StellarPaymentIntentDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid input or unsupported asset (Failure response)' })
   async createPaymentIntent(
     @Body() dto: CreateStellarSubscriptionDto,
     @Req() req: Request,
@@ -96,21 +96,10 @@ export class SubscriptionsController {
   })
   @ApiResponse({
     status: 200,
-    description: 'List of pending payment intents',
-    schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string' },
-          amount: { type: 'number' },
-          asset: { type: 'string' },
-          status: { type: 'string' },
-          expiresAt: { type: 'string', format: 'date-time' },
-        },
-      },
-    },
+    description: 'List of pending payment intents (Pending response)',
+    type: [StellarPaymentIntentDto],
   })
+  @ApiBadRequestResponse({ description: 'Invalid request (Failure response)' })
   async getPendingPaymentIntents(@Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
     return this.stellarPaymentService.getPendingPaymentIntents(userId);
@@ -134,7 +123,7 @@ export class SubscriptionsController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Payment verification result',
+    description: 'Payment verification successful (Success response)',
     schema: {
       type: 'object',
       properties: {
@@ -142,14 +131,28 @@ export class SubscriptionsController {
           type: 'boolean',
           description:
             'verified=true activates the subscription; verified=false leaves it inactive.',
+          example: true,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Payment verification pending (Pending response)',
+    schema: {
+      type: 'object',
+      properties: {
+        verified: {
+          type: 'boolean',
+          example: false,
         },
       },
     },
   })
   @ApiBadRequestResponse({
-    description: 'Missing paymentIntentId or transactionHash',
+    description: 'Missing paymentIntentId or transactionHash (Failure response)',
   })
-  @ApiNotFoundResponse({ description: 'Payment intent not found' })
+  @ApiNotFoundResponse({ description: 'Payment intent not found (Failure response)' })
   @HttpCode(HttpStatus.OK)
   async verifyStellarPayment(
     @Query('paymentIntentId') paymentIntentId: string,
