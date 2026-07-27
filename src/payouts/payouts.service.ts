@@ -375,6 +375,25 @@ export class PayoutsService {
         userId,
         ...(filterStatus ? { status: filterStatus } : {}),
       },
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        method: true,
+        status: true,
+        transactionId: true,
+        onChainTxHash: true,
+        confirmedAt: true,
+        retryCount: true,
+        stellarXdr: true,
+        feeAmount: true,
+        feePercentage: true,
+        finalAmount: true,
+        paidAt: true,
+        approvedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -385,6 +404,28 @@ export class PayoutsService {
   ): Promise<any> {
     const payout = await this.prisma.payout.findFirst({
       where: { id: payoutId, userId },
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        method: true,
+        status: true,
+        transactionId: true,
+        onChainTxHash: true,
+        confirmedAt: true,
+        retryCount: true,
+        stellarXdr: true,
+        feeAmount: true,
+        feePercentage: true,
+        finalAmount: true,
+        paidAt: true,
+        approvedAt: true,
+        rejectedAt: true,
+        rejectionReason: true,
+        lastAttemptAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     if (!payout) {
