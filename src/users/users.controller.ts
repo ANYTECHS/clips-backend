@@ -30,9 +30,24 @@ export class UsersController {
   @Get('me')
   @ApiOperation({
     summary:
-      'Get current user profile including stellarPublicKey and walletType',
+      'Get current user profile including masked stellarPublicKey and walletType',
   })
-  @ApiResponse({ status: 200, description: 'User profile' })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile with masked stellarPublicKey',
+    schema: {
+      example: {
+        id: 1,
+        email: 'user@example.com',
+        name: 'Jane Doe',
+        picture: 'https://cdn.example.com/avatars/1.jpg',
+        emailVerified: true,
+        stellarPublicKey: 'GC6X********UTZF3',
+        walletType: 'custodial',
+        createdAt: '2026-07-26T12:00:00.000Z',
+      },
+    },
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMe(@Req() req: any) {
     return this.usersService.getMe(req.user.userId);
@@ -44,7 +59,13 @@ export class UsersController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Wallet created, returns stellarPublicKey',
+    description: 'Wallet created, returns a masked stellarPublicKey',
+    schema: {
+      example: {
+        stellarPublicKey: 'GC6X********UTZF3',
+        walletType: 'custodial',
+      },
+    },
   })
   @ApiConflictResponse({ description: 'Wallet already exists' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })

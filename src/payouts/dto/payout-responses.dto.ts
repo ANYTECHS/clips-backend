@@ -39,6 +39,12 @@ export class PayoutResponseDto {
   })
   onChainTxHash?: string | null;
 
+  @ApiPropertyOptional({
+    example: '2026-07-26T12:05:00.000Z',
+    description: 'Timestamp when the transaction was confirmed on Horizon',
+  })
+  confirmedAt?: Date | null;
+
   @ApiProperty({
     example: '2026-07-26T12:00:00.000Z',
     description: 'Creation timestamp',

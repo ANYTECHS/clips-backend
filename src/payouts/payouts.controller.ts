@@ -49,7 +49,11 @@ export class PayoutsController {
   @Post('request')
   @ApiOperation({
     summary: 'Request a payout with specified amount and method',
-    description: 'Initiates a creator payout. Requires JWT.',
+    description:
+      'Initiates a creator payout. Requires JWT. The requested amount must meet ' +
+      'the minimum payout threshold (default 5 USD equivalent, configurable via ' +
+      'the MIN_STELLAR_PAYOUT environment variable); requests below the threshold ' +
+      'are rejected with a 400 validation error.',
   })
   @ApiBody({ type: CreatePayoutDto })
   @ApiResponse({
@@ -58,7 +62,15 @@ export class PayoutsController {
     type: PayoutResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Invalid request or insufficient balance',
+    description:
+      'Invalid request, insufficient balance, or amount below the minimum payout threshold',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Minimum payout amount is 5 USD equivalent.',
+        error: 'Bad Request',
+      },
+    },
   })
   @ApiConflictResponse({ description: 'Pending payout already exists' })
   async requestPayout(
@@ -103,43 +115,6 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'List payouts for the authenticated user',
     description: 'Payout history. Optionally filter by status. Requires JWT.',
-  @ApiOperation({ summary: 'List payouts for the authenticated user' })
-  @ApiQuery({ name: 'status', required: false, description: 'Filter by payout status (pending, processing, completed, failed, approved, pending_approval)' })
-  @ApiResponse({
-    status: 200,
-    description: 'List of payouts including on-chain tracking fields',
-    schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'number' },
-          amount: { type: 'number' },
-          currency: { type: 'string' },
-          method: { type: 'string' },
-          status: {
-            type: 'string',
-            enum: ['pending', 'pending_approval', 'approved', 'processing', 'completed', 'failed'],
-          },
-          onChainTxHash: {
-            type: 'string',
-            nullable: true,
-            description: 'Stellar transaction hash once submitted on-chain',
-          },
-          confirmedAt: {
-            type: 'string',
-            format: 'date-time',
-            nullable: true,
-            description: 'Timestamp when the transaction was confirmed on Horizon',
-          },
-          retryCount: {
-            type: 'number',
-            description: 'Number of on-chain confirmation poll attempts',
-          },
-          createdAt: { type: 'string', format: 'date-time' },
-        },
-      },
-    },
   })
   @ApiQuery({
     name: 'status',
@@ -159,7 +134,7 @@ export class PayoutsController {
   })
   @ApiResponse({
     status: 200,
-    description: 'List of payouts',
+    description: 'List of payouts including on-chain tracking fields (status, onChainTxHash, confirmedAt)',
     type: PayoutResponseDto,
     isArray: true,
   })
@@ -173,56 +148,15 @@ export class PayoutsController {
   @Get(':id')
   @ApiOperation({
     summary: 'Get a specific payout by ID',
-    description: 'Returns payout status and details. Requires JWT.',
+    description: 'Returns payout status and on-chain tracking details. Requires JWT.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
-    description: 'Payout details including current status',
+    description:
+      'Payout details including current status, on-chain transaction hash, and confirmation timestamp',
     type: PayoutResponseDto,
   })
-  @ApiOperation({ summary: 'Get a specific payout by ID' })
-  @ApiParam({ name: 'id', description: 'Payout ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Payout details including on-chain status tracking',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'number' },
-        amount: { type: 'number' },
-        currency: { type: 'string' },
-        method: { type: 'string' },
-        status: {
-          type: 'string',
-          enum: ['pending', 'pending_approval', 'approved', 'processing', 'completed', 'failed'],
-        },
-        onChainTxHash: {
-          type: 'string',
-          nullable: true,
-          description: 'Stellar transaction hash once submitted on-chain',
-        },
-        confirmedAt: {
-          type: 'string',
-          format: 'date-time',
-          nullable: true,
-          description: 'Timestamp when the transaction was confirmed on Horizon',
-        },
-        retryCount: {
-          type: 'number',
-          description: 'Number of on-chain confirmation poll attempts made so far',
-        },
-        stellarXdr: {
-          type: 'string',
-          nullable: true,
-          description: 'Unsigned XDR envelope (present while awaiting signature)',
-        },
-        createdAt: { type: 'string', format: 'date-time' },
-      },
-    },
-  })
-  @ApiResponse({ status: 404, description: 'Payout not found' })
-  @ApiResponse({ status: 200, description: 'Payout details' })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async getPayout(
     @Req() req: RequestWithUser,
