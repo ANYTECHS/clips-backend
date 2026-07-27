@@ -85,7 +85,18 @@ export class NftController {
     description: 'NFT minted successfully',
     type: NftMintResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid mint payload' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid mint payload, or the clip cannot be minted because it is already minting/minted ' +
+      'or has already been posted to a social platform (business rule: posted clips cannot be minted).',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Posted clips cannot be minted.',
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiForbiddenResponse({ description: 'Mint guard rejected the request' })
   async mint(@Body() dto: MintNftDto): Promise<MintResult> {
     const metadataUri =
@@ -107,6 +118,9 @@ export class NftController {
   @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
+    description:
+      'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
+      '(testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
@@ -117,7 +131,18 @@ export class NftController {
   @ApiUnauthorizedResponse({
     description: 'Unauthorized — Bearer JWT required',
   })
-  @ApiBadRequestResponse({ description: 'Invalid clip or wallet' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid clip or wallet, or the clip cannot be minted because it is already minting/minted ' +
+      'or has already been posted to a social platform (business rule: posted clips cannot be minted).',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Posted clips cannot be minted.',
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,
@@ -158,7 +183,8 @@ export class NftController {
     summary: 'Verify on-chain NFT ownership',
     description:
       'Checks whether the given Stellar wallet owns the NFT token via Soroban owner_of. ' +
-      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise.',
+      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise. ' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiBody({ type: VerifyNftOwnershipDto })
   @ApiResponse({
@@ -246,7 +272,8 @@ export class NftController {
   @ApiOperation({
     summary: 'Get on-chain royalty info for an NFT',
     description:
-      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes.',
+      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes. ' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiParam({
     name: 'mintAddress',
