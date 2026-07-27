@@ -11,6 +11,10 @@ export const ROYALTY_PROTOCOL_MAX_BPS = DEFAULT_ROYALTY_BPS_MAX;
 export interface RoyaltyMapEntry {
   key: unknown;
   value: unknown;
+  /** Human-readable label for this recipient, e.g. "Creator" or "Platform" */
+  label?: string;
+  /** Description of why this recipient receives this share */
+  description?: string;
 }
 
 @Injectable()
@@ -104,6 +108,7 @@ export class RoyaltyConfigurationService {
   buildRoyaltyMap(
     creatorWallet: string,
     clipRoyaltyBps?: number | null,
+    options?: { creatorLabel?: string; royaltyDescription?: string },
   ): RoyaltyMapEntry[] {
     const creatorRoyaltyBps = this.getCreatorRoyaltyBps(clipRoyaltyBps);
     const platformWallet = this.getPlatformWallet();
@@ -116,10 +121,16 @@ export class RoyaltyConfigurationService {
       {
         key: StellarSdk.Address.fromString(creatorWallet).toScVal(),
         value: StellarSdk.nativeToScVal(creatorRoyaltyBps, { type: 'u32' }),
+        label: options?.creatorLabel ?? 'Creator',
+        description:
+          options?.royaltyDescription ??
+          `${(creatorRoyaltyBps / 100).toFixed(1)}% creator royalty + ${(platformBps / 100).toFixed(1)}% platform fee on every secondary sale.`,
       },
       {
         key: StellarSdk.Address.fromString(platformWallet).toScVal(),
         value: StellarSdk.nativeToScVal(platformBps, { type: 'u32' }),
+        label: 'Platform',
+        description: `${(platformBps / 100).toFixed(1)}% platform fee`,
       },
     ];
   }

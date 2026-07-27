@@ -120,4 +120,24 @@ export class WalletManagementService {
 
     return this.maskWallet(wallet);
   }
+
+  async listWallets(userId: number): Promise<any[]> {
+    const wallets = await this.prisma.wallet.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: { connectedAt: 'desc' },
+    });
+    return wallets.map((w) => this.maskWallet(w));
+  }
+
+  async getWalletById(walletId: number, userId: number): Promise<any> {
+    const wallet = await this.prisma.wallet.findFirst({
+      where: { id: walletId, userId, deletedAt: null },
+    });
+
+    if (!wallet) {
+      throw new NotFoundException(`Wallet ${walletId} not found`);
+    }
+
+    return this.maskWallet(wallet);
+  }
 }

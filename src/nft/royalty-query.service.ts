@@ -3,6 +3,7 @@ import {
   Logger,
   BadRequestException,
   InternalServerErrorException,
+  NotFoundException,
 } from '@nestjs/common';
 import { StellarService } from '../stellar/stellar.service';
 import { RedisService } from '../redis/redis.service';
@@ -149,7 +150,9 @@ export class RoyaltyQueryService {
         : (Object.entries(royaltyMap) as [string, bigint][]);
 
     if (entries.length === 0) {
-      return { royaltyBps: 0, recipient: '' };
+      throw new NotFoundException(
+        `Royalty data not found for mint address ${mintAddress}`,
+      );
     }
 
     const [recipient, bps] = entries[0];
