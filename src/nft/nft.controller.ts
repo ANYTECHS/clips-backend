@@ -15,6 +15,10 @@ import {
   ApiResponse,
   ApiParam,
   ApiInternalServerErrorResponse,
+  ApiBearerAuth,
+  ApiOkResponse,
+  ApiNotFoundResponse,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
@@ -23,6 +27,11 @@ import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
+import {
+  RoyaltyQueryResponseDto,
+  RoyaltyNotFoundDto,
+  RoyaltyUnauthorizedDto,
+} from './dto/royalty-query.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -124,10 +133,31 @@ export class NftController {
    *
    * Response: { royaltyBps: number, recipient: string }
    */
+  @UseGuards(LoginGuard)
   @Get(':mintAddress/royalty')
-  @ApiOperation({ summary: 'Get on-chain royalty info for an NFT' })
-  @ApiParam({ name: 'mintAddress', description: 'NFT mint address / token ID' })
-  @ApiResponse({ status: 200, description: 'Royalty info returned' })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get on-chain royalty info for an NFT',
+    description:
+      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes.',
+  })
+  @ApiParam({
+    name: 'mintAddress',
+    description: 'NFT mint address / numeric token ID assigned at mint time',
+    example: '42',
+  })
+  @ApiOkResponse({
+    description: 'Royalty info returned successfully',
+    type: RoyaltyQueryResponseDto,
+  })
+  @ApiNotFoundResponse({
+    description: 'Royalty data not found for the given mint address',
+    type: RoyaltyNotFoundDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid authentication',
+    type: RoyaltyUnauthorizedDto,
+  })
   async getRoyalty(
     @Param('mintAddress') mintAddress: string,
   ): Promise<RoyaltyInfo> {
