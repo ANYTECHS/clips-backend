@@ -17,6 +17,9 @@ import {
   ApiParam,
   ApiUnauthorizedResponse,
   ApiInternalServerErrorResponse,
+  ApiBadRequestResponse,
+  ApiConflictResponse,
+  ApiNotFoundResponse,
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutsService } from './payouts.service';

@@ -1,12 +1,9 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import {
-  ThrottlerModule,
-  ThrottlerGuard,
-  ThrottlerStorage,
-} from '@nestjs/throttler';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerRedisModule } from './common/throttler/throttler-redis.module';
+import { ThrottlerStorageRedisService } from './common/throttler/throttler-storage-redis.service';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -47,8 +44,11 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
     PrismaModule,
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule, ThrottlerRedisModule],
-      inject: [ConfigService, ThrottlerStorage],
-      useFactory: (config: ConfigService, storage: ThrottlerStorage) => ({
+      inject: [ConfigService, ThrottlerStorageRedisService],
+      useFactory: (
+        config: ConfigService,
+        storage: ThrottlerStorageRedisService,
+      ) => ({
         storage,
         throttlers: [
           {
