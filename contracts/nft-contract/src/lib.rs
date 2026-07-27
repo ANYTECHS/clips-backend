@@ -14,7 +14,7 @@ mod test;
 
 pub use admin::Admin;
 pub use metadata::ClipMetadata;
-pub use storage::{get_token_metadata, set_token_metadata, TokenStorage};
+pub use storage::{get_token_metadata, set_token_metadata, TokenStorage, ROYALTY_BPS_MAX};
 
 const CLIP_NAME: &[u8] = b"ClipCash NFT";
 const CLIP_SYMBOL: &[u8] = b"CLIP";
@@ -45,6 +45,8 @@ pub enum Error {
     NotInitialized = 4,
     SoulboundTokenNotTransferable = 5,
     InvalidTokenId = 6,
+    /// Royalty value is outside the valid 0–10 000 BPS range.
+    InvalidRoyaltyBps = 7,
 }
 
 #[contractimpl]
@@ -203,6 +205,33 @@ impl ClipsNftContract {
 
     pub fn get_approved(env: Env, token_id: u64) -> Option<Address> {
         storage::get_approval(&env, token_id)
+    }
+
+    /// Set the default royalty percentage applied to newly minted NFTs.
+    ///
+    /// Only the contract admin may call this function.
+    ///
+    /// `bps` is expressed in **basis points** (1 BPS = 0.01 %).
+    /// Valid range: 0–10 000 (0 %–100 %).
+    /// Returns `Error::InvalidRoyaltyBps` when the value is out of range.
+    pub fn set_default_royalty_bps(env: Env, bps: u32) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        storage::set_default_royalty_bps(&env, bps);
+        Ok(())
+    }
+
+    /// Return the currently configured default royalty in basis points.
+    ///
+    /// Returns `None` when no default has been set yet (contract was not
+    /// initialized with a royalty, or it was never explicitly configured).
+    pub fn get_default_royalty_bps(env: Env) -> Option<u32> {
+        storage::get_default_royalty_bps(&env)
     }
 }
 

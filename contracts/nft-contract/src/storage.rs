@@ -9,6 +9,10 @@ pub struct TokenStorage;
 
 const TOTAL_SUPPLY_KEY: &str = "total_supply";
 const ADMIN_KEY: &str = "admin";
+const DEFAULT_ROYALTY_BPS_KEY: &str = "def_royalty_bps";
+
+/// Maximum allowed royalty value in basis points (100% = 10 000 BPS).
+pub const ROYALTY_BPS_MAX: u32 = 10_000;
 
 pub fn has_admin(env: &Env) -> bool {
     env.storage().instance().has(&Symbol::new(env, ADMIN_KEY))
@@ -80,6 +84,18 @@ pub fn is_approved(env: &Env, token_id: u64, spender: &Address) -> bool {
 
 pub fn remove_approval(env: &Env, token_id: u64) {
     env.storage().persistent().remove(&(token_id, Symbol::new(env, "approval")));
+}
+
+pub fn set_default_royalty_bps(env: &Env, bps: u32) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, DEFAULT_ROYALTY_BPS_KEY), &bps);
+}
+
+pub fn get_default_royalty_bps(env: &Env) -> Option<u32> {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, DEFAULT_ROYALTY_BPS_KEY))
 }
 
 pub fn set_token_metadata(env: &Env, token_id: u64, metadata: &crate::ClipMetadata) {

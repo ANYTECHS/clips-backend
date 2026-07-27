@@ -1,10 +1,52 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
+import { Keypair } from '@stellar/stellar-sdk';
 import { StellarService } from '../stellar/stellar.service';
 import { SupportedChain } from './chain.constants';
 
 @Injectable()
 export class WalletValidationService {
   constructor(private readonly stellarService: StellarService) {}
+
+  /**
+   * Verifies that the caller controls the private key corresponding to
+   * `publicKey` by checking the Ed25519 signature of `signedMessage`.
+   *
+   * Uses `Keypair.fromPublicKey(publicKey).verify(messageBytes, signatureBytes)`
+   * from @stellar/stellar-sdk so no secret key is ever required.
+   *
+   * @throws BadRequestException when the signature is invalid or the publicKey
+   *   is not a valid Stellar key.
+   */
+  verifySignatureOwnership(
+    publicKey: string,
+    signature: string,
+    signedMessage: string,
+  ): void {
+    let keypair: Keypair;
+    try {
+      keypair = Keypair.fromPublicKey(publicKey);
+    } catch {
+      throw new BadRequestException(
+        'Invalid Stellar public key for signature verification',
+      );
+    }
+
+    let signatureBytes: Buffer;
+    try {
+      signatureBytes = Buffer.from(signature, 'base64');
+    } catch {
+      throw new BadRequestException('Signature must be valid base64');
+    }
+
+    const messageBytes = Buffer.from(signedMessage, 'utf8');
+
+    const valid = keypair.verify(messageBytes, signatureBytes);
+    if (!valid) {
+      throw new BadRequestException(
+        'Signature verification failed: signature does not match the provided public key',
+      );
+    }
+  }
 
   validateAddressForChain(address: string, chain: SupportedChain): void {
     switch (chain) {
