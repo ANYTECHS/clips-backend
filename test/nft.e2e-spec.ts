@@ -15,6 +15,9 @@ import { RoyaltyQueryService } from '../src/nft/royalty-query.service';
 import { NftMintService } from '../src/clips/nft-mint.service';
 import { LoginGuard } from '../src/auth/guards/login.guard';
 import { NftMintGuard } from '../src/nft/guards/nft-mint.guard';
+import { NftOwnershipVerificationService } from '../src/nft/nft-ownership-verification.service';
+import { PrismaService } from '../src/prisma/prisma.service';
+import { RoyaltyConfigurationService } from '../src/nft/royalty-configuration.service';
 
 describe('NFT mint preparation (e2e)', () => {
   let app: INestApplication<App>;
@@ -37,6 +40,9 @@ describe('NFT mint preparation (e2e)', () => {
         { provide: NftMetadataService, useValue: {} },
         { provide: IpfsUploadService, useValue: {} },
         { provide: RoyaltyQueryService, useValue: { getRoyaltyInfo: jest.fn() } },
+        { provide: NftOwnershipVerificationService, useValue: {} },
+        { provide: PrismaService, useValue: {} },
+        { provide: RoyaltyConfigurationService, useValue: {} },
       ],
     })
       .overrideGuard(LoginGuard)

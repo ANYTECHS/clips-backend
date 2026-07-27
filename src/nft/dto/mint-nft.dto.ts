@@ -43,6 +43,9 @@ export class MintNftDto {
   creatorWallet: string;
 
   @ApiPropertyOptional({
+    description:
+      'Optional IPFS / Arweave metadata URI — built automatically if omitted',
+    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
     description: 'Optional IPFS / Arweave metadata URI — built automatically if omitted',
     example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   /** Optional IPFS / Arweave metadata URI — built automatically if omitted */
@@ -55,6 +58,8 @@ export class MintNftDto {
   metadataUri?: string;
 
   @ApiPropertyOptional({
+    description:
+      'Creator royalty in basis points (0–1500). Defaults to 1000 (10%).',
     description: 'Creator royalty in basis points (0–1500). Defaults to 1000 (10%).',
   /**
    * Creator royalty in basis points (0–1500).
