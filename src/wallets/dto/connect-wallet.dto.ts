@@ -5,12 +5,35 @@ import { DEFAULT_CHAIN, SUPPORTED_CHAINS } from '../chain.constants';
 /** Stellar ED25519 public key: starts with G, exactly 56 Base32 characters */
 const STELLAR_PUBLIC_KEY_REGEX = /^G[A-Z2-7]{55}$/;
 
+/**
+ * Wallet provider types supported per chain:
+ *  - Stellar: freighter, lobstr, albedo
+ *  - Solana:  phantom, solflare, backpack
+ *  - Base/EVM: metamask, coinbase, walletconnect
+ */
+export const SUPPORTED_WALLET_TYPES = [
+  // Stellar
+  'freighter',
+  'lobstr',
+  'albedo',
+  // Solana
+  'phantom',
+  'solflare',
+  'backpack',
+  // EVM / Base
+  'metamask',
+  'coinbase',
+  'walletconnect',
+] as const;
+
+export type SupportedWalletType = (typeof SUPPORTED_WALLET_TYPES)[number];
+
 /** @deprecated Use CreateWalletConnectionDto */
 export type ConnectWalletDto = CreateWalletConnectionDto;
 
 export class CreateWalletConnectionDto {
   @ApiProperty({
-    description: 'The wallet address (e.g., Stellar G address)',
+    description: 'The wallet address (e.g., Stellar G address, Solana base58, or 0x EVM address)',
     example: 'GABC...XYZ',
   })
   @IsString()
@@ -29,10 +52,16 @@ export class CreateWalletConnectionDto {
   })
   chain?: string;
 
-  @ApiProperty({ description: 'The wallet provider type', example: 'freighter' })
+  @ApiProperty({
+    description: 'The wallet provider type',
+    example: 'freighter',
+    enum: SUPPORTED_WALLET_TYPES,
+  })
   @IsString()
   @IsNotEmpty()
-  @IsIn(['freighter', 'lobstr', 'albedo'])
+  @IsIn([...SUPPORTED_WALLET_TYPES], {
+    message: `type must be one of: ${SUPPORTED_WALLET_TYPES.join(', ')}`,
+  })
   type: string;
 
   @ApiProperty({
