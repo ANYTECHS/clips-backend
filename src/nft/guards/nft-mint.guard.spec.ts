@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { NftMintGuard } from './nft-mint.guard';
 
 describe('NftMintGuard', () => {
@@ -38,9 +35,7 @@ describe('NftMintGuard', () => {
   it('allows minting when clip is eligible', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
 
-    await expect(
-      runGuard({ body: { clipId: 1 } }),
-    ).resolves.toBe(true);
+    await expect(runGuard({ body: { clipId: 1 } })).resolves.toBe(true);
   });
 
   it('throws when clipId is missing', async () => {
@@ -52,9 +47,9 @@ describe('NftMintGuard', () => {
   it('throws NotFoundException when clip does not exist', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(null);
 
-    await expect(
-      runGuard({ body: { clipId: 99 } }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(runGuard({ body: { clipId: 99 } })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 
   it('rejects already minted clips', async () => {
@@ -63,9 +58,9 @@ describe('NftMintGuard', () => {
       nftStatus: 'minted',
     });
 
-    await expect(
-      runGuard({ body: { clipId: 1 } }),
-    ).rejects.toThrow('already being minted or has been minted');
+    await expect(runGuard({ body: { clipId: 1 } })).rejects.toThrow(
+      'already being minted or has been minted',
+    );
   });
 
   it('rejects clips currently minting', async () => {
@@ -126,9 +121,7 @@ describe('NftMintGuard', () => {
   it('reads clipId from route params', async () => {
     prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
 
-    await expect(
-      runGuard({ params: { clipId: '1' } }),
-    ).resolves.toBe(true);
+    await expect(runGuard({ params: { clipId: '1' } })).resolves.toBe(true);
 
     expect(prismaMock.clip.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 1 } }),

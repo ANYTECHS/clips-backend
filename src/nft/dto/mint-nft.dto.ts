@@ -23,44 +23,31 @@ export class MintNftDto {
     example: 42,
     minimum: 1,
   })
-  /** Numeric ID of the clip being minted as an NFT */
-  @ApiProperty({ description: 'Numeric ID of the clip to mint', example: 42 })
   @IsInt()
   @Min(1)
   @Type(() => Number)
   clipId: number;
 
-  @ApiProperty({
-    description:
-      'Stellar wallet address that will receive the NFT and the creator royalty',
   /** Stellar wallet address that will receive the NFT and the creator royalty */
   @ApiProperty({
-    description: 'Stellar wallet address of the NFT creator (receives creator royalty)',
+    description:
+      'Stellar wallet address of the NFT creator (receives creator royalty)',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @IsString()
   @IsNotEmpty()
   creatorWallet: string;
 
-  @ApiPropertyOptional({
-    description:
-      'Optional IPFS / Arweave metadata URI — built automatically if omitted',
-    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
-    description: 'Optional IPFS / Arweave metadata URI — built automatically if omitted',
-    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   /** Optional IPFS / Arweave metadata URI — built automatically if omitted */
   @ApiPropertyOptional({
-    description: 'IPFS or Arweave metadata URI. Built automatically when omitted.',
-    example: 'ipfs://Qm...',
+    description:
+      'IPFS or Arweave metadata URI. Built automatically when omitted.',
+    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   })
   @IsOptional()
   @IsUrl()
   metadataUri?: string;
 
-  @ApiPropertyOptional({
-    description:
-      'Creator royalty in basis points (0–1500). Defaults to 1000 (10%).',
-    description: 'Creator royalty in basis points (0–1500). Defaults to 1000 (10%).',
   /**
    * Creator royalty in basis points (0–1500).
    * Defaults to 1000 (10 %) when not provided.
@@ -86,7 +73,8 @@ export class MintNftDto {
    * Stored in NFT metadata for transparency.
    */
   @ApiPropertyOptional({
-    description: 'Human-readable label for the creator royalty recipient, e.g. "Creator".',
+    description:
+      'Human-readable label for the creator royalty recipient, e.g. "Creator".',
     example: 'Creator',
   })
   @IsOptional()

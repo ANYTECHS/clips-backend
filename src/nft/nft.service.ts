@@ -102,7 +102,10 @@ export class NftService {
         'PLATFORM_WALLET_ADDRESS is not configured. Cannot mint NFT.',
       );
     }
-    if (this.config.platformRoyaltyBps < 0 || this.config.creatorRoyaltyBps < 0) {
+    if (
+      this.config.platformRoyaltyBps < 0 ||
+      this.config.creatorRoyaltyBps < 0
+    ) {
       throw new BadRequestException('Royalty bps values must be non-negative.');
     }
   }

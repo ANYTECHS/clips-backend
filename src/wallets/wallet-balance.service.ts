@@ -1,6 +1,9 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { StellarService, WalletBalanceResult } from '../stellar/stellar.service';
+import {
+  StellarService,
+  WalletBalanceResult,
+} from '../stellar/stellar.service';
 
 @Injectable()
 export class WalletBalanceService {
@@ -9,7 +12,10 @@ export class WalletBalanceService {
     private readonly stellarService: StellarService,
   ) {}
 
-  async getBalance(walletId: number, userId: number): Promise<WalletBalanceResult> {
+  async getBalance(
+    walletId: number,
+    userId: number,
+  ): Promise<WalletBalanceResult> {
     const wallet = await this.prisma.wallet.findUnique({
       where: { id: walletId },
       select: { id: true, userId: true, address: true, deletedAt: true },

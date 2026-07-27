@@ -87,9 +87,7 @@ export class IpfsUploadService {
       );
     }
     if (!Array.isArray(metadata.attributes)) {
-      throw new BadRequestException(
-        'NFT metadata attributes must be an array',
-      );
+      throw new BadRequestException('NFT metadata attributes must be an array');
     }
     for (const attr of metadata.attributes) {
       if (!attr.trait_type?.trim()) {
@@ -127,10 +125,7 @@ export class IpfsUploadService {
    * Upload NFT metadata JSON to IPFS via Pinata or nft.storage.
    * Returns an ipfs:// URI for the pinned content.
    */
-  async uploadMetadata(
-    metadata: NftMetadata,
-    clipId: number,
-  ): Promise<string> {
+  async uploadMetadata(metadata: NftMetadata, clipId: number): Promise<string> {
     this.validateMetadata(metadata);
     const provider = this.resolveProvider();
 

@@ -8,7 +8,15 @@ import { NftOwnershipGuard } from './guards/nft-ownership.guard';
 
 @Module({
   imports: [StellarModule, CircuitBreakerModule, ConfigModule],
-  providers: [NftOwnershipService, NftOwnershipVerificationService, NftOwnershipGuard],
-  exports: [NftOwnershipService, NftOwnershipVerificationService, NftOwnershipGuard],
+  providers: [
+    NftOwnershipService,
+    NftOwnershipVerificationService,
+    NftOwnershipGuard,
+  ],
+  exports: [
+    NftOwnershipService,
+    NftOwnershipVerificationService,
+    NftOwnershipGuard,
+  ],
 })
 export class NftOwnershipModule {}

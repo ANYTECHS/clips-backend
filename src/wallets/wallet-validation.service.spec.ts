@@ -90,7 +90,10 @@ describe('WalletValidationService', () => {
 
       it('throws for a Solana address with invalid base58 characters (0, O, I, l)', () => {
         expect(() =>
-          service.validateAddressForChain('0OIl1111111111111111111111111111', 'solana'),
+          service.validateAddressForChain(
+            '0OIl1111111111111111111111111111',
+            'solana',
+          ),
         ).toThrow(BadRequestException);
       });
 
@@ -132,9 +135,9 @@ describe('WalletValidationService', () => {
       });
 
       it('throws BadRequestException for an address that is too short', () => {
-        expect(() =>
-          service.validateAddressForChain('0x1234', 'base'),
-        ).toThrow(BadRequestException);
+        expect(() => service.validateAddressForChain('0x1234', 'base')).toThrow(
+          BadRequestException,
+        );
       });
 
       it('throws BadRequestException for non-hex characters', () => {

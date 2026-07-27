@@ -7,7 +7,9 @@ import * as crypto from 'crypto';
 import { StellarPaymentService } from './stellar-payment.service';
 import { StellarService } from '../stellar/stellar.service';
 
-jest.mock('@stellar/stellar-sdk', () => require('../../test/mocks/stellar-sdk.mock'));
+jest.mock('@stellar/stellar-sdk', () =>
+  require('../../test/mocks/stellar-sdk.mock'),
+);
 
 describe('StellarWebhookService', () => {
   let service: StellarWebhookService;
@@ -50,7 +52,9 @@ describe('StellarWebhookService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    mockConfigService.get.mockImplementation((key: string) => configValues[key]);
+    mockConfigService.get.mockImplementation(
+      (key: string) => configValues[key],
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -149,7 +153,9 @@ describe('StellarWebhookService', () => {
 
       const result = await service.isDuplicateWebhook('tx123');
       expect(result).toBe(true);
-      expect(mockPrismaService.stellarWebhookLog.findUnique).toHaveBeenCalledWith({
+      expect(
+        mockPrismaService.stellarWebhookLog.findUnique,
+      ).toHaveBeenCalledWith({
         where: { transactionId: 'tx123' },
       });
     });
@@ -189,8 +195,13 @@ describe('StellarWebhookService', () => {
 
     it('should handle duplicate key error gracefully', async () => {
       // Prisma duplicate key error
-      const duplicateError = { code: 'P2002', message: 'Unique constraint failed' };
-      mockPrismaService.stellarWebhookLog.create.mockRejectedValue(duplicateError);
+      const duplicateError = {
+        code: 'P2002',
+        message: 'Unique constraint failed',
+      };
+      mockPrismaService.stellarWebhookLog.create.mockRejectedValue(
+        duplicateError,
+      );
 
       const payload = { transaction_hash: 'tx123' };
       // Should not throw
@@ -253,9 +264,9 @@ describe('StellarWebhookService', () => {
     });
 
     it('should reject webhook with missing signature', async () => {
-      await expect(
-        service.processWebhook(validPayload, ''),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(service.processWebhook(validPayload, '')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('should detect and return success for duplicate webhooks', async () => {

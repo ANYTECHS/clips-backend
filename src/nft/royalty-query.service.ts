@@ -147,7 +147,7 @@ export class RoyaltyQueryService {
     const entries: [string, bigint][] =
       royaltyMap instanceof Map
         ? Array.from(royaltyMap.entries())
-        : (Object.entries(royaltyMap) as [string, bigint][]);
+        : Object.entries(royaltyMap);
 
     if (entries.length === 0) {
       throw new NotFoundException(

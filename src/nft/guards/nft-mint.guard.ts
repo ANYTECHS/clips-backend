@@ -77,9 +77,10 @@ export class NftMintGuard implements CanActivate {
     }
 
     // Check if clip is posted (either via postStatus or any published clipPost)
-    const isPosted = clip.postStatus === 'posted' || 
-      clip.clipPosts.some(post => post.status === 'published');
-    
+    const isPosted =
+      clip.postStatus === 'posted' ||
+      clip.clipPosts.some((post) => post.status === 'published');
+
     if (isPosted) {
       throw new BadRequestException('Posted clips cannot be minted.');
     }

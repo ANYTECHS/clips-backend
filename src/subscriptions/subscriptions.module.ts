@@ -17,8 +17,6 @@ import { raw } from 'body-parser';
 export class SubscriptionsModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
     // Apply raw body parser only to the Stellar webhook endpoint
-    consumer
-      .apply(raw({ type: '*/*' }))
-      .forRoutes('webhooks/stellar');
+    consumer.apply(raw({ type: '*/*' })).forRoutes('webhooks/stellar');
   }
 }

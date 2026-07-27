@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RoyaltyQueryService } from './royalty-query.service';
 
 describe('RoyaltyQueryService', () => {

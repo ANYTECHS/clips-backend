@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsIn, Matches, Length, IsOptional } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsIn,
+  Matches,
+  Length,
+  IsOptional,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DEFAULT_CHAIN, SUPPORTED_CHAINS } from '../chain.constants';
 
@@ -33,7 +40,8 @@ export type ConnectWalletDto = CreateWalletConnectionDto;
 
 export class CreateWalletConnectionDto {
   @ApiProperty({
-    description: 'The wallet address (e.g., Stellar G address, Solana base58, or 0x EVM address)',
+    description:
+      'The wallet address (e.g., Stellar G address, Solana base58, or 0x EVM address)',
     example: 'GABC...XYZ',
   })
   @IsString()
@@ -73,12 +81,14 @@ export class CreateWalletConnectionDto {
   @IsNotEmpty({ message: 'publicKey must not be empty' })
   @Length(56, 56, { message: 'publicKey must be exactly 56 characters' })
   @Matches(STELLAR_PUBLIC_KEY_REGEX, {
-    message: 'publicKey must be a valid Stellar address (G-prefix, Base32, 56 chars)',
+    message:
+      'publicKey must be a valid Stellar address (G-prefix, Base32, 56 chars)',
   })
   publicKey: string;
 
   @ApiProperty({
-    description: 'Base64-encoded signature of signedMessage produced by the wallet',
+    description:
+      'Base64-encoded signature of signedMessage produced by the wallet',
     example: 'abc123==',
   })
   @IsString()
@@ -86,7 +96,8 @@ export class CreateWalletConnectionDto {
   signature: string;
 
   @ApiProperty({
-    description: 'The plaintext nonce/message that was signed (proves key ownership)',
+    description:
+      'The plaintext nonce/message that was signed (proves key ownership)',
     example: 'Connect ClipCash wallet 1719266696836',
   })
   @IsString()
