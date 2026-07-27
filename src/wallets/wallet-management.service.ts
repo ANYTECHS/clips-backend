@@ -120,4 +120,31 @@ export class WalletManagementService {
 
     return this.maskWallet(wallet);
   }
+
+  /**
+   * List all active (non-deleted) wallets for a user with masked addresses.
+   */
+  async listWallets(userId: number): Promise<any[]> {
+    const wallets = await this.prisma.wallet.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: { connectedAt: 'desc' },
+    });
+    return wallets.map((w) => this.maskWallet(w));
+  }
+
+  /**
+   * Get a single wallet by ID for a user with masked address.
+   * Throws NotFoundException if not found or owned by another user.
+   */
+  async findWallet(walletId: number, userId: number): Promise<any> {
+    const wallet = await this.prisma.wallet.findUnique({
+      where: { id: walletId },
+    });
+
+    if (!wallet || wallet.userId !== userId || wallet.deletedAt !== null) {
+      throw new NotFoundException(`Wallet ${walletId} not found`);
+    }
+
+    return this.maskWallet(wallet);
+  }
 }

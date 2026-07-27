@@ -256,3 +256,63 @@ describe('StellarService', () => {
   });
 });
 
+
+describe('StellarService network configuration (STELLAR_NETWORK env var)', () => {
+  const originalEnv = process.env.STELLAR_NETWORK;
+
+  afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.STELLAR_NETWORK;
+    } else {
+      process.env.STELLAR_NETWORK = originalEnv;
+    }
+  });
+
+  async function buildService(network?: string): Promise<StellarService> {
+    if (network === undefined) {
+      delete process.env.STELLAR_NETWORK;
+    } else {
+      process.env.STELLAR_NETWORK = network;
+    }
+    const module = await Test.createTestingModule({
+      providers: [StellarService, CircuitBreakerService],
+    }).compile();
+    return module.get<StellarService>(StellarService);
+  }
+
+  it('defaults to testnet when STELLAR_NETWORK is not set', async () => {
+    const svc = await buildService(undefined);
+    expect(svc.network).toBe('testnet');
+    expect(svc.rpcUrl).toBe('https://soroban-testnet.stellar.org');
+    expect(svc.horizonUrl).toBe('https://horizon-testnet.stellar.org');
+    expect(svc.networkPassphrase).toBe('Test SDF Network ; September 2015');
+    expect(svc.isTestnet()).toBe(true);
+    expect(svc.isMainnet()).toBe(false);
+  });
+
+  it('configures testnet when STELLAR_NETWORK=testnet', async () => {
+    const svc = await buildService('testnet');
+    expect(svc.network).toBe('testnet');
+    expect(svc.rpcUrl).toBe('https://soroban-testnet.stellar.org');
+    expect(svc.horizonUrl).toBe('https://horizon-testnet.stellar.org');
+    expect(svc.networkPassphrase).toBe('Test SDF Network ; September 2015');
+    expect(svc.isTestnet()).toBe(true);
+    expect(svc.isMainnet()).toBe(false);
+  });
+
+  it('configures public (mainnet) when STELLAR_NETWORK=public', async () => {
+    const svc = await buildService('public');
+    expect(svc.network).toBe('public');
+    expect(svc.rpcUrl).toBe('https://soroban-rpc.stellar.org');
+    expect(svc.horizonUrl).toBe('https://horizon.stellar.org');
+    expect(svc.networkPassphrase).toBe('Public Global Stellar Network ; September 2015');
+    expect(svc.isTestnet()).toBe(false);
+    expect(svc.isMainnet()).toBe(true);
+  });
+
+  it('falls back to testnet for unrecognised STELLAR_NETWORK values', async () => {
+    const svc = await buildService('unknown-network');
+    expect(svc.network).toBe('testnet');
+    expect(svc.isTestnet()).toBe(true);
+  });
+});

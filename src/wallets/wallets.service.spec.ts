@@ -5,6 +5,8 @@ import { WalletManagementService } from './wallet-management.service';
 const mockWalletManagementService = {
   disconnect: jest.fn(),
   connect: jest.fn(),
+  listWallets: jest.fn(),
+  findWallet: jest.fn(),
 };
 
 describe('WalletsService', () => {
@@ -46,5 +48,36 @@ describe('WalletsService', () => {
 
     expect(mockWalletManagementService.connect).toHaveBeenCalledWith(42, dto);
     expect(result.id).toBe(1);
+  });
+
+  it('delegates listWallets to WalletManagementService with masked addresses', async () => {
+    const maskedWallets = [
+      { id: 1, userId: 42, address: 'GC6X********TF3', chain: 'stellar', type: 'freighter' },
+      { id: 2, userId: 42, address: 'GABC********XYZ', chain: 'stellar', type: 'lobstr' },
+    ];
+    mockWalletManagementService.listWallets.mockResolvedValue(maskedWallets);
+
+    const result = await service.listWallets(42);
+
+    expect(mockWalletManagementService.listWallets).toHaveBeenCalledWith(42);
+    expect(result).toEqual(maskedWallets);
+    expect(result).toHaveLength(2);
+  });
+
+  it('delegates findWallet to WalletManagementService with masked address', async () => {
+    const maskedWallet = {
+      id: 1,
+      userId: 42,
+      address: 'GC6X********TF3',
+      chain: 'stellar',
+      type: 'freighter',
+    };
+    mockWalletManagementService.findWallet.mockResolvedValue(maskedWallet);
+
+    const result = await service.findWallet(1, 42);
+
+    expect(mockWalletManagementService.findWallet).toHaveBeenCalledWith(1, 42);
+    expect(result).toEqual(maskedWallet);
+    expect(result.address).toContain('****');
   });
 });

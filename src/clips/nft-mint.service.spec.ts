@@ -399,6 +399,28 @@ describe('NftMintService.prepareMintTx', () => {
     await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('throws BadRequestException when clip postStatus is "posted"', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      ...baseClip,
+      postStatus: 'posted',
+      clipPosts: [],
+    });
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toThrow(
+      'Posted clips cannot be minted.',
+    );
+  });
+
+  it('throws BadRequestException when clip has a published clipPost', async () => {
+    prismaMock.clip.findUnique.mockResolvedValue({
+      ...baseClip,
+      postStatus: null,
+      clipPosts: [{ status: 'published' }],
+    });
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toThrow(
+      'Posted clips cannot be minted.',
+    );
+  });
+
   it('returns xdr and metadata when clip is ready', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, metadataUri: 'ipfs://abc123' });
     prismaMock.clip.update.mockResolvedValue({});

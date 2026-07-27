@@ -46,6 +46,80 @@ export class WalletsController {
     private readonly walletBalanceService: WalletBalanceService,
   ) {}
 
+  @Get()
+  @ApiOperation({
+    summary: 'List wallets',
+    description:
+      'Returns all active (non-deleted) wallets for the authenticated user. Wallet addresses are partially masked for security (e.g., GABF********KJ93XD).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'List of wallets retrieved successfully',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'number', example: 1 },
+          userId: { type: 'number', example: 42 },
+          address: {
+            type: 'string',
+            example: 'GABF********KJ93XD',
+            description: 'Masked wallet address',
+          },
+          chain: { type: 'string', example: 'stellar' },
+          type: { type: 'string', example: 'freighter' },
+          connectedAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @HttpCode(HttpStatus.OK)
+  async list(@Req() req: AuthRequest) {
+    return this.walletsService.listWallets(req.user.userId);
+  }
+
+  @Get(':id')
+  @ApiOperation({
+    summary: 'Get wallet by ID',
+    description:
+      'Returns a single wallet by ID for the authenticated user. Wallet address is partially masked.',
+  })
+  @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', example: 1 },
+        userId: { type: 'number', example: 42 },
+        address: {
+          type: 'string',
+          example: 'GABF********KJ93XD',
+          description: 'Masked wallet address',
+        },
+        chain: { type: 'string', example: 'stellar' },
+        type: { type: 'string', example: 'freighter' },
+        connectedAt: { type: 'string', format: 'date-time' },
+        updatedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    description: 'Wallet not found or belongs to another user',
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @HttpCode(HttpStatus.OK)
+  async findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: AuthRequest,
+  ) {
+    return this.walletsService.findWallet(id, req.user.userId);
+  }
+
   @Get(':id/balance')
   @Throttle({ default: { limit: 30, ttl: 60000 } })
   @UseGuards(WalletOwnershipGuard)

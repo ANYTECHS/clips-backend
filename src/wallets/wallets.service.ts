@@ -20,4 +20,12 @@ export class WalletsService {
   connect(userId: number, dto: ConnectWalletDto) {
     return this.walletManagementService.connect(userId, dto);
   }
+
+  listWallets(userId: number) {
+    return this.walletManagementService.listWallets(userId);
+  }
+
+  findWallet(walletId: number, userId: number) {
+    return this.walletManagementService.findWallet(walletId, userId);
+  }
 }

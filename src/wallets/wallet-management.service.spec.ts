@@ -16,6 +16,7 @@ jest.mock('../prisma/prisma.service', () => ({
 const mockPrisma = {
   wallet: {
     findUnique: jest.fn(),
+    findMany: jest.fn(),
     update: jest.fn(),
     upsert: jest.fn(),
   },
@@ -242,5 +243,116 @@ describe('WalletManagementService.connect', () => {
 
     expect(result.address).not.toBe(fullAddress);
     expect(result.address).toContain('****');
+  });
+});
+
+describe('WalletManagementService.listWallets', () => {
+  let service: WalletManagementService;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    mockWalletValidationService.validateAddressForChain.mockImplementation(() => undefined);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        WalletManagementService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: WalletValidationService, useValue: mockWalletValidationService },
+      ],
+    }).compile();
+    service = module.get<WalletManagementService>(WalletManagementService);
+  });
+
+  it('returns all active wallets for the user with masked addresses', async () => {
+    const fullAddress1 = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
+    const fullAddress2 = 'GABCDE12345FGHIJ67890KLMNOPQRSTUVWXYZ1234567890ABCDEFGHIJKL';
+    mockPrisma.wallet.findMany.mockResolvedValue([
+      { id: 1, userId: 42, address: fullAddress1, chain: 'stellar', type: 'freighter', deletedAt: null, connectedAt: new Date(), updatedAt: new Date() },
+      { id: 2, userId: 42, address: fullAddress2, chain: 'stellar', type: 'lobstr', deletedAt: null, connectedAt: new Date(), updatedAt: new Date() },
+    ]);
+
+    const result = await service.listWallets(42);
+
+    expect(mockPrisma.wallet.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 42, deletedAt: null } }),
+    );
+    expect(result).toHaveLength(2);
+    expect(result[0].address).not.toBe(fullAddress1);
+    expect(result[0].address).toContain('****');
+    expect(result[1].address).not.toBe(fullAddress2);
+    expect(result[1].address).toContain('****');
+  });
+
+  it('returns empty array when user has no wallets', async () => {
+    mockPrisma.wallet.findMany.mockResolvedValue([]);
+    const result = await service.listWallets(42);
+    expect(result).toEqual([]);
+  });
+});
+
+describe('WalletManagementService.findWallet', () => {
+  let service: WalletManagementService;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    mockWalletValidationService.validateAddressForChain.mockImplementation(() => undefined);
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        WalletManagementService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: WalletValidationService, useValue: mockWalletValidationService },
+      ],
+    }).compile();
+    service = module.get<WalletManagementService>(WalletManagementService);
+  });
+
+  it('returns wallet with masked address when found', async () => {
+    const fullAddress = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
+    mockPrisma.wallet.findUnique.mockResolvedValue({
+      id: 1,
+      userId: 42,
+      address: fullAddress,
+      chain: 'stellar',
+      type: 'freighter',
+      deletedAt: null,
+    });
+
+    const result = await service.findWallet(1, 42);
+
+    expect(result.id).toBe(1);
+    expect(result.address).not.toBe(fullAddress);
+    expect(result.address).toContain('****');
+    // First 4 chars preserved
+    expect(result.address.startsWith('GC6X')).toBe(true);
+    // Last 6 chars preserved
+    expect(result.address.endsWith('UHTZF3')).toBe(true);
+  });
+
+  it('throws NotFoundException when wallet does not exist', async () => {
+    mockPrisma.wallet.findUnique.mockResolvedValue(null);
+    await expect(service.findWallet(99, 42)).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws NotFoundException when wallet belongs to another user', async () => {
+    mockPrisma.wallet.findUnique.mockResolvedValue({
+      id: 1,
+      userId: 99,
+      address: 'GABC',
+      chain: 'stellar',
+      type: 'freighter',
+      deletedAt: null,
+    });
+    await expect(service.findWallet(1, 42)).rejects.toThrow(NotFoundException);
+  });
+
+  it('throws NotFoundException when wallet is soft-deleted', async () => {
+    mockPrisma.wallet.findUnique.mockResolvedValue({
+      id: 1,
+      userId: 42,
+      address: 'GABC',
+      chain: 'stellar',
+      type: 'freighter',
+      deletedAt: new Date(),
+    });
+    await expect(service.findWallet(1, 42)).rejects.toThrow(NotFoundException);
   });
 });
