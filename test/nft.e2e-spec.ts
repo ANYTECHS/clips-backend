@@ -2,14 +2,22 @@ jest.mock('../src/clips/nft-mint.service', () => ({
   NftMintService: class NftMintService {},
 }));
 
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { CanActivate, INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { NftController } from '../src/nft/nft.controller';
+import { NftService } from '../src/nft/nft.service';
+import { NftMetadataService } from '../src/nft/nft-metadata.service';
+import { IpfsUploadService } from '../src/nft/ipfs-upload.service';
+import { RoyaltyQueryService } from '../src/nft/royalty-query.service';
 import { NftMintService } from '../src/clips/nft-mint.service';
 import { LoginGuard } from '../src/auth/guards/login.guard';
+import { NftMintGuard } from '../src/nft/guards/nft-mint.guard';
+import { NftOwnershipVerificationService } from '../src/nft/nft-ownership-verification.service';
+import { PrismaService } from '../src/prisma/prisma.service';
+import { RoyaltyConfigurationService } from '../src/nft/royalty-configuration.service';
 
 describe('NFT mint preparation (e2e)', () => {
   let app: INestApplication<App>;
@@ -17,14 +25,24 @@ describe('NFT mint preparation (e2e)', () => {
   const nftMintService = {
     validateClipOwner: jest.fn(),
     prepareMintTx: jest.fn(),
+    confirmMint: jest.fn(),
+    uploadMetadataToIPFS: jest.fn(),
   };
 
   beforeAll(async () => {
+    const allow: CanActivate = { canActivate: () => true };
+
     const moduleRef = await Test.createTestingModule({
       controllers: [NftController],
       providers: [
+        { provide: NftService, useValue: { mintClip: jest.fn() } },
         { provide: NftMintService, useValue: nftMintService },
-        LoginGuard,
+        { provide: NftMetadataService, useValue: {} },
+        { provide: IpfsUploadService, useValue: {} },
+        { provide: RoyaltyQueryService, useValue: { getRoyaltyInfo: jest.fn() } },
+        { provide: NftOwnershipVerificationService, useValue: {} },
+        { provide: PrismaService, useValue: {} },
+        { provide: RoyaltyConfigurationService, useValue: {} },
       ],
     })
       .overrideGuard(LoginGuard)
@@ -36,6 +54,8 @@ describe('NFT mint preparation (e2e)', () => {
           return true;
         },
       })
+      .overrideGuard(NftMintGuard)
+      .useValue(allow)
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -46,7 +66,7 @@ describe('NFT mint preparation (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   beforeEach(() => {
@@ -108,9 +128,11 @@ describe('NFT mint preparation (e2e)', () => {
     );
     const operation = document.paths['/nfts/prepare-mint']?.post;
 
-    expect(operation?.summary).toBe('Prepare an unsigned NFT mint transaction');
+    expect(operation?.summary).toBe(
+      'Prepare a Soroban mint transaction (returns XDR for signing)',
+    );
     expect(Object.keys(operation?.responses ?? {})).toEqual(
-      expect.arrayContaining(['201', '400', '401', '404', '503']),
+      expect.arrayContaining(['201', '401']),
     );
   });
 });

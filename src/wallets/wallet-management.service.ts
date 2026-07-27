@@ -142,6 +142,12 @@ export class WalletManagementService {
     });
 
     if (!wallet || wallet.userId !== userId || wallet.deletedAt !== null) {
+  async getWalletById(walletId: number, userId: number): Promise<any> {
+    const wallet = await this.prisma.wallet.findFirst({
+      where: { id: walletId, userId, deletedAt: null },
+    });
+
+    if (!wallet) {
       throw new NotFoundException(`Wallet ${walletId} not found`);
     }
 

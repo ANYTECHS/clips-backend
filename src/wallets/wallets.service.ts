@@ -27,5 +27,7 @@ export class WalletsService {
 
   findWallet(walletId: number, userId: number) {
     return this.walletManagementService.findWallet(walletId, userId);
+  getWalletById(walletId: number, userId: number) {
+    return this.walletManagementService.getWalletById(walletId, userId);
   }
 }
