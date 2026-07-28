@@ -66,6 +66,10 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Request a payout with specified amount and method',
     description:
+      'Initiates a creator payout. Requires JWT. The requested amount must meet ' +
+      'the minimum payout threshold (default 5 USD equivalent, configurable via ' +
+      'the MIN_STELLAR_PAYOUT environment variable); requests below the threshold ' +
+      'are rejected with a 400 validation error.',
       'Creates a payout request and returns the pending payout record for the authenticated creator.',
   })
   @ApiBody({
@@ -84,6 +88,14 @@ export class PayoutsController {
   })
   @ApiBadRequestResponse({
     description:
+      'Invalid request, insufficient balance, or amount below the minimum payout threshold',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Minimum payout amount is 5 USD equivalent.',
+        error: 'Bad Request',
+      },
+    },
       'Invalid request payload, minimum threshold failure, or insufficient balance',
     schema: validationErrorSchema,
   })
@@ -140,6 +152,7 @@ export class PayoutsController {
   @Get()
   @ApiOperation({
     summary: 'List payouts for the authenticated user',
+    description: 'Payout history. Optionally filter by status. Requires JWT.',
     description:
       'Returns payout history for the authenticated user. Results can be filtered by payout status.',
   })
@@ -161,7 +174,7 @@ export class PayoutsController {
   })
   @ApiResponse({
     status: 200,
-    description: 'List of payouts',
+    description: 'List of payouts including on-chain tracking fields (status, onChainTxHash, confirmedAt)',
     type: PayoutResponseDto,
     isArray: true,
   })
@@ -175,12 +188,15 @@ export class PayoutsController {
   @Get(':id')
   @ApiOperation({
     summary: 'Get a specific payout by ID',
+    description: 'Returns payout status and on-chain tracking details. Requires JWT.',
     description:
       'Returns the current payout status and any stored Stellar transaction metadata.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
+    description:
+      'Payout details including current status, on-chain transaction hash, and confirmation timestamp',
     description: 'Payout details',
     type: PayoutResponseDto,
   })

@@ -37,7 +37,6 @@ import {
   NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
-  NftRoyaltyResponseDto,
   VerifyNftOwnershipDto,
 } from './dto/nft-swagger.dto';
 import {
@@ -54,6 +53,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
+import { maskAddress } from '../wallets/wallet.utils';
 
 @ApiTags('nft')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
@@ -193,6 +193,28 @@ export class NftController {
     status: 200,
     description: 'NFT metadata returned',
     type: NftMetadataResponseDto,
+    schema: {
+      example: {
+        name: 'Game-winning goal',
+        description: 'ClipCash generated clip 42',
+        image: 'https://cdn.example.com/thumbs/42.jpg',
+        animation_url: 'https://cdn.example.com/clips/42.mp4',
+        attributes: [
+          { trait_type: 'Clip Duration', value: 34 },
+          { trait_type: 'Virality Score', value: 87 },
+          { trait_type: 'Creation Date', value: '2026-07-20T09:30:00.000Z' },
+          { trait_type: 'Royalty BPS', value: 1000 },
+          { trait_type: 'Royalty Percent', value: 10 },
+        ],
+        seller_fee_basis_points: 1000,
+        fee_recipient: 'GC6X********UTZF3',
+        royalty: {
+          bps: 1000,
+          percent: 10,
+          recipient: 'GC6X********UTZF3',
+        },
+      },
+    },
   })
   @ApiNotFoundResponse({ description: 'Clip not found or not ready' })
   async getMetadata(
@@ -213,7 +235,8 @@ export class NftController {
     );
     let royaltyRecipient: string | undefined;
     try {
-      royaltyRecipient = this.royaltyConfigurationService.getPlatformWallet();
+      const platformWallet = this.royaltyConfigurationService.getPlatformWallet();
+      royaltyRecipient = platformWallet ? maskAddress(platformWallet) : undefined;
     } catch {
       royaltyRecipient = undefined;
     }

@@ -8,7 +8,10 @@ export type RequestPayoutDto = CreatePayoutDto;
 
 export class CreatePayoutDto {
   @ApiProperty({
-    description: 'Amount to withdraw',
+    description:
+      'Amount to withdraw. Must meet the minimum payout threshold ' +
+      '(default 5 USD equivalent, configurable via MIN_STELLAR_PAYOUT); ' +
+      'amounts below the threshold are rejected with a 400 validation error.',
     example: 100.0,
     minimum: 0.01,
   })
