@@ -87,7 +87,16 @@ export class AuthController {
       'return a JSON-encoded message, e.g. ' +
       '`{"score":1,"feedback":["Add numbers"],"suggestions":"Password is too weak. Add numbers"}`.',
   })
-  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests',
+    examples: {
+      rateLimited: {
+        summary: 'Rate limited',
+        value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
+      },
+    },
+  })
   @ApiQuery({
     name: 'use_cookies',
     required: false,
@@ -137,8 +146,28 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Invalid credentials' })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
   @ApiResponse({
+    status: 423,
+    description: 'Account locked due to brute force protection',
+    examples: {
+      locked: {
+        summary: 'Account locked',
+        value: {
+          message: 'Account temporarily locked due to too many failed login attempts',
+          lockoutTimeLeft: 900,
+          error: 'ACCOUNT_LOCKED',
+        },
+      },
+    },
+  })
+  @ApiResponse({
     status: 429,
-    description: 'Too many requests - brute force protection',
+    description: 'Too many requests',
+    examples: {
+      rateLimited: {
+        summary: 'Rate limited',
+        value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
+      },
+    },
   })
   @ApiQuery({
     name: 'use_cookies',
@@ -242,7 +271,16 @@ export class AuthController {
     type: MessageResponseDto,
   })
   @ApiResponse({ status: 400, description: 'Invalid email format' })
-  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests',
+    examples: {
+      rateLimited: {
+        summary: 'Rate limited',
+        value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
+      },
+    },
+  })
   async requestMagicLink(
     @Body(new ValidationPipe({ transform: true })) dto: MagicLinkRequestDto,
   ) {
@@ -401,7 +439,7 @@ export class AuthController {
     examples: {
       rateLimited: {
         summary: 'Rate limited',
-        value: { message: 'Too many requests' },
+        value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
       },
     },
   })
@@ -528,7 +566,7 @@ export class AuthController {
     examples: {
       rateLimited: {
         summary: 'Rate limited',
-        value: { message: 'Too many requests' },
+        value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
       },
     },
   })

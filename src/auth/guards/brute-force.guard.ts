@@ -36,7 +36,7 @@ export class BruteForceGuard implements NestInterceptor {
           lockoutTimeLeft: lockStatus.lockoutTimeLeft,
           error: 'ACCOUNT_LOCKED',
         },
-        HttpStatus.TOO_MANY_REQUESTS,
+        HttpStatus.LOCKED,
       );
     }
 
