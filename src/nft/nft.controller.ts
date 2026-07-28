@@ -51,6 +51,7 @@ import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
+import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { maskAddress } from '../wallets/wallet.utils';
@@ -68,6 +69,7 @@ export class NftController {
     private readonly ownershipVerificationService: NftOwnershipVerificationService,
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
+    private readonly mintSignatureVerification: MintSignatureVerificationService,
   ) {}
 
   @UseGuards(NftMintGuard)
@@ -143,13 +145,50 @@ export class NftController {
       },
     },
   })
-  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+    schema: {
+      example: {
+        statusCode: 403,
+        message: 'You do not own this clip',
+        error: 'Forbidden',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Wallet signature is invalid or does not match the provided walletAddress. ' +
+      'Required signature fields: walletAddress (Stellar G... key), ' +
+      'walletSignature (Ed25519 signature over the canonical challenge message: ' +
+      '"ClipCash mint authorization for clip <clipId> by <walletAddress>").',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
+  })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,
     @Req() req: Request,
   ) {
     const userId = Number((req as any).user?.id ?? 0);
+
+    // 1. Ownership check: clip must belong to the authenticated user.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
+
+    // 2. Signature check: when the caller provides a wallet signature, verify
+    //    it before building the XDR.  This proves the caller controls the
+    //    private key for walletAddress, preventing mints on behalf of others.
+    if (dto.walletSignature) {
+      this.mintSignatureVerification.verify(
+        dto.clipId,
+        dto.walletAddress,
+        dto.walletSignature,
+      );
+    }
+
     return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
   }
 
