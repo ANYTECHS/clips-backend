@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{ClipsNftContract, ClipsNftContractClient, Error, TokenData};
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
 fn setup_env() -> (Env, Address, ClipsNftContractClient<'static>) {
     let env = Env::default();
@@ -338,5 +338,245 @@ fn test_set_default_royalty_bps_not_initialized_is_rejected() {
     // Contract has never been initialized — no admin exists.
     env.mock_all_auths();
     let result = client.try_set_default_royalty_bps(&1000);
+    assert!(result.is_err());
+}
+
+// ── Issue #641: Upgradeability ──────────────────────────────────────────────
+
+#[test]
+fn test_upgrade_sets_wasm_hash() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let hash = BytesN::from_array(&env, &[1u8; 32]);
+    client.upgrade(&hash);
+    assert_eq!(client.get_wasm_hash(), Some(hash));
+}
+
+#[test]
+fn test_upgrade_zero_hash_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let result = client.try_upgrade(&zero_hash);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_upgrade_requires_admin() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    // No mock_all_auths — auth not satisfied.
+
+    let hash = BytesN::from_array(&env, &[1u8; 32]);
+    let result = client.try_upgrade(&hash);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_and_get_contract_version() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let version = String::from_str(&env, "2.0.0");
+    client.set_contract_version(&version);
+    assert_eq!(client.get_contract_version(), Some(version));
+}
+
+// ── Issue #643: Clip Verification ───────────────────────────────────────────
+
+#[test]
+fn test_mint_verified_happy_path() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_hash = BytesN::from_array(&env, &[2u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let content_uri = String::from_str(&env, "https://clips.cash/verified_001");
+    client.mint_verified(&caller, &100, &clip_hash, &content_uri, &false, &1);
+
+    assert_eq!(client.owner_of(&100), Some(caller.clone()));
+    assert_eq!(client.get_nonce(&caller), 1);
+}
+
+#[test]
+fn test_mint_verified_unverified_clip_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let unverified_hash = BytesN::from_array(&env, &[3u8; 32]);
+    let content_uri = String::from_str(&env, "https://clips.cash/bad");
+    let result = client.try_mint_verified(&caller, &101, &unverified_hash, &content_uri, &false, &1);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mint_verified_replay_attack_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_hash = BytesN::from_array(&env, &[4u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let content_uri = String::from_str(&env, "https://clips.cash/replay");
+    client.mint_verified(&caller, &102, &clip_hash, &content_uri, &false, &1);
+
+    // Replay same nonce — must fail.
+    let result = client.try_mint_verified(&caller, &103, &clip_hash, &content_uri, &false, &1);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mint_verified_wrong_nonce_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_hash = BytesN::from_array(&env, &[5u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let content_uri = String::from_str(&env, "https://clips.cash/nonce");
+    // Nonce starts at 0, so first call must use nonce=1.
+    let result = client.try_mint_verified(&caller, &104, &clip_hash, &content_uri, &false, &5);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mint_verified_sequential_nonces() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_hash = BytesN::from_array(&env, &[6u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let uri = String::from_str(&env, "https://clips.cash/seq");
+    client.mint_verified(&caller, &105, &clip_hash, &uri, &false, &1);
+    client.mint_verified(&caller, &106, &clip_hash, &uri, &false, &2);
+    client.mint_verified(&caller, &107, &clip_hash, &uri, &false, &3);
+
+    assert_eq!(client.get_nonce(&caller), 3);
+    assert_eq!(client.balance_of(&caller), 3);
+}
+
+// ── Issue #644: End-to-end integration tests ────────────────────────────────
+
+#[test]
+fn test_full_mint_flow() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    // 1. Initialize
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // 2. Set royalty
+    client.set_default_royalty_bps(&500);
+
+    // 3. Mint
+    let clip_id = String::from_str(&env, "e2e_clip_001");
+    let content_uri = String::from_str(&env, "https://clips.cash/e2e_001");
+    client.mint(&creator, &200, &clip_id, &content_uri, &false);
+
+    // 4. Verify ownership and data
+    assert_eq!(client.owner_of(&200), Some(creator.clone()));
+    let data = client.get_token_data(&200).unwrap();
+    assert_eq!(data.creator, creator);
+    assert_eq!(data.clip_id, clip_id);
+    assert_eq!(client.total_supply(), 1);
+    assert_eq!(client.get_default_royalty_bps(), Some(500));
+}
+
+#[test]
+fn test_full_royalty_flow() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // Set, update, read back.
+    client.set_default_royalty_bps(&250);
+    assert_eq!(client.get_default_royalty_bps(), Some(250));
+
+    client.set_default_royalty_bps(&750);
+    assert_eq!(client.get_default_royalty_bps(), Some(750));
+
+    // Set to zero (no royalty).
+    client.set_default_royalty_bps(&0);
+    assert_eq!(client.get_default_royalty_bps(), Some(0));
+}
+
+#[test]
+fn test_failure_mint_duplicate_token_id() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_id = String::from_str(&env, "dup_clip");
+    let content_uri = String::from_str(&env, "https://clips.cash/dup");
+    client.mint(&owner, &300, &clip_id, &content_uri, &false);
+
+    // Same token_id again — must fail.
+    let result = client.try_mint(&owner, &300, &clip_id, &content_uri, &false);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_failure_transfer_not_owner() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let thief = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_id = String::from_str(&env, "theft_clip");
+    let content_uri = String::from_str(&env, "https://clips.cash/theft");
+    client.mint(&owner, &301, &clip_id, &content_uri, &false);
+
+    // Thief tries to transfer — must fail.
+    let result = client.try_transfer(&thief, &recipient, &301);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_failure_uninitialized_contract() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, ClipsNftContract);
+    let client = ClipsNftContractClient::new(&env, &contract_id);
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let clip_id = String::from_str(&env, "no_init");
+    let content_uri = String::from_str(&env, "https://clips.cash/no_init");
+
+    // Mint without initialize — must fail.
+    let result = client.try_mint(&owner, &400, &clip_id, &content_uri, &false);
     assert!(result.is_err());
 }
