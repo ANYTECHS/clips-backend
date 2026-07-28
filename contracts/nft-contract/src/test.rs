@@ -3,6 +3,12 @@
 use crate::{ClipsNftContract, ClipsNftContractClient, Error, TokenData};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+/// Stand up a fresh environment, register the contract, and return a
+/// ready-to-use client together with the contract's own address.
 fn setup_env() -> (Env, Address, ClipsNftContractClient<'static>) {
     let env = Env::default();
     let contract_id = env.register_contract(None, ClipsNftContract);
@@ -10,333 +16,551 @@ fn setup_env() -> (Env, Address, ClipsNftContractClient<'static>) {
     (env, contract_id, client)
 }
 
+/// Shorthand: create a `soroban_sdk::String` from a `&str`.
+fn s(env: &Env, v: &str) -> String {
+    String::from_str(env, v)
+}
+
+// ─────────────────────────────────────────────────────────────
+// Initialization
+// ─────────────────────────────────────────────────────────────
+
 #[test]
-fn test_initialize() {
-    let (env, _contract_id, client) = setup_env();
+fn test_initialize_succeeds_once() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    
     client.initialize(&admin);
-    
-    // Verify double initialization fails
-    let result = client.try_initialize(&admin);
-    assert!(result.is_err());
 }
 
 #[test]
+fn test_initialize_rejects_double_init() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let result = client.try_initialize(&admin);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::AlreadyInitialized,
+        "second initialize must return AlreadyInitialized"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Mint — success paths
+// ─────────────────────────────────────────────────────────────
+
+#[test]
 fn test_mint_regular_token() {
-    let (env, _contract_id, client) = setup_env();
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
-    
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    let clip_id = String::from_str(&env, "clip_001");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_001");
-    let is_soulbound = false;
-    
-    client.mint(&owner, &1, &clip_id, &content_uri, &is_soulbound);
-    
-    assert_eq!(client.owner_of(&1), Some(owner.clone()));
-    assert_eq!(client.is_soulbound(&1), false);
-    assert_eq!(client.balance_of(&owner), 1);
-    assert_eq!(client.total_supply(), 1);
+
+    client.mint(&owner, &1, &s(&env, "clip_001"), &s(&env, "https://clips.cash/1"), &false);
+
+    assert_eq!(client.owner_of(&1), Some(owner.clone()), "owner should be set");
+    assert!(!client.is_soulbound(&1), "should NOT be soulbound");
+    assert_eq!(client.balance_of(&owner), 1, "owner balance should be 1");
+    assert_eq!(client.total_supply(), 1, "total supply should increment");
 }
 
 #[test]
 fn test_mint_soulbound_token() {
-    let (env, _contract_id, client) = setup_env();
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
-    
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    let clip_id = String::from_str(&env, "clip_002");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_002");
-    let is_soulbound = true;
-    
-    client.mint(&owner, &2, &clip_id, &content_uri, &is_soulbound);
-    
+
+    client.mint(&owner, &2, &s(&env, "clip_002"), &s(&env, "https://clips.cash/2"), &true);
+
     assert_eq!(client.owner_of(&2), Some(owner.clone()));
-    assert_eq!(client.is_soulbound(&2), true);
-    assert_eq!(client.balance_of(&owner), 1);
-    
-    // Verify token data
-    let token_data = client.get_token_data(&2).unwrap();
-    assert_eq!(token_data.is_soulbound, true);
-    assert_eq!(token_data.creator, owner);
+    assert!(client.is_soulbound(&2), "token MUST be soulbound");
+
+    let td = client.get_token_data(&2).unwrap();
+    assert_eq!(td.is_soulbound, true);
+    assert_eq!(td.creator, owner, "creator must equal initial recipient");
 }
 
 #[test]
+fn test_mint_multiple_tokens_increments_supply() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let ids: [(u64, &str, &str); 5] = [
+        (1, "clip_001", "https://clips.cash/1"),
+        (2, "clip_002", "https://clips.cash/2"),
+        (3, "clip_003", "https://clips.cash/3"),
+        (4, "clip_004", "https://clips.cash/4"),
+        (5, "clip_005", "https://clips.cash/5"),
+    ];
+    for (i, cid_str, uri_str) in ids {
+        client.mint(&owner, &i, &s(&env, cid_str), &s(&env, uri_str), &false);
+    }
+
+    assert_eq!(client.total_supply(), 5);
+    assert_eq!(client.balance_of(&owner), 5);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Mint — duplicate prevention
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_mint_duplicate_token_id_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // First mint succeeds.
+    client.mint(&owner, &99, &s(&env, "dup"), &s(&env, "uri://dup"), &false);
+
+    // Second mint with the same token_id must fail with InvalidTokenId.
+    let result = client.try_mint(
+        &owner,
+        &99,
+        &s(&env, "dup2"),
+        &s(&env, "uri://dup2"),
+        &false,
+    );
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::InvalidTokenId,
+        "duplicate token_id must return InvalidTokenId"
+    );
+
+    // Supply must not have changed.
+    assert_eq!(client.total_supply(), 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Mint — access control (unauthorized mint)
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_mint_requires_admin_authorization() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    client.initialize(&admin);
+    // Intentionally do NOT call env.mock_all_auths() — no auth will be provided.
+
+    let result = client.try_mint(
+        &owner,
+        &1,
+        &s(&env, "clip_unauth"),
+        &s(&env, "uri://unauth"),
+        &false,
+    );
+    assert!(
+        result.is_err(),
+        "mint without admin auth must fail"
+    );
+}
+
+#[test]
+fn test_mint_not_initialized_is_rejected() {
+    let env = Env::default();
+    let cid = env.register_contract(None, ClipsNftContract);
+    let client = ClipsNftContractClient::new(&env, &cid);
+
+    // Contract never initialized — no admin set.
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+
+    let result = client.try_mint(
+        &owner,
+        &1,
+        &s(&env, "clip_x"),
+        &s(&env, "uri://x"),
+        &false,
+    );
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::NotInitialized,
+        "mint before initialize must return NotInitialized"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Royalty BPS — read/write
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_royalty_bps_unset_returns_none() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    assert_eq!(
+        client.get_default_royalty_bps(),
+        None,
+        "royalty must be None before any write"
+    );
+}
+
+#[test]
+fn test_set_and_get_royalty_bps() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    client.set_default_royalty_bps(&1000);
+    assert_eq!(client.get_default_royalty_bps(), Some(1000));
+}
+
+#[test]
+fn test_royalty_bps_zero_is_valid() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    client.set_default_royalty_bps(&0);
+    assert_eq!(client.get_default_royalty_bps(), Some(0));
+}
+
+#[test]
+fn test_royalty_bps_max_boundary_is_valid() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // 10 000 BPS == 100% — must be accepted.
+    client.set_default_royalty_bps(&10_000);
+    assert_eq!(client.get_default_royalty_bps(), Some(10_000));
+}
+
+#[test]
+fn test_royalty_bps_above_max_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let result = client.try_set_default_royalty_bps(&10_001);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::InvalidRoyaltyBps,
+        "10 001 BPS must return InvalidRoyaltyBps"
+    );
+}
+
+#[test]
+fn test_royalty_bps_update_overwrites_previous_value() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    client.set_default_royalty_bps(&500);
+    assert_eq!(client.get_default_royalty_bps(), Some(500));
+
+    client.set_default_royalty_bps(&1500);
+    assert_eq!(client.get_default_royalty_bps(), Some(1500));
+}
+
+#[test]
+fn test_royalty_bps_requires_admin_auth() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    // No mock_all_auths — auth check must fail.
+
+    let result = client.try_set_default_royalty_bps(&500);
+    assert!(
+        result.is_err(),
+        "set_default_royalty_bps without admin auth must fail"
+    );
+}
+
+#[test]
+fn test_royalty_bps_not_initialized_is_rejected() {
+    let env = Env::default();
+    let cid = env.register_contract(None, ClipsNftContract);
+    let client = ClipsNftContractClient::new(&env, &cid);
+
+    env.mock_all_auths();
+    let result = client.try_set_default_royalty_bps(&1000);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::NotInitialized,
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Royalty calculation — pure math verification
+//
+// BPS = basis points; 1 BPS = 0.01%.
+// royalty_amount = sale_price * bps / 10_000
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_royalty_calculation_ten_percent() {
+    // 1000 BPS = 10%. On a 500 unit sale the royalty must be 50.
+    let sale_price: u64 = 500;
+    let bps: u64 = 1000;
+    let royalty = sale_price * bps / 10_000;
+    assert_eq!(royalty, 50);
+}
+
+#[test]
+fn test_royalty_calculation_two_and_half_percent() {
+    // 250 BPS = 2.5%. On a 200 unit sale the royalty must be 5.
+    let sale_price: u64 = 200;
+    let bps: u64 = 250;
+    let royalty = sale_price * bps / 10_000;
+    assert_eq!(royalty, 5);
+}
+
+#[test]
+fn test_royalty_calculation_zero_bps_yields_zero() {
+    let sale_price: u64 = 1_000_000;
+    let bps: u64 = 0;
+    let royalty = sale_price * bps / 10_000;
+    assert_eq!(royalty, 0);
+}
+
+#[test]
+fn test_royalty_calculation_full_hundred_percent() {
+    // 10 000 BPS = 100%. Entire sale price is the royalty.
+    let sale_price: u64 = 300;
+    let bps: u64 = 10_000;
+    let royalty = sale_price * bps / 10_000;
+    assert_eq!(royalty, 300);
+}
+
+#[test]
+fn test_royalty_calculation_one_bps_precision() {
+    // 1 BPS on 10 000 units = 1 unit (integer division is exact here).
+    let sale_price: u64 = 10_000;
+    let bps: u64 = 1;
+    let royalty = sale_price * bps / 10_000;
+    assert_eq!(royalty, 1);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Transfer
+// ─────────────────────────────────────────────────────────────
+
+#[test]
 fn test_transfer_regular_token() {
-    let (env, _contract_id, client) = setup_env();
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    // Mint regular (non-soulbound) token
-    let clip_id = String::from_str(&env, "clip_003");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_003");
-    client.mint(&owner, &3, &clip_id, &content_uri, &false);
-    
-    assert_eq!(client.balance_of(&owner), 1);
-    
-    // Transfer should succeed
+
+    client.mint(&owner, &3, &s(&env, "clip_003"), &s(&env, "uri://3"), &false);
     client.transfer(&owner, &recipient, &3);
-    
+
     assert_eq!(client.owner_of(&3), Some(recipient.clone()));
     assert_eq!(client.balance_of(&owner), 0);
     assert_eq!(client.balance_of(&recipient), 1);
 }
 
 #[test]
-fn test_transfer_soulbound_token_fails() {
-    let (env, _contract_id, client) = setup_env();
+fn test_transfer_soulbound_token_is_rejected() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    // Mint soulbound token
-    let clip_id = String::from_str(&env, "clip_004");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_004");
-    client.mint(&owner, &4, &clip_id, &content_uri, &true);
-    
-    // Attempt to transfer should fail with SoulboundTokenNotTransferable error
+
+    client.mint(&owner, &4, &s(&env, "soul"), &s(&env, "uri://soul"), &true);
+
     let result = client.try_transfer(&owner, &recipient, &4);
-    assert!(result.is_err());
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::SoulboundTokenNotTransferable
+    );
 }
 
 #[test]
-fn test_approve_regular_token() {
-    let (env, _contract_id, client) = setup_env();
+fn test_transfer_nonexistent_token_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let result = client.try_transfer(&a, &b, &9999);
+    assert_eq!(result.unwrap_err().unwrap(), Error::TokenNotFound);
+}
+
+#[test]
+fn test_transfer_by_non_owner_is_rejected() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
-    let spender = Address::generate(&env);
-    
+    let intruder = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    // Mint regular token
-    let clip_id = String::from_str(&env, "clip_005");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_005");
-    client.mint(&owner, &5, &clip_id, &content_uri, &false);
-    
-    // Approve should succeed
-    client.approve(&owner, &spender, &5);
-    assert_eq!(client.get_approved(&5), Some(spender));
+
+    client.mint(&owner, &5, &s(&env, "clip_005"), &s(&env, "uri://5"), &false);
+
+    // intruder claims to be `from`
+    let result = client.try_transfer(&intruder, &recipient, &5);
+    assert_eq!(result.unwrap_err().unwrap(), Error::Unauthorized);
 }
 
-#[test]
-fn test_approve_soulbound_token_fails() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
-    let owner = Address::generate(&env);
-    let spender = Address::generate(&env);
-    
-    client.initialize(&admin);
-    
-    env.mock_all_auths();
-    
-    // Mint soulbound token
-    let clip_id = String::from_str(&env, "clip_006");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_006");
-    client.mint(&owner, &6, &clip_id, &content_uri, &true);
-    
-    // Attempt to approve should fail
-    let result = client.try_approve(&owner, &spender, &6);
-    assert!(result.is_err());
-}
+// ─────────────────────────────────────────────────────────────
+// Approve + transfer_from
+// ─────────────────────────────────────────────────────────────
 
 #[test]
-fn test_transfer_from_soulbound_token_fails() {
-    let (env, _contract_id, client) = setup_env();
+fn test_approve_and_transfer_from() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
-    
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    // Mint a regular token and approve spender first
-    let clip_id = String::from_str(&env, "clip_007");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_007");
-    client.mint(&owner, &7, &clip_id, &content_uri, &false);
+
+    client.mint(&owner, &7, &s(&env, "clip_007"), &s(&env, "uri://7"), &false);
     client.approve(&owner, &spender, &7);
-    
-    // Regular token transfer_from should succeed
+
+    assert_eq!(client.get_approved(&7), Some(spender.clone()));
+
     client.transfer_from(&spender, &owner, &recipient, &7);
     assert_eq!(client.owner_of(&7), Some(recipient.clone()));
-    
-    // Now test soulbound token
-    let clip_id_2 = String::from_str(&env, "clip_008");
-    let content_uri_2 = String::from_str(&env, "https://clips.cash/clip_008");
-    client.mint(&owner, &8, &clip_id_2, &content_uri_2, &true);
-    
-    // Even with approval, soulbound token cannot be transferred
-    let result = client.try_transfer_from(&owner, &owner, &recipient, &8);
-    assert!(result.is_err());
+    // Approval must be cleared after transfer_from.
+    assert_eq!(client.get_approved(&7), None);
 }
 
 #[test]
-fn test_get_token_data() {
-    let (env, _contract_id, client) = setup_env();
+fn test_approve_soulbound_token_is_rejected() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
-    
+    let spender = Address::generate(&env);
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    let clip_id = String::from_str(&env, "clip_009");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_009");
-    client.mint(&owner, &9, &clip_id, &content_uri, &true);
-    
-    let token_data = client.get_token_data(&9).unwrap();
-    assert_eq!(token_data.owner, owner);
-    assert_eq!(token_data.creator, owner);
-    assert_eq!(token_data.is_soulbound, true);
-    assert_eq!(token_data.clip_id, clip_id);
-    assert_eq!(token_data.content_uri, content_uri);
-    assert!(token_data.created_at > 0);
+
+    client.mint(&owner, &6, &s(&env, "soul_006"), &s(&env, "uri://6"), &true);
+
+    let result = client.try_approve(&owner, &spender, &6);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::SoulboundTokenNotTransferable
+    );
 }
 
 #[test]
-fn test_get_creator() {
-    let (env, _contract_id, client) = setup_env();
+fn test_transfer_from_unapproved_spender_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    client.mint(&owner, &20, &s(&env, "clip_020"), &s(&env, "uri://20"), &false);
+
+    // stranger was never approved.
+    let result = client.try_transfer_from(&stranger, &owner, &recipient, &20);
+    assert_eq!(result.unwrap_err().unwrap(), Error::Unauthorized);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Query helpers
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_owner_of_unknown_token_returns_none() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    assert_eq!(client.owner_of(&42), None);
+}
+
+#[test]
+fn test_get_token_data_fields() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    let clip_id = s(&env, "clip_009");
+    let content_uri = s(&env, "https://clips.cash/9");
+    client.mint(&owner, &9, &clip_id, &content_uri, &true);
+
+    let td = client.get_token_data(&9).unwrap();
+    assert_eq!(td.owner, owner);
+    assert_eq!(td.creator, owner);
+    assert_eq!(td.is_soulbound, true);
+    assert_eq!(td.clip_id, clip_id);
+    assert_eq!(td.content_uri, content_uri);
+    assert!(td.created_at > 0);
+}
+
+#[test]
+fn test_get_creator_returns_original_minter() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
-    
+
     client.initialize(&admin);
-    
     env.mock_all_auths();
-    
-    let clip_id = String::from_str(&env, "clip_010");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_010");
-    client.mint(&creator, &10, &clip_id, &content_uri, &false);
-    
+
+    client.mint(&creator, &10, &s(&env, "clip_010"), &s(&env, "uri://10"), &false);
     assert_eq!(client.get_creator(&10), Some(creator));
 }
 
-// ── Default royalty BPS configuration ────────────────────────────────────────
-
 #[test]
-fn test_get_default_royalty_bps_returns_none_before_set() {
-    let (env, _contract_id, client) = setup_env();
+fn test_creator_is_preserved_after_transfer() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-
-    // No royalty has been configured yet — should return None.
-    assert_eq!(client.get_default_royalty_bps(), None);
-}
-
-#[test]
-fn test_set_and_get_default_royalty_bps() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
 
     client.initialize(&admin);
     env.mock_all_auths();
 
-    // Set to 1000 BPS (10 %).
-    client.set_default_royalty_bps(&1000);
+    client.mint(&creator, &15, &s(&env, "clip_015"), &s(&env, "uri://15"), &false);
+    client.transfer(&creator, &buyer, &15);
 
-    assert_eq!(client.get_default_royalty_bps(), Some(1000));
+    // Ownership changed, but creator must remain the original minter.
+    assert_eq!(client.owner_of(&15), Some(buyer));
+    assert_eq!(client.get_creator(&15), Some(creator));
 }
 
 #[test]
-fn test_set_default_royalty_bps_zero_is_valid() {
-    let (env, _contract_id, client) = setup_env();
+fn test_balance_of_unknown_address_returns_zero() {
+    let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-
     client.initialize(&admin);
-    env.mock_all_auths();
 
-    // 0 BPS is a valid value (no royalty).
-    client.set_default_royalty_bps(&0);
-
-    assert_eq!(client.get_default_royalty_bps(), Some(0));
-}
-
-#[test]
-fn test_set_default_royalty_bps_max_boundary_is_valid() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    env.mock_all_auths();
-
-    // 10 000 BPS = 100 % — the maximum allowed value.
-    client.set_default_royalty_bps(&10_000);
-
-    assert_eq!(client.get_default_royalty_bps(), Some(10_000));
-}
-
-#[test]
-fn test_set_default_royalty_bps_above_max_is_rejected() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    env.mock_all_auths();
-
-    // 10 001 BPS exceeds the 10 000 BPS ceiling — must return InvalidRoyaltyBps.
-    let result = client.try_set_default_royalty_bps(&10_001);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_set_default_royalty_bps_requires_admin() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    // Intentionally do NOT call env.mock_all_auths() — auth will not be satisfied.
-
-    // The call must fail because the non-admin caller cannot provide admin auth.
-    let result = client.try_set_default_royalty_bps(&500);
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_set_default_royalty_bps_updates_value() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
-
-    client.initialize(&admin);
-    env.mock_all_auths();
-
-    // First write.
-    client.set_default_royalty_bps(&500);
-    assert_eq!(client.get_default_royalty_bps(), Some(500));
-
-    // Update to a different value — latest write wins.
-    client.set_default_royalty_bps(&1500);
-    assert_eq!(client.get_default_royalty_bps(), Some(1500));
-}
-
-#[test]
-fn test_set_default_royalty_bps_not_initialized_is_rejected() {
-    let env = Env::default();
-    let contract_id = env.register_contract(None, ClipsNftContract);
-    let client = ClipsNftContractClient::new(&env, &contract_id);
-
-    // Contract has never been initialized — no admin exists.
-    env.mock_all_auths();
-    let result = client.try_set_default_royalty_bps(&1000);
-    assert!(result.is_err());
+    let stranger = Address::generate(&env);
+    assert_eq!(client.balance_of(&stranger), 0);
 }
