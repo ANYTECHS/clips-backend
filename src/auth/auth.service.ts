@@ -685,4 +685,41 @@ export class AuthService {
       data: { mfaEnabled: false, mfaSecret: null },
     });
   }
+
+  /**
+   * Verify a TOTP code for a user.
+   * Used as a standalone verification step (e.g. after password login when MFA is enabled).
+   *
+   * @returns `{ valid: true }` when the code is correct, `{ valid: false }` otherwise.
+   */
+  async verifyTotp(userId: number, code: string): Promise<{ valid: boolean }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { mfaSecret: true, mfaEnabled: true },
+    });
+
+    if (!user?.mfaSecret || !user?.mfaEnabled) {
+      return { valid: false };
+    }
+
+    const valid = speakeasy.totp.verify({
+      secret: user.mfaSecret,
+      encoding: 'base32',
+      token: code,
+      window: 1,
+    });
+
+    return { valid };
+  }
+
+  /**
+   * Return whether MFA is currently enabled for a user.
+   */
+  async getMfaStatus(userId: number): Promise<{ enabled: boolean }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { mfaEnabled: true },
+    });
+    return { enabled: user?.mfaEnabled ?? false };
+  }
 }

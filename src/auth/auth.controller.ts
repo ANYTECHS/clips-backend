@@ -43,6 +43,8 @@ import {
   MessageResponseDto,
   MfaSetupResponseDto,
   MfaStatusResponseDto,
+  MfaVerifyResponseDto,
+  VerifyTotpDto,
 } from './dto/auth-responses.dto';
 import { CsrfService } from '../csrf/csrf.service';
 
@@ -524,18 +526,51 @@ export class AuthController {
     return { message: 'Password reset successful.' };
   }
 
+  // ─── Multi-Factor Authentication (MFA / TOTP) ──────────────────────────────
+  //
+  // Complete 2FA authentication flow:
+  //
+  //   1. POST /auth/mfa/setup   → generates secret + QR code
+  //   2. User scans QR in Google Authenticator / Authy / 1Password
+  //   3. POST /auth/mfa/enable  → confirms setup with first TOTP code
+  //   4. On subsequent logins, POST /auth/login includes totpCode in body
+  //   5. POST /auth/mfa/verify  → standalone TOTP verification (step-up auth)
+  //   6. POST /auth/mfa/disable → turn off 2FA (requires valid JWT)
+  //   7. GET  /auth/mfa/status  → check whether MFA is currently enabled
+
   @Post('mfa/setup')
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Setup MFA',
-    description: 'Generates MFA secret and QR code. Requires JWT.',
+    summary: 'Enable 2FA — step 1: generate TOTP secret and QR code',
+    description:
+      'Generates a TOTP secret and returns a `qrCode` data URL that the user scans ' +
+      'with their authenticator app (Google Authenticator, Authy, 1Password, etc.).\n\n' +
+      '**Authentication flow**:\n' +
+      '1. Call this endpoint with a valid Bearer JWT.\n' +
+      '2. Show the returned `qrCode` to the user.\n' +
+      '3. User scans it with their authenticator app.\n' +
+      '4. Call `POST /auth/mfa/enable` with the 6-digit code to activate 2FA.\n\n' +
+      '**Note**: Calling this endpoint again before enabling will regenerate the secret, ' +
+      'invalidating any previously scanned QR codes.',
   })
   @ApiResponse({
     status: 200,
-    description: 'MFA setup initiated',
+    description: 'TOTP secret and QR code generated successfully',
     type: MfaSetupResponseDto,
+    schema: {
+      example: {
+        secret: 'JBSWY3DPEHPK3PXP',
+        otpauthUrl:
+          'otpauth://totp/ClipCash:john@example.com?secret=JBSWY3DPEHPK3PXP&issuer=ClipCash',
+        qrCode: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...',
+      },
+    },
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — Bearer JWT required',
+    schema: { example: { statusCode: 401, message: 'Unauthorized' } },
+  })
   @HttpCode(HttpStatus.OK)
   async setupMfa(@Req() req: any) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
@@ -545,17 +580,47 @@ export class AuthController {
   @Post('mfa/enable')
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Enable MFA',
-    description: 'Enables MFA after verifying setup code. Requires JWT.',
+    summary: 'Enable 2FA — step 2: activate with first TOTP code',
+    description:
+      'Activates MFA on the account after verifying the 6-digit TOTP code from the ' +
+      'authenticator app. Must be called after `POST /auth/mfa/setup`.\n\n' +
+      '**Once enabled**, all subsequent logins must include a valid `totpCode` in the ' +
+      '`POST /auth/login` request body.',
   })
-  @ApiBody({ type: EnableMfaDto })
+  @ApiBody({
+    type: EnableMfaDto,
+    description: '6-digit TOTP code from authenticator app',
+    examples: {
+      enable: {
+        summary: 'Enable MFA',
+        value: { code: '123456' },
+      },
+    },
+  })
   @ApiResponse({
     status: 200,
     description: 'MFA enabled successfully',
     type: MfaStatusResponseDto,
+    schema: {
+      example: { enabled: true },
+    },
   })
-  @ApiResponse({ status: 400, description: 'Invalid verification code' })
-  @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired TOTP code, or MFA setup not completed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Invalid TOTP code',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — Bearer JWT required',
+    schema: { example: { statusCode: 401, message: 'Unauthorized' } },
+  })
   @HttpCode(HttpStatus.OK)
   async enableMfa(@Req() req: any, @Body('code') code: string) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
@@ -566,19 +631,116 @@ export class AuthController {
   @Post('mfa/disable')
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Disable MFA',
-    description: 'Turns off multi-factor authentication. Requires JWT.',
+    summary: 'Disable 2FA',
+    description:
+      'Turns off multi-factor authentication for the authenticated user. ' +
+      'The TOTP secret is removed from the account and subsequent logins will no longer ' +
+      'require a TOTP code.\n\n' +
+      '**Security note**: After disabling, re-enable MFA as soon as possible to maintain ' +
+      'account security.',
   })
   @ApiResponse({
     status: 200,
     description: 'MFA disabled successfully',
     type: MfaStatusResponseDto,
+    schema: {
+      example: { enabled: false },
+    },
   })
-  @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — Bearer JWT required',
+    schema: { example: { statusCode: 401, message: 'Unauthorized' } },
+  })
   @HttpCode(HttpStatus.OK)
   async disableMfa(@Req() req: any) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
     await this.authService.disableMfa(userId);
     return { enabled: false };
+  }
+
+  @Post('mfa/verify')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Verify TOTP code (standalone step-up verification)',
+    description:
+      'Verifies a 6-digit TOTP code for the authenticated user without issuing new tokens. ' +
+      'Useful for step-up authentication flows (e.g. confirming a sensitive action).\n\n' +
+      '**Standard login flow**: TOTP verification during login happens automatically — ' +
+      'include `totpCode` in the `POST /auth/login` body instead of calling this endpoint.\n\n' +
+      '**Returns** `{ valid: true }` on success or `{ valid: false }` on failure. ' +
+      'Does not throw on invalid codes — always returns 200.',
+  })
+  @ApiBody({
+    type: VerifyTotpDto,
+    description: '6-digit TOTP code from authenticator app',
+    examples: {
+      verify: {
+        summary: 'Verify TOTP code',
+        value: { code: '123456' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'TOTP verification result',
+    type: MfaVerifyResponseDto,
+    schema: {
+      examples: {
+        valid: {
+          summary: 'Code is valid',
+          value: { valid: true },
+        },
+        invalid: {
+          summary: 'Code is invalid',
+          value: { valid: false },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — Bearer JWT required',
+    schema: { example: { statusCode: 401, message: 'Unauthorized' } },
+  })
+  @HttpCode(HttpStatus.OK)
+  async verifyTotp(@Req() req: any, @Body('code') code: string) {
+    const userId = Number(req.user?.id ?? req.headers['x-user-id']);
+    return this.authService.verifyTotp(userId, code);
+  }
+
+  @Get('mfa/status')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get MFA status',
+    description:
+      'Returns whether multi-factor authentication is currently enabled for the authenticated user.\n\n' +
+      'Use this to show/hide MFA settings in the frontend.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'MFA status returned',
+    type: MfaStatusResponseDto,
+    schema: {
+      examples: {
+        enabled: {
+          summary: 'MFA is enabled',
+          value: { enabled: true },
+        },
+        disabled: {
+          summary: 'MFA is disabled',
+          value: { enabled: false },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized — Bearer JWT required',
+    schema: { example: { statusCode: 401, message: 'Unauthorized' } },
+  })
+  async getMfaStatus(@Req() req: any) {
+    const userId = Number(req.user?.id ?? req.headers['x-user-id']);
+    return this.authService.getMfaStatus(userId);
   }
 }

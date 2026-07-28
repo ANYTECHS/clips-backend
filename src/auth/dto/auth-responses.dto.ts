@@ -77,10 +77,34 @@ export class MfaStatusResponseDto {
 
 export class EnableMfaDto {
   @ApiProperty({
-    description: '6-digit TOTP code from authenticator app',
+    description: '6-digit TOTP code from authenticator app to confirm setup',
     example: '123456',
     minLength: 6,
     maxLength: 6,
   })
   code: string;
+}
+
+export class VerifyTotpDto {
+  @ApiProperty({
+    description: '6-digit TOTP code from the user\'s authenticator app',
+    example: '123456',
+    minLength: 6,
+    maxLength: 6,
+  })
+  code: string;
+}
+
+export class MfaVerifyResponseDto {
+  @ApiProperty({
+    example: true,
+    description: 'Whether the TOTP code is valid',
+  })
+  valid: boolean;
+
+  @ApiPropertyOptional({
+    example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    description: 'Short-lived JWT issued after successful TOTP verification (use this to complete login)',
+  })
+  accessToken?: string;
 }
