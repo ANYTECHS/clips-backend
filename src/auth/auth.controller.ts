@@ -30,6 +30,7 @@ import { BruteForceGuard } from './guards/brute-force.guard';
 import { SignupDto } from './dto/signup.dto';
 import { MagicLinkRequestDto } from './dto/magic-link.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { TokenResponseDto } from './dto/token-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -48,7 +49,20 @@ export class AuthController {
   @Post('signup')
   @ApiOperation({ summary: 'Register a new user account' })
   @ApiResponse({ status: 201, description: 'User created successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid input or user already exists' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid input or user already exists',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: [
+          'Please provide a valid email address',
+          'Password is too short (min 8 characters)',
+        ],
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
   @Throttle({ auth: { limit: 10, ttl: 60000 } })
@@ -75,7 +89,17 @@ export class AuthController {
   @Post('login')
   @ApiOperation({ summary: 'Authenticate user and get access tokens' })
   @ApiResponse({ status: 200, description: 'Login successful' })
-  @ApiResponse({ status: 400, description: 'Invalid credentials' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid credentials',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: ['Please provide a valid email address'],
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
   @ApiResponse({ status: 429, description: 'Too many requests - brute force protection' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
@@ -193,10 +217,10 @@ export class AuthController {
   }
 
   @Post('refresh')
-  @ApiOperation({ summary: 'Refresh access token', description: 'Get new access token using refresh token' })
-  @ApiResponse({ status: 200, description: 'Tokens refreshed successfully' })
+  @ApiOperation({ summary: 'Refresh access token', description: 'Get new access token using refresh token. The old refresh token is revoked and a new one is issued (rotation).' })
+  @ApiResponse({ status: 200, description: 'Tokens refreshed successfully', type: TokenResponseDto })
   @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 401, description: 'Unauthorized - refresh token invalid, expired, or revoked' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
   @HttpCode(HttpStatus.OK)
   async refresh(

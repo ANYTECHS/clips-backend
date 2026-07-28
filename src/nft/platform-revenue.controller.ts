@@ -1,6 +1,6 @@
 import { Controller, Get, UseGuards, Logger } from '@nestjs/common';
 import { PlatformRevenueService } from './platform-revenue.service';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { LoginGuard } from '../auth/guards/login.guard';
 import { Public } from '../auth/decorators/public.decorator';
 
 /**
@@ -8,7 +8,7 @@ import { Public } from '../auth/decorators/public.decorator';
  * The get_platform_revenue endpoint is public for transparency.
  */
 @Controller('platform')
-@UseGuards(JwtAuthGuard)
+@UseGuards(LoginGuard)
 export class PlatformRevenueController {
   private readonly logger = new Logger(PlatformRevenueController.name);
 
