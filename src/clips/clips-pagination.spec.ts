@@ -14,6 +14,7 @@ function makeService(clips: any[] = [], total?: number) {
     new EventEmitter2(),
     prisma as any,
     null as any,
+    null as any,
   );
   return { service, prisma };
 }

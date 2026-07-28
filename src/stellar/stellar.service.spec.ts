@@ -13,6 +13,7 @@ describe('StellarService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    (global.fetch as jest.Mock).mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -210,4 +211,48 @@ describe('StellarService', () => {
       ).rejects.toThrow(ServiceUnavailableException);
     });
   });
+
+  describe('fundWithFriendbot', () => {
+    it('should fund testnet address when fetch is successful', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      });
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await expect(service.fundWithFriendbot(address)).resolves.toBeUndefined();
+      expect(global.fetch).toHaveBeenCalledWith(
+        `https://friendbot.stellar.org/?addr=${encodeURIComponent(address)}`,
+      );
+    });
+
+    it('should throw an error when Friendbot responds with non-ok status', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: jest.fn().mockResolvedValue('Bad Request'),
+      });
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await expect(service.fundWithFriendbot(address)).rejects.toThrow(
+        'Friendbot funding failed (400): Bad Request',
+      );
+    });
+
+    it('should throw an error when fetch fails', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network failure'));
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await expect(service.fundWithFriendbot(address)).rejects.toThrow('Network failure');
+    });
+
+    it('should do nothing if not on testnet', async () => {
+      jest.spyOn(service, 'isTestnet').mockReturnValueOnce(false);
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await service.fundWithFriendbot(address);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
 });
+

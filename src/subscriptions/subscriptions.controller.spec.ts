@@ -13,9 +13,10 @@ describe('SubscriptionsController', () => {
     verifyPayment: jest.fn(),
   };
 
-  const mockRequest = (userId: number) => ({
-    user: { id: userId },
-  } as any);
+  const mockRequest = (userId: number) =>
+    ({
+      user: { id: userId },
+    }) as any;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -29,7 +30,9 @@ describe('SubscriptionsController', () => {
     }).compile();
 
     controller = module.get<SubscriptionsController>(SubscriptionsController);
-    stellarPaymentService = module.get<StellarPaymentService>(StellarPaymentService);
+    stellarPaymentService = module.get<StellarPaymentService>(
+      StellarPaymentService,
+    );
   });
 
   it('should be defined', () => {
@@ -55,12 +58,19 @@ describe('SubscriptionsController', () => {
         status: 'pending',
       };
 
-      (mockStellarPaymentService.createPaymentIntent as jest.Mock).mockResolvedValue(mockPaymentIntent);
+      mockStellarPaymentService.createPaymentIntent.mockResolvedValue(
+        mockPaymentIntent,
+      );
 
-      const result = await controller.createStellarPaymentIntent(dto, mockRequest(1));
+      const result = await controller.createStellarPaymentIntent(
+        dto,
+        mockRequest(1),
+      );
 
       expect(result).toEqual(mockPaymentIntent);
-      expect(mockStellarPaymentService.createPaymentIntent).toHaveBeenCalledWith(1, dto);
+      expect(
+        mockStellarPaymentService.createPaymentIntent,
+      ).toHaveBeenCalledWith(1, dto);
     });
   });
 
@@ -78,12 +88,16 @@ describe('SubscriptionsController', () => {
         },
       ];
 
-      (mockStellarPaymentService.getPendingPaymentIntents as jest.Mock).mockResolvedValue(mockIntents);
+      mockStellarPaymentService.getPendingPaymentIntents.mockResolvedValue(
+        mockIntents,
+      );
 
       const result = await controller.getPendingPaymentIntents(mockRequest(1));
 
       expect(result).toEqual(mockIntents);
-      expect(mockStellarPaymentService.getPendingPaymentIntents).toHaveBeenCalledWith(1);
+      expect(
+        mockStellarPaymentService.getPendingPaymentIntents,
+      ).toHaveBeenCalledWith(1);
     });
   });
 
@@ -92,12 +106,18 @@ describe('SubscriptionsController', () => {
       const paymentIntentId = 'intent123';
       const transactionHash = 'tx123abc';
 
-      (mockStellarPaymentService.verifyPayment as jest.Mock).mockResolvedValue(true);
+      mockStellarPaymentService.verifyPayment.mockResolvedValue(true);
 
-      const result = await controller.verifyStellarPayment(paymentIntentId, transactionHash);
+      const result = await controller.verifyStellarPayment(
+        paymentIntentId,
+        transactionHash,
+      );
 
       expect(result).toEqual({ verified: true });
-      expect(mockStellarPaymentService.verifyPayment).toHaveBeenCalledWith(paymentIntentId, transactionHash);
+      expect(mockStellarPaymentService.verifyPayment).toHaveBeenCalledWith(
+        paymentIntentId,
+        transactionHash,
+      );
     });
   });
 });

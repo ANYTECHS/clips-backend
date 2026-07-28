@@ -10,24 +10,56 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+  ApiQuery,
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiBadRequestResponse,
+  ApiNotFoundResponse,
+  ApiInternalServerErrorResponse,
+  ApiBody,
+} from '@nestjs/swagger';
 
 import type { Request } from 'express';
 import { StellarPaymentService } from './stellar-payment.service';
-import { CreateStellarSubscriptionDto } from './dto/create-stellar-subscription.dto';
+import {
+  CreateStellarSubscriptionDto,
+  StellarPaymentIntentDto,
+} from './dto/create-stellar-subscription.dto';
 import { LoginGuard } from '../auth/guards/login.guard';
 
 @ApiTags('subscriptions')
 @ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseGuards(LoginGuard)
 @Controller('subscriptions')
 export class SubscriptionsController {
   constructor(private readonly stellarPaymentService: StellarPaymentService) {}
 
   @Post('create-stellar')
-  @ApiOperation({ summary: 'Create Stellar payment intent for subscription' })
+  @ApiOperation({
+    summary:
+      'Create Stellar payment intent for subscription (XLM, USDC, or custom asset)',
+    description:
+      'Creates a payment intent for a Stellar-based subscription. Supports XLM, USDC, and custom assets.',
+  })
+  @ApiBody({ type: CreateStellarSubscriptionDto })
   @ApiResponse({
     status: 201,
-    description: 'Payment intent created successfully',
+    description: 'Payment intent created successfully (Success response)',
+    type: StellarPaymentIntentDto,
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Payment intent pending confirmation (Pending response)',
+    type: StellarPaymentIntentDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid input or unsupported asset (Failure response)',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async createStellarPaymentIntent(
@@ -39,10 +71,23 @@ export class SubscriptionsController {
   }
 
   @Post('create-intent')
-  @ApiOperation({ summary: 'Create Stellar payment intent for subscription' })
+  @ApiOperation({
+    summary: 'Create Stellar payment intent for subscription',
+    description: 'Alias for create-stellar endpoint',
+  })
+  @ApiBody({ type: CreateStellarSubscriptionDto })
   @ApiResponse({
     status: 201,
-    description: 'Payment intent created successfully',
+    description: 'Payment intent created successfully (Success response)',
+    type: StellarPaymentIntentDto,
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Payment intent pending confirmation (Pending response)',
+    type: StellarPaymentIntentDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid input or unsupported asset (Failure response)',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async createPaymentIntent(
@@ -54,24 +99,73 @@ export class SubscriptionsController {
   }
 
   @Get('stellar/pending')
-  @ApiOperation({ summary: 'Get pending Stellar payment intents' })
+  @ApiOperation({
+    summary: 'Get pending Stellar payment intents',
+    description:
+      'Returns all pending payment intents for the authenticated user',
+  })
   @ApiResponse({
     status: 200,
-    description: 'List of pending payment intents',
+    description: 'List of pending payment intents (Pending response)',
+    type: [StellarPaymentIntentDto],
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiBadRequestResponse({ description: 'Invalid request (Failure response)' })
   async getPendingPaymentIntents(@Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
     return this.stellarPaymentService.getPendingPaymentIntents(userId);
   }
 
   @Post('stellar/verify')
-  @ApiOperation({ summary: 'Verify Stellar payment transaction' })
-  @ApiQuery({ name: 'paymentIntentId', description: 'Payment intent ID' })
-  @ApiQuery({ name: 'transactionHash', description: 'Stellar transaction hash' })
+  @ApiOperation({
+    summary: 'Verify Stellar payment and activate subscription on success',
+    description:
+      'Verifies a Stellar payment by transaction hash and activates the subscription if the payment is confirmed.',
+  })
+  @ApiQuery({
+    name: 'paymentIntentId',
+    description: 'Payment intent ID',
+    required: true,
+  })
+  @ApiQuery({
+    name: 'transactionHash',
+    description: 'Stellar transaction hash',
+    required: true,
+  })
   @ApiResponse({
     status: 200,
-    description: 'Payment verification result',
+    description: 'Payment verification successful (Success response)',
+    schema: {
+      type: 'object',
+      properties: {
+        verified: {
+          type: 'boolean',
+          description:
+            'verified=true activates the subscription; verified=false leaves it inactive.',
+          example: true,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Payment verification pending (Pending response)',
+    schema: {
+      type: 'object',
+      properties: {
+        verified: {
+          type: 'boolean',
+          example: false,
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Missing paymentIntentId or transactionHash (Failure response)',
+  })
+  @ApiNotFoundResponse({
+    description: 'Payment intent not found (Failure response)',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)

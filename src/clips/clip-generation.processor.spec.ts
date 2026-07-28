@@ -19,23 +19,7 @@ jest.mock('./virality-score.util', () => ({
 }));
 
 import { cutClip } from './ffmpeg.util';
-
-// Mock CloudinaryService
-class MockCloudinaryService {
-  async readFileToBuffer() {
-    return Buffer.from('mock-video-data');
-  }
-  async uploadVideoFromBuffer() {
-    return {
-      secure_url: 'https://cloudinary.com/video.mp4',
-      thumbnail_url: 'https://cloudinary.com/thumb.jpg',
-      public_id: 'test-clip',
-    };
-  }
-  async deleteLocalFile() {
-    return;
-  }
-}
+import { MockCloudinaryService } from '../../test/mocks/cloudinary.mock';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -65,24 +49,52 @@ function makeJob(
 function makeProcessor() {
   const emitter = new EventEmitter2();
   const cloudinaryService = new MockCloudinaryService();
-  const clipsGateway = { emitProgressToUser: jest.fn() };
+  const clipsGateway = {
+    emitProgressToUser: jest.fn(),
+    emitProgress: jest.fn(),
+    emitCompleted: jest.fn(),
+    emitFailed: jest.fn(),
+  };
   const clipsService = {
     _registerJobController: jest.fn(),
     _clearJobController: jest.fn(),
     _isVideoCancelled: jest.fn().mockReturnValue(false),
     _getVideo: jest.fn().mockReturnValue({ userId: 1 }),
     updateClip: jest.fn(),
+    refreshQueueDepth: jest.fn().mockResolvedValue(undefined),
+  };
+  const metricsService = {
+    incrementClipsGenerated: jest.fn(),
+    recordJobStart: jest.fn(),
+    recordJobCompletion: jest.fn(),
+    recordJobFailure: jest.fn(),
+  };
+  const prisma = {
+    video: {
+      findUnique: jest.fn().mockResolvedValue({ userId: 1 }),
+    },
   };
   jest.spyOn(emitter, 'emit');
   jest.spyOn(cloudinaryService, 'uploadVideoFromBuffer');
   jest.spyOn(cloudinaryService, 'deleteLocalFile');
+  const videoService = {
+    detectViralTimestamps: jest.fn().mockResolvedValue([]),
+  };
+  const shutdownService = {
+    register: jest.fn(),
+  };
+
   const processor = new ClipGenerationProcessor(
+    videoService as any,
     cloudinaryService as any,
     emitter,
     clipsGateway as any,
     clipsService as any,
+    metricsService as any,
+    prisma as any,
+    shutdownService as any,
   );
-  return { processor, emitter, cloudinaryService, clipsService };
+  return { processor, emitter, cloudinaryService, clipsService, prisma };
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -17,19 +18,30 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiParam,
+  ApiUnauthorizedResponse,
+  ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { ClipsService } from './clips.service.js';
 import type { ClipSortField, SortOrder } from './clips.service.js';
 import { CreateClipDto } from './dto/create-clip.dto.js';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto.js';
+import { UpdateClipRoyaltyDto } from './dto/update-clip-royalty.dto.js';
 import { LoginGuard } from '../auth/guards/login.guard.js';
 import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto.js';
 import { PublishClipDto } from './dto/publish-clip.dto.js';
 import { ClipPublishService } from './clip-publish.service.js';
+import type { ClipGenerationJob } from './clip-generation.processor';
+import {
+  QueueRateLimitGuard,
+  QueueRateLimit,
+} from '../common/guards/queue-rate-limit.guard';
+import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto.js';
 
 @ApiTags('clips')
 @ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @UseGuards(LoginGuard)
 @Controller('clips')
 export class ClipsController {
@@ -39,13 +51,20 @@ export class ClipsController {
   ) {}
 
   @Post('generate')
+  @UseGuards(QueueRateLimitGuard)
+  @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
   @ApiOperation({
     summary: 'Generate a clip',
-    description: 'Enqueue a clip-generation job with automatic retry + exponential backoff. Returns the BullMQ job ID immediately; processing happens asynchronously.',
+    description:
+      'Enqueue a clip-generation job with automatic retry + exponential backoff. Returns the BullMQ job ID immediately; processing happens asynchronously.',
   })
-  @ApiResponse({ status: 201, description: 'Clip generation job queued successfully' })
+  @ApiResponse({
+    status: 201,
+    description: 'Clip generation job queued successfully',
+  })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 429, description: 'Too many active jobs' })
   generate(@Body() dto: ClipGenerationJob) {
     return this.clipsService.enqueueClip(dto);
   }
@@ -53,14 +72,35 @@ export class ClipsController {
   @Get()
   @ApiOperation({
     summary: 'List clips',
-    description: 'List clips sorted by viralityScore descending by default. Supports filtering by videoId and custom sorting.',
+    description:
+      'List clips sorted by viralityScore descending by default. Supports filtering by videoId and custom sorting.',
   })
-  @ApiResponse({ status: 200, description: 'List of clips returned successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'List of clips returned successfully',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiQuery({ name: 'videoId', required: false, description: 'Filter to a specific source video' })
-  @ApiQuery({ name: 'sort', required: false, description: 'Sort format: field:order (e.g., viralityScore:desc, createdAt:asc)' })
-  @ApiQuery({ name: 'sortBy', required: false, description: 'Legacy: viralityScore | createdAt | duration' })
-  @ApiQuery({ name: 'order', required: false, description: 'Legacy: asc | desc' })
+  @ApiQuery({
+    name: 'videoId',
+    required: false,
+    description: 'Filter to a specific source video',
+  })
+  @ApiQuery({
+    name: 'sort',
+    required: false,
+    description:
+      'Sort format: field:order (e.g., viralityScore:desc, createdAt:asc)',
+  })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    description: 'Legacy: viralityScore | createdAt | duration',
+  })
+  @ApiQuery({
+    name: 'order',
+    required: false,
+    description: 'Legacy: asc | desc',
+  })
   list(
     @Query('videoId') videoId?: string,
     @Query('sort') sort?: string,
@@ -109,7 +149,8 @@ export class ClipsController {
   @Post('bulk-update')
   @ApiOperation({
     summary: 'Bulk update clips',
-    description: 'Bulk update selected and/or postStatus for multiple clips in one transaction. Returns update statistics including notFoundIds for invalid clip IDs.',
+    description:
+      'Bulk update selected and/or postStatus for multiple clips in one transaction. Returns update statistics including notFoundIds for invalid clip IDs.',
   })
   @ApiResponse({ status: 200, description: 'Clips updated successfully' })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
@@ -134,18 +175,77 @@ export class ClipsController {
   }
 
   @Post(':id/regenerate')
+  @UseGuards(QueueRateLimitGuard)
+  @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
   @ApiOperation({
     summary: 'Regenerate a clip',
-    description: 'Re-run FFmpeg cut for a single clip using original timestamps.',
+    description:
+      'Re-run FFmpeg cut for a single clip using original timestamps.',
   })
   @ApiParam({ name: 'id', description: 'Clip ID' })
   @ApiResponse({ status: 200, description: 'Clip regeneration started' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Clip not found' })
+  @ApiResponse({ status: 429, description: 'Too many active jobs' })
   regenerate(@Param('id') id: string, @Req() req: Request) {
     const userId: number = Number(
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
     return this.clipsService.regenerate(userId, Number(id));
+  }
+
+  @Patch(':id/caption')
+  @ApiOperation({
+    summary: 'Update clip caption',
+    description:
+      'Update the auto-generated caption for a clip. Useful for customizing social media posts.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID' })
+  @ApiResponse({ status: 200, description: 'Caption updated' })
+  @ApiResponse({ status: 400, description: 'Invalid request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Clip not found' })
+  async updateCaption(
+    @Param('id') id: string,
+    @Body('caption') caption: string,
+    @Req() req: Request,
+  ) {
+    if (!caption || typeof caption !== 'string') {
+      throw new BadRequestException('caption is required and must be a string');
+    }
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipsService.updateCaption(Number(id), userId, caption);
+  }
+
+  @Patch(':id/royalty')
+  @ApiOperation({
+    summary: 'Update clip NFT royalty BPS',
+    description:
+      'Configure creator royalty (0–1500 BPS) for a clip before minting. Defaults to 1000 (10%) when omitted.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID' })
+  @ApiResponse({ status: 200, description: 'Royalty updated' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid royaltyBps (must be 0–1500)',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Clip not found' })
+  async updateRoyalty(
+    @Param('id') id: string,
+    @Body() dto: UpdateClipRoyaltyDto,
+    @Req() req: Request,
+  ) {
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipsService.updateRoyalty(
+      Number(id),
+      userId,
+      dto.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
+    );
   }
 }

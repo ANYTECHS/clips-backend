@@ -62,11 +62,15 @@ describe('CreateVideoDto', () => {
           'tiktok',
           'Instagram',
           'INSTAGRAM',
-          'youtube',
+          'youtube-shorts',
         ],
       });
 
-      expect(dto.targetPlatforms).toEqual(['tiktok', 'instagram', 'youtube']);
+      expect(dto.targetPlatforms).toEqual([
+        'tiktok',
+        'instagram',
+        'youtube-shorts',
+      ]);
       const errors = await validate(dto);
       expect(errors.length).toBe(0);
     });

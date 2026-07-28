@@ -20,11 +20,11 @@ export class AppLoggerService implements LoggerService {
   private readonly SENSITIVE_KEYS = new Set([
     'password',
     'token',
-    'accessToken',
-    'refreshToken',
-    'privateKey',
+    'accesstoken',
+    'refreshtoken',
+    'privatekey',
     'secret',
-    'mfaSecret',
+    'mfasecret',
     'authorization',
   ]);
 

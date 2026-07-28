@@ -22,6 +22,7 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiBody,
+  ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { CookieService } from './cookie.service';
@@ -34,9 +35,18 @@ import { TokenResponseDto } from './dto/token-response.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import {
+  AuthSuccessResponseDto,
+  AuthTokensDto,
+  EnableMfaDto,
+  MessageResponseDto,
+  MfaSetupResponseDto,
+  MfaStatusResponseDto,
+} from './dto/auth-responses.dto';
 import { CsrfService } from '../csrf/csrf.service';
 
 @ApiTags('auth')
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('auth')
 export class AuthController {
   constructor(
@@ -62,9 +72,22 @@ export class AuthController {
         error: 'Bad Request',
       },
     },
+  @ApiBody({ type: SignupDto })
+  @ApiResponse({
+    status: 201,
+    description: 'User created successfully',
+    type: AuthSuccessResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid input or user already exists',
   })
   @ApiResponse({ status: 429, description: 'Too many requests' })
-  @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
+  @ApiQuery({
+    name: 'use_cookies',
+    required: false,
+    description: 'Return tokens in cookies instead of body',
+  })
   @Throttle({ auth: { limit: 10, ttl: 60000 } })
   async signup(
     @Body(new ValidationPipe({ transform: true })) signupDto: SignupDto,
@@ -100,9 +123,23 @@ export class AuthController {
       },
     },
   })
+  @ApiBody({ type: LoginDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Login successful',
+    type: AuthSuccessResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid credentials' })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
-  @ApiResponse({ status: 429, description: 'Too many requests - brute force protection' })
-  @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests - brute force protection',
+  })
+  @ApiQuery({
+    name: 'use_cookies',
+    required: false,
+    description: 'Return tokens in cookies instead of body',
+  })
   @UseGuards(BruteForceGuard)
   @Throttle({ auth: { limit: 10, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
@@ -128,7 +165,10 @@ export class AuthController {
   }
 
   @Get('google')
-  @ApiOperation({ summary: 'Initiate Google OAuth flow', description: 'Redirects to Google for authentication' })
+  @ApiOperation({
+    summary: 'Initiate Google OAuth flow',
+    description: 'Redirects to Google for authentication',
+  })
   @ApiResponse({ status: 302, description: 'Redirects to Google OAuth' })
   @UseGuards(AuthGuard('google'))
   googleAuth() {
@@ -136,8 +176,15 @@ export class AuthController {
   }
 
   @Get('google/callback')
-  @ApiOperation({ summary: 'Google OAuth callback', description: 'Handles Google OAuth redirect' })
-  @ApiResponse({ status: 200, description: 'Authentication successful' })
+  @ApiOperation({
+    summary: 'Google OAuth callback',
+    description: 'Handles Google OAuth redirect',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Authentication successful',
+    type: AuthSuccessResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
   @UseGuards(AuthGuard('google'))
   async googleCallback(
@@ -166,7 +213,12 @@ export class AuthController {
 
   @Post('magic-link')
   @ApiOperation({ summary: 'Request magic link for passwordless login' })
-  @ApiResponse({ status: 200, description: 'Magic link sent if email exists' })
+  @ApiBody({ type: MagicLinkRequestDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Magic link sent if email exists',
+    type: MessageResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Invalid email format' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   async requestMagicLink(
@@ -178,11 +230,22 @@ export class AuthController {
   }
 
   @Get('verify-magic')
-  @ApiOperation({ summary: 'Verify magic link token', description: 'Validates magic link and returns tokens' })
-  @ApiResponse({ status: 200, description: 'Token verified successfully' })
+  @ApiOperation({
+    summary: 'Verify magic link token',
+    description: 'Validates magic link and returns tokens',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Token verified successfully',
+    type: AuthSuccessResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
   @ApiQuery({ name: 'token', required: true, description: 'Magic link token' })
-  @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
+  @ApiQuery({
+    name: 'use_cookies',
+    required: false,
+    description: 'Return tokens in cookies instead of body',
+  })
   async verifyMagicLink(
     @Query('token') token: string,
     @Req() req: any,
@@ -205,10 +268,21 @@ export class AuthController {
   }
 
   @Get('verify-email')
-  @ApiOperation({ summary: 'Verify email address', description: 'Confirms email verification token' })
-  @ApiResponse({ status: 200, description: 'Email verified successfully' })
+  @ApiOperation({
+    summary: 'Verify email address',
+    description: 'Confirms email verification token',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Email verified successfully',
+    type: MessageResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  @ApiQuery({ name: 'token', required: true, description: 'Email verification token' })
+  @ApiQuery({
+    name: 'token',
+    required: true,
+    description: 'Email verification token',
+  })
   async verifyEmail(@Query('token') token: string) {
     if (!token) {
       throw new BadRequestException('Token is required');
@@ -222,6 +296,23 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
   @ApiResponse({ status: 401, description: 'Unauthorized - refresh token invalid, expired, or revoked' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
+  @ApiOperation({
+    summary: 'Refresh access token',
+    description: 'Get new access token using refresh token',
+  })
+  @ApiBody({ type: RefreshTokenDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Tokens refreshed successfully',
+    type: AuthTokensDto,
+  })
+  @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiQuery({
+    name: 'use_cookies',
+    required: false,
+    description: 'Return tokens in cookies instead of body',
+  })
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Body(new ValidationPipe({ transform: true })) dto: RefreshTokenDto,
@@ -247,7 +338,11 @@ export class AuthController {
   }
 
   @Post('logout')
-  @ApiOperation({ summary: 'Logout user', description: 'Revokes refresh token and clears cookies' })
+  @ApiOperation({
+    summary: 'Logout user',
+    description: 'Revokes refresh token and clears cookies',
+  })
+  @ApiBody({ type: RefreshTokenDto })
   @ApiResponse({ status: 204, description: 'Logout successful' })
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
@@ -263,8 +358,16 @@ export class AuthController {
   }
 
   @Post('forgot-password')
-  @ApiOperation({ summary: 'Request password reset', description: 'Sends password reset link to email' })
-  @ApiResponse({ status: 200, description: 'Reset link sent if email exists' })
+  @ApiOperation({
+    summary: 'Request password reset',
+    description: 'Sends password reset link to email',
+  })
+  @ApiBody({ type: ForgotPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Reset link sent if email exists',
+    type: MessageResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Invalid email format' })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   @HttpCode(HttpStatus.OK)
@@ -277,9 +380,20 @@ export class AuthController {
   }
 
   @Post('reset-password')
-  @ApiOperation({ summary: 'Reset password', description: 'Sets new password using reset token' })
-  @ApiResponse({ status: 200, description: 'Password reset successful' })
-  @ApiResponse({ status: 400, description: 'Invalid token or password requirements not met' })
+  @ApiOperation({
+    summary: 'Reset password',
+    description: 'Sets new password using reset token',
+  })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Password reset successful',
+    type: MessageResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid token or password requirements not met',
+  })
   @HttpCode(HttpStatus.OK)
   async resetPassword(
     @Body(new ValidationPipe({ transform: true })) dto: ResetPasswordDto,
@@ -290,9 +404,16 @@ export class AuthController {
 
   @Post('mfa/setup')
   @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'Setup MFA', description: 'Generates MFA secret and QR code' })
-  @ApiResponse({ status: 200, description: 'MFA setup initiated' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiOperation({
+    summary: 'Setup MFA',
+    description: 'Generates MFA secret and QR code. Requires JWT.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'MFA setup initiated',
+    type: MfaSetupResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
   @HttpCode(HttpStatus.OK)
   async setupMfa(@Req() req: any) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
@@ -301,10 +422,18 @@ export class AuthController {
 
   @Post('mfa/enable')
   @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'Enable MFA', description: 'Enables MFA after verifying setup code' })
-  @ApiResponse({ status: 200, description: 'MFA enabled successfully' })
+  @ApiOperation({
+    summary: 'Enable MFA',
+    description: 'Enables MFA after verifying setup code. Requires JWT.',
+  })
+  @ApiBody({ type: EnableMfaDto })
+  @ApiResponse({
+    status: 200,
+    description: 'MFA enabled successfully',
+    type: MfaStatusResponseDto,
+  })
   @ApiResponse({ status: 400, description: 'Invalid verification code' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
   @HttpCode(HttpStatus.OK)
   async enableMfa(@Req() req: any, @Body('code') code: string) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
@@ -314,9 +443,16 @@ export class AuthController {
 
   @Post('mfa/disable')
   @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'Disable MFA', description: 'Turns off multi-factor authentication' })
-  @ApiResponse({ status: 200, description: 'MFA disabled successfully' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiOperation({
+    summary: 'Disable MFA',
+    description: 'Turns off multi-factor authentication. Requires JWT.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'MFA disabled successfully',
+    type: MfaStatusResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
   @HttpCode(HttpStatus.OK)
   async disableMfa(@Req() req: any) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);

@@ -34,10 +34,10 @@ jest.mock('fluent-ffmpeg', () => {
 
 const ffmpegMock = ffmpegLib as unknown as jest.Mock;
 
-function getSeekArg(): number {
+function getSeekArg(): string {
   return mockSeekInput.mock.calls[0][0];
 }
-function getDurationArg(): number {
+function getDurationArg(): string {
   return mockDuration.mock.calls[0][0];
 }
 
@@ -67,9 +67,9 @@ describe('cutClip', () => {
       endTime: 45.7,
     });
 
-    expect(getSeekArg()).toBe(12.5);
+    expect(getSeekArg()).toBe('12.500');
     // duration = 45.7 - 12.5 = 33.2 (fixed to 3 d.p.)
-    expect(getDurationArg()).toBeCloseTo(33.2, 3);
+    expect(getDurationArg()).toBe('33.200');
   });
 
   it('clamps startTime < 0 to 0', async () => {
@@ -80,8 +80,8 @@ describe('cutClip', () => {
       endTime: 10,
     });
 
-    expect(getSeekArg()).toBe(0);
-    expect(getDurationArg()).toBe(10);
+    expect(getSeekArg()).toBe('0.000');
+    expect(getDurationArg()).toBe('10.000');
   });
 
   it('clamps endTime to videoDuration when provided', async () => {
@@ -93,8 +93,8 @@ describe('cutClip', () => {
       videoDuration: 60,
     });
 
-    expect(getSeekArg()).toBe(10);
-    expect(getDurationArg()).toBe(50); // 60 - 10
+    expect(getSeekArg()).toBe('10.000');
+    expect(getDurationArg()).toBe('50.000'); // 60 - 10
   });
 
   it('handles start=0 correctly', async () => {
@@ -105,8 +105,8 @@ describe('cutClip', () => {
       endTime: 30,
     });
 
-    expect(getSeekArg()).toBe(0);
-    expect(getDurationArg()).toBe(30);
+    expect(getSeekArg()).toBe('0.000');
+    expect(getDurationArg()).toBe('30.000');
   });
 
   it('throws RangeError when endTime <= startTime', () => {
@@ -165,8 +165,8 @@ describe('cutClip', () => {
       endTime: 45.699999999999,
     });
 
-    expect(getSeekArg()).toBe(12.5);
-    expect(getDurationArg()).toBeCloseTo(33.2, 3);
+    expect(getSeekArg()).toBe('12.500');
+    expect(getDurationArg()).toBe('33.200');
   });
 });
 
@@ -184,13 +184,15 @@ describe('getVideoMetadata', () => {
 
     const result = await getVideoMetadata('video.mp4');
 
-    expect(result).toEqual({
-      duration: 120.5,
-      width: 1920,
-      height: 1080,
-      format: 'mov,mp4,m4a,3gp,3g2,mj2',
-      resolution: '1920x1080',
-    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        duration: 120.5,
+        width: 1920,
+        height: 1080,
+        format: 'mov,mp4,m4a,3gp,3g2,mj2',
+        resolution: '1920x1080',
+      }),
+    );
     expect(mockFfprobe).toHaveBeenCalledWith('video.mp4', expect.any(Function));
   });
 

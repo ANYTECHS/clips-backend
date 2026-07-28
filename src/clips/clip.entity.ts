@@ -30,7 +30,7 @@ export interface Clip {
   /** Cloudinary thumbnail URL */
   thumbnail?: string;
   /** Clip processing status: 'pending', 'processing', 'success', 'failed', 'upload_failed' */
-  status?: 'pending' | 'processing' | 'success' | 'failed' | 'upload_failed';
+  status?: 'pending' | 'processing' | 'success' | 'failed' | 'upload_failed' | 'upload_processed';
   /** Error message if upload/processing failed */
   error?: string;
   /** Local file path as fallback when Cloudinary upload fails */
@@ -51,6 +51,16 @@ export interface Clip {
    * Used when minting clips as NFTs on Soroban/Stellar.
    */
   royaltyBps?: number | null;
+  /**
+   * On-chain mint address / token identifier after a successful NFT mint.
+   */
+  mintAddress?: string | null;
+  /** Timestamp when the clip NFT was confirmed minted on-chain. */
+  mintedAt?: Date | null;
+  /**
+   * NFT lifecycle status: none | minting | minted | failed
+   */
+  nftStatus?: 'none' | 'minting' | 'minted' | 'failed';
   createdAt: Date;
   updatedAt: Date;
 }

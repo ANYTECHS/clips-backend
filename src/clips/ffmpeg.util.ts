@@ -21,6 +21,8 @@ export interface VideoMetadata {
   height: number;
   format: string;
   resolution: string;
+  fps: number;
+  bitrate: number;
 }
 
 /**
@@ -48,12 +50,27 @@ export async function getVideoMetadata(
       const height = stream.height || 0;
       const formatName = format.format_name || 'unknown';
 
+      // Parse frame rate from "num/den" string (e.g. "30/1" or "30000/1001")
+      let fps = 0;
+      if (stream.r_frame_rate) {
+        const parts = stream.r_frame_rate.split('/');
+        if (parts.length === 2) {
+          const num = parseFloat(parts[0]);
+          const den = parseFloat(parts[1]);
+          fps = den > 0 ? Math.round((num / den) * 100) / 100 : 0;
+        }
+      }
+
+      const bitrate = parseInt(format.bit_rate?.toString() || '0', 10);
+
       resolve({
         duration,
         width,
         height,
         format: formatName,
         resolution: `${width}x${height}`,
+        fps,
+        bitrate,
       });
     });
   });
@@ -93,37 +110,44 @@ export function cutClip(options: CutClipOptions): Promise<string> {
   }
 
   // Fixed-precision strings — avoids floating-point noise in FFmpeg args
-  const startSeconds = parseFloat(start.toFixed(3));
-  const durationSeconds = parseFloat((end - start).toFixed(3));
+  const startSeconds = start.toFixed(3);
+  const durationSeconds = (end - start).toFixed(3);
 
   logger.log(
     `Cutting clip: input=${inputPath} start=${startSeconds}s duration=${durationSeconds}s output=${outputPath}`,
   );
 
   return new Promise((resolve, reject) => {
-    const stderrLines: string[] = [];
-    const MAX_STDERR_LINES = 10;
+    const logLines: string[] = [];
+    const MAX_LOG_LINES = 10;
 
     const cmd = ffmpeg(inputPath)
       .seekInput(startSeconds)
       .duration(durationSeconds)
       .output(outputPath)
-      .on('stderr', (line: string) => {
-        stderrLines.push(line);
-        if (stderrLines.length > MAX_STDERR_LINES) {
-          stderrLines.shift();
+      .on('stdout', (line: string) => {
+        logLines.push(`[stdout] ${line}`);
+        if (logLines.length > MAX_LOG_LINES) {
+          logLines.shift();
         }
-        logger.debug(`[ffmpeg stderr] ${line}`);
+        logger.log(`[ffmpeg stdout] ${line}`);
+      })
+      .on('stderr', (line: string) => {
+        logLines.push(`[stderr] ${line}`);
+        if (logLines.length > MAX_LOG_LINES) {
+          logLines.shift();
+        }
+        logger.log(`[ffmpeg stderr] ${line}`);
       })
       .on('end', () => {
         resolve(outputPath);
       })
       .on('error', (err: Error) => {
-        const stderrSummary =
-          stderrLines.length > 0
-            ? `\nLast FFmpeg output:\n${stderrLines.join('\n')}`
+        const logSummary =
+          logLines.length > 0
+            ? `\nLast FFmpeg output:\n${logLines.join('\n')}`
             : '';
-        const detailedError = new Error(`${err.message}${stderrSummary}`);
+        const detailedError = new Error(`${err.message}${logSummary}`);
         reject(detailedError);
       });
 

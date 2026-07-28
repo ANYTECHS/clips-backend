@@ -4,11 +4,18 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
-import { AyrshareService } from './ayrshare.service';
 import { UserPlatformService } from '../user-platform/user-platform.service';
-
-const MAX_ATTEMPTS = 3;
+import {
+  CLIP_POSTING_QUEUE,
+  CLIP_POSTING_JOB_OPTIONS,
+  type ClipPostingJob,
+} from './clip-posting.queue';
+import { QueueOverflowService } from '../common/queue/queue-overflow.service';
+import { getBullMQRateLimitConfig } from '../config/bullmq.config';
 
 @Injectable()
 export class ClipPublishService {
@@ -16,23 +23,32 @@ export class ClipPublishService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly ayrshare: AyrshareService,
     private readonly userPlatformService: UserPlatformService,
+    @InjectQueue(CLIP_POSTING_QUEUE)
+    private readonly postingQueue: Queue<ClipPostingJob>,
+    private readonly queueOverflowService: QueueOverflowService,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
    * POST /clips/:id/publish
-   * Publishes a clip to the requested platforms via Ayrshare.
-   * - Returns 400 if clip has no Cloudinary URL
-   * - Returns 400 if none of the requested platforms are connected by the user
-   * - Tracks each attempt in ClipPost table
-   * - Retries failed platforms up to 3 times with exponential backoff
+   *
+   * Validates the clip and the user's connected platforms, creates ClipPost
+   * rows in "pending" state, then enqueues a posting job on the dedicated
+   * `clip-posting` BullMQ queue.
+   *
+   * The heavy I/O work (Ayrshare HTTP calls + DB updates) is handled
+   * asynchronously by ClipPostingProcessor, which runs in a separate worker
+   * with higher concurrency than the video-processing worker.
+   *
+   * Returns immediately with the BullMQ job ID so the caller can poll
+   * /clips/:id/posts for final per-platform outcomes.
    */
   async publish(
     clipId: number,
     userId: number,
     targetPlatforms: string[],
-  ): Promise<{ results: Array<{ platform: string; status: string; postId?: string; error?: string }> }> {
+  ): Promise<{ jobId: string; platforms: string[] }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
     if (!clip.clipUrl) {
@@ -44,7 +60,9 @@ export class ClipPublishService {
     // Resolve which of the requested platforms the user has connected
     const connectedPlatforms = await this.userPlatformService.findAll(userId);
     const connectedNames = new Set(connectedPlatforms.map((p) => p.platform));
-    const validPlatforms = targetPlatforms.filter((p) => connectedNames.has(p));
+    const validPlatforms = targetPlatforms.filter((p) =>
+      connectedNames.has(p),
+    );
 
     if (validPlatforms.length === 0) {
       throw new BadRequestException(
@@ -52,90 +70,57 @@ export class ClipPublishService {
       );
     }
 
-    // Upsert ClipPost rows to pending
+    // Create ClipPost rows in "pending" state so callers can observe progress
     await Promise.all(
       validPlatforms.map((platform) =>
-        this.prisma.clipPost.upsert({
-          where: {
-            // Use a compound unique if available; otherwise create
-            id: 0, // force create path via update-or-create pattern below
-          },
-          update: {},
-          create: { clipId, platform, status: 'pending', attempts: 0 },
-        }).catch(() =>
-          this.prisma.clipPost.create({
-            data: { clipId, platform, status: 'pending', attempts: 0 },
-          }),
-        ),
+        this.prisma.clipPost
+          .upsert({
+            where: { id: 0 }, // force create path
+            update: {},
+            create: { clipId, platform, status: 'pending', attempts: 0 },
+          })
+          .catch(() =>
+            this.prisma.clipPost.create({
+              data: { clipId, platform, status: 'pending', attempts: 0 },
+            }),
+          ),
       ),
     );
 
+    // Enqueue the posting job — all Ayrshare I/O happens in ClipPostingProcessor
     const caption = clip.caption ?? clip.title ?? '';
-    const results = await this.postWithRetry(
-      clip.clipUrl,
-      caption,
-      validPlatforms,
+    const jobPayload: ClipPostingJob = {
       clipId,
-    );
+      userId,
+      mediaUrl: clip.clipUrl,
+      caption,
+      platforms: validPlatforms,
+    };
 
-    return { results };
-  }
+    const rateLimits = getBullMQRateLimitConfig(this.configService);
+    const result = await this.queueOverflowService.enqueue({
+      queue: this.postingQueue as Queue<any>,
+      jobName: 'post-clip',
+      data: jobPayload,
+      baseOptions: {
+        ...CLIP_POSTING_JOB_OPTIONS,
+        jobId: `post-${clipId}-${Date.now()}`,
+      } as Record<string, unknown>,
+      rateLimitConfig: rateLimits.clipPosting,
+    });
 
-  private async postWithRetry(
-    mediaUrl: string,
-    caption: string,
-    platforms: string[],
-    clipId: number,
-  ): Promise<Array<{ platform: string; status: string; postId?: string; error?: string }>> {
-    let remaining = [...platforms];
-    const finalResults: Map<string, { platform: string; status: string; postId?: string; error?: string }> = new Map();
-
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      if (remaining.length === 0) break;
-
-      if (attempt > 1) {
-        const delay = 1000 * Math.pow(2, attempt - 2); // 1s, 2s
-        await new Promise((r) => setTimeout(r, delay));
-      }
-
-      const batchResults = await this.ayrshare.post(mediaUrl, caption, remaining);
-
-      const stillFailing: string[] = [];
-      for (const r of batchResults) {
-        await this.prisma.clipPost.updateMany({
-          where: { clipId, platform: r.platform },
-          data: {
-            status: r.success ? 'published' : 'failed',
-            postId: r.postId ?? null,
-            error: r.error ?? null,
-            attempts: attempt,
-          },
-        });
-
-        if (r.success) {
-          finalResults.set(r.platform, {
-            platform: r.platform,
-            status: 'published',
-            postId: r.postId,
-          });
-          this.logger.log(`Published clip ${clipId} to ${r.platform} (attempt ${attempt})`);
-        } else {
-          stillFailing.push(r.platform);
-          finalResults.set(r.platform, {
-            platform: r.platform,
-            status: attempt < MAX_ATTEMPTS ? 'retrying' : 'failed',
-            error: r.error,
-          });
-          this.logger.warn(
-            `Failed to publish clip ${clipId} to ${r.platform} (attempt ${attempt}): ${r.error}`,
-          );
-        }
-      }
-
-      remaining = stillFailing;
+    if (result.delayed) {
+      this.logger.warn(
+        `Posting job ${result.jobId} for clipId=${clipId} delayed by ${result.delayMs}ms due to queue overflow`,
+      );
+    } else {
+      this.logger.log(
+        `Enqueued posting job ${result.jobId} for clipId=${clipId} ` +
+          `platforms=[${validPlatforms.join(', ')}]`,
+      );
     }
 
-    return Array.from(finalResults.values());
+    return { jobId: String(result.jobId), platforms: validPlatforms };
   }
 
   /**

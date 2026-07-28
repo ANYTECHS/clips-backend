@@ -4,22 +4,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { CreateStellarSubscriptionDto } from './dto/create-stellar-subscription.dto';
 import { StellarService } from '../stellar/stellar.service';
+import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
 
 jest.mock('../prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
 }));
 
-jest.mock('@stellar/stellar-sdk', () => ({
-  __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
-    transactionsTransaction: jest.fn(),
-  })),
-  TransactionBuilder: jest.fn(),
-  Networks: {},
-  Operation: {},
-  Asset: {},
-  Horizon: { Server: jest.fn() },
-}));
+jest.mock('@stellar/stellar-sdk', () =>
+  require('../../test/mocks/stellar-sdk.mock'),
+);
 
 describe('StellarPaymentService', () => {
   let service: StellarPaymentService;
@@ -41,7 +34,10 @@ describe('StellarPaymentService', () => {
   };
 
   const mockConfigService = {
-    get: jest.fn().mockReturnValue('https://horizon-testnet.stellar.org'),
+    get: jest.fn().mockImplementation((key: string) => {
+      if (key === 'STELLAR_WALLET_ADDRESS') return 'GDEST';
+      return 'https://horizon-testnet.stellar.org';
+    }),
   };
 
   const mockStellarService = {
@@ -56,6 +52,7 @@ describe('StellarPaymentService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: StellarService, useValue: mockStellarService },
+        CircuitBreakerService,
       ],
     }).compile();
 
@@ -64,6 +61,7 @@ describe('StellarPaymentService', () => {
 
   describe('createPaymentIntent', () => {
     it('validates destination address and creates intent', async () => {
+      const userId = 1;
       const dto: CreateStellarSubscriptionDto = {
         plan: 'pro',
         asset: 'xlm',
@@ -74,7 +72,7 @@ describe('StellarPaymentService', () => {
       const mockPaymentIntent = {
         id: 'intent-id',
         amount: 10,
-        asset: 'xlm',
+        asset: 'XLM',
         destination: 'GDEST',
         memo: 'memo',
         status: 'pending',
@@ -84,19 +82,26 @@ describe('StellarPaymentService', () => {
       mockPrismaService.stellarPaymentIntent.create.mockResolvedValue(
         mockPaymentIntent,
       );
-      mockPrismaService.stellarPaymentIntent.create.mockResolvedValue(mockPaymentIntent);
 
       const result = await service.createPaymentIntent(userId, dto);
 
       expect(result).toEqual({
-        id: 'test-intent-id',
+        id: 'intent-id',
         amount: 10,
-        asset: 'xlm',
-        destination: mockWallet.address,
+        asset: 'XLM',
+        destination: 'GDEST',
         memo: expect.stringMatching(/^CLIPS-/),
         expiresAt: mockPaymentIntent.expiresAt,
         status: 'pending',
+        assetIssuer: null,
       });
+      expect(
+        mockPrismaService.stellarPaymentIntent.create,
+      ).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ asset: 'XLM' }),
+        }),
+      );
     });
 
     it('should throw error if wallet not found', async () => {
@@ -107,10 +112,11 @@ describe('StellarPaymentService', () => {
         amount: 10,
       };
 
-      const result = await service.createPaymentIntent(1, dto);
+      mockPrismaService.wallet.findFirst.mockResolvedValue(null);
 
-      expect(mockStellarService.validateAddress).toHaveBeenCalledWith('GDEST');
-      expect(result.destination).toBe('GDEST');
+      await expect(service.createPaymentIntent(userId, dto)).rejects.toThrow(
+        'Stellar wallet not found',
+      );
     });
   });
 
@@ -138,13 +144,14 @@ describe('StellarPaymentService', () => {
 
       expect(ok).toBe(true);
       expect(mockPrismaService.subscription.create).toHaveBeenCalled();
-      expect(mockPrismaService.stellarPaymentIntent.updateMany).toHaveBeenCalledWith({
+      expect(mockPrismaService.subscription.updateMany).toHaveBeenCalledWith({
         where: {
-          status: 'pending',
-          expiresAt: { lt: expect.any(Date) },
+          userId: 1,
+          status: 'active',
         },
         data: {
-          status: 'expired',
+          status: 'cancelled',
+          endDate: expect.any(Date),
         },
       });
     });

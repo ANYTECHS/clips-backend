@@ -34,6 +34,25 @@ export class MailService {
     );
   }
 
+  async sendEmail(options: {
+    to: string;
+    subject: string;
+    text?: string;
+    html?: string;
+  }): Promise<void> {
+    const info = await this.transporter.sendMail({
+      from: process.env.SMTP_FROM || '"Clips App" <noreply@clips.app>',
+      to: options.to,
+      subject: options.subject,
+      text: options.text,
+      html: options.html,
+    });
+
+    this.logger.log(
+      `Email sent to ${options.to} — messageId: ${info.messageId}`,
+    );
+  }
+
   async sendMagicLink(email: string, token: string): Promise<void> {
     await this.sendTemplatedEmail({
       to: email,

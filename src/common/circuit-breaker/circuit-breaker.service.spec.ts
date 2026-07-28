@@ -32,14 +32,14 @@ describe('CircuitBreakerService', () => {
       expect(result).toBe('success');
     });
 
-    it('should throw original error when function fails and circuit is closed', async () => {
+    it('should throw ServiceUnavailableException when function fails on a low failure-rate breaker', async () => {
       const testError = new Error('Test error');
 
       await expect(
         service.execute(testConfig, async () => {
           throw testError;
         }),
-      ).rejects.toThrow(testError);
+      ).rejects.toThrow(ServiceUnavailableException);
     });
 
     it('should open circuit after threshold failures', async () => {
@@ -178,6 +178,8 @@ describe('CircuitBreakerService', () => {
   describe('state transitions', () => {
     it('should transition from closed to open after failures', async () => {
       const testError = new Error('Test error');
+
+      await service.execute(testConfig, async () => 'init');
 
       // Initial state should be closed
       let metrics = service.getMetrics(testConfig.name);

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   UnauthorizedException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,12 +13,15 @@ import {
   DeviceFingerprint,
 } from './device-fingerprint.service';
 import { BruteForceProtectionService } from './brute-force-protection.service';
+import { EncryptionService } from '../encryption/encryption.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { Keypair } from '@stellar/stellar-sdk';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import * as speakeasy from 'speakeasy';
 import * as QRCode from 'qrcode';
+import { StellarService } from '../stellar/stellar.service';
 
 type JwtUser = {
   id: number;
@@ -32,13 +36,41 @@ const REFRESH_TOKEN_EXPIRES_DAYS =
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly jwtService: JwtService,
     private readonly prisma: PrismaService,
     private readonly emailDeliveryService: EmailDeliveryService,
     private readonly deviceFingerprintService: DeviceFingerprintService,
     private readonly bruteForceService: BruteForceProtectionService,
+    private readonly encryption: EncryptionService,
+    private readonly stellarService: StellarService,
   ) {}
+
+  /** Generate a custodial Stellar keypair and persist it on the user record. */
+  private async assignStellarWallet(userId: number): Promise<void> {
+    const keypair = Keypair.random();
+    const publicKey = keypair.publicKey();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        stellarPublicKey: publicKey,
+        walletType: 'custodial',
+        encryptedStellarSecret: this.encryption.encrypt(keypair.secret()),
+      },
+    });
+
+    if (this.stellarService.isTestnet()) {
+      try {
+        await this.stellarService.fundWithFriendbot(publicKey);
+      } catch (error) {
+        this.logger.error(
+          `Friendbot automated funding failed for user ${userId} and wallet ${publicKey}: ${error.message}`,
+        );
+      }
+    }
+  }
 
   async findOrCreateGoogleUser(params: {
     provider: string;
@@ -75,7 +107,9 @@ export class AuthService {
       }
     }
 
-    return this.prisma.user.create({
+    // Create user atomically — wallet update follows outside the transaction
+    // because assignStellarWallet may call an external service (Stellar friendbot)
+    const newUser = await this.prisma.user.create({
       data: {
         email: email || `google_${providerId}@no-email.google`,
         provider,
@@ -85,6 +119,10 @@ export class AuthService {
         emailVerified: new Date(), // Auto verify oauth
       },
     });
+
+    // Auto-generate custodial Stellar wallet (#168)
+    await this.assignStellarWallet(newUser.id);
+    return newUser;
   }
 
   issueTokens(user: JwtUser) {
@@ -136,9 +174,21 @@ export class AuthService {
       .update(rawToken)
       .digest('hex');
 
+    // Performance: Use select to fetch only needed user fields for JWT generation (optimization #326)
     const stored = await this.prisma.refreshToken.findUnique({
       where: { tokenHash },
-      include: { user: true },
+      select: {
+        id: true,
+        expiresAt: true,
+        revokedAt: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
     });
 
     if (!stored || stored.revokedAt) {
@@ -220,29 +270,27 @@ export class AuthService {
       throw new BadRequestException('Email already registered');
     }
 
-    // Hash the password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    // Hash the password before the transaction (CPU work outside DB round-trip)
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Create new user
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-      },
-    });
-
-    // Generate Email Verification Token
+    // Generate email verification token values before transaction
     const rawToken = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto
-      .createHash('sha256')
-      .update(rawToken)
-      .digest('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-    await this.prisma.emailVerificationToken.create({
-      data: { userId: user.id, tokenHash, expiresAt },
+    // Create user + email verification token atomically
+    const { user } = await this.prisma.withTransaction(async (tx) => {
+      const user = await tx.user.create({
+        data: { email, password: hashedPassword },
+      });
+      await tx.emailVerificationToken.create({
+        data: { userId: user.id, tokenHash, expiresAt },
+      });
+      return { user };
     });
+
+    // Auto-generate custodial Stellar wallet outside transaction (may call external Stellar API)
+    await this.assignStellarWallet(user.id);
 
     void this.emailDeliveryService.enqueue({
       to: email,
@@ -377,22 +425,20 @@ export class AuthService {
   }
 
   async requestMagicLink(email: string): Promise<void> {
-    // Find or create user — magic link works even for new users
-    let user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      user = await this.prisma.user.create({ data: { email } });
-    }
-
-    // Generate a cryptographically random token
+    // Generate token values before the transaction (no DB work needed yet)
     const rawToken = crypto.randomBytes(32).toString('hex');
-    const tokenHash = crypto
-      .createHash('sha256')
-      .update(rawToken)
-      .digest('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
-    await this.prisma.magicLink.create({
-      data: { userId: user.id, tokenHash, expiresAt },
+    // Find or create user + create magic link atomically
+    await this.prisma.withTransaction(async (tx) => {
+      let user = await tx.user.findUnique({ where: { email } });
+      if (!user) {
+        user = await tx.user.create({ data: { email } });
+      }
+      await tx.magicLink.create({
+        data: { userId: user.id, tokenHash, expiresAt },
+      });
     });
 
     void this.emailDeliveryService.enqueue({
@@ -412,9 +458,21 @@ export class AuthService {
       .update(rawToken)
       .digest('hex');
 
+    // Performance: Use select to fetch only needed user fields (optimization #326)
     const magicLink = await this.prisma.magicLink.findUnique({
       where: { tokenHash },
-      include: { user: true },
+      select: {
+        id: true,
+        usedAt: true,
+        expiresAt: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
     });
 
     if (!magicLink) {
@@ -429,14 +487,37 @@ export class AuthService {
       throw new UnauthorizedException('Magic link has expired');
     }
 
-    // Mark as used
-    await this.prisma.magicLink.update({
-      where: { id: magicLink.id },
-      data: { usedAt: new Date() },
+    const { user } = magicLink;
+
+    // Prepare refresh token values before transaction
+    const rawRefreshToken = crypto.randomBytes(40).toString('hex');
+    const refreshTokenHash = crypto
+      .createHash('sha256')
+      .update(rawRefreshToken)
+      .digest('hex');
+    const refreshExpiresAt = new Date(
+      Date.now() + REFRESH_TOKEN_EXPIRES_DAYS * 24 * 60 * 60 * 1000,
+    );
+
+    // Mark magic link used + create refresh token atomically
+    await this.prisma.withTransaction(async (tx) => {
+      await tx.magicLink.update({
+        where: { id: magicLink.id },
+        data: { usedAt: new Date() },
+      });
+      await tx.refreshToken.create({
+        data: {
+          userId: user.id,
+          tokenHash: refreshTokenHash,
+          expiresAt: refreshExpiresAt,
+          userAgentHash: deviceFingerprint?.userAgentHash,
+          ipAddress: deviceFingerprint?.ipAddress,
+          acceptLanguage: deviceFingerprint?.acceptLanguage,
+        },
+      });
     });
 
-    const { user } = magicLink;
-    const tokens = await this.issueTokensWithRefresh({
+    const { accessToken } = this.issueTokens({
       id: user.id,
       email: user.email,
       emailVerified: user.emailVerified,
@@ -450,7 +531,7 @@ export class AuthService {
         picture: user.picture,
         emailVerified: !!user.emailVerified,
       },
-      tokens,
+      tokens: { accessToken, refreshToken: rawRefreshToken },
     };
   }
 
@@ -482,9 +563,19 @@ export class AuthService {
       .createHash('sha256')
       .update(rawToken)
       .digest('hex');
+    // Performance: Use select to fetch only needed fields (optimization #326)
     const resetToken = await this.prisma.passwordResetToken.findUnique({
       where: { tokenHash },
-      include: { user: true },
+      select: {
+        id: true,
+        expiresAt: true,
+        usedAt: true,
+        user: {
+          select: {
+            id: true,
+          },
+        },
+      },
     });
 
     if (!resetToken) {

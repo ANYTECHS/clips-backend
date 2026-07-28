@@ -23,6 +23,8 @@ export interface VideoValidationResult {
     width: number;
     height: number;
     format: string;
+    fps: number;
+    bitrate: number;
   };
 }
 
@@ -114,6 +116,8 @@ export class VideoUploadService {
             width: metadata.width,
             height: metadata.height,
             format: metadata.format,
+            fps: metadata.fps,
+            bitrate: metadata.bitrate,
           },
         };
       }
@@ -125,6 +129,8 @@ export class VideoUploadService {
           width: metadata.width,
           height: metadata.height,
           format: metadata.format,
+          fps: metadata.fps,
+          bitrate: metadata.bitrate,
         },
       };
     } catch (error) {
@@ -175,11 +181,22 @@ export class VideoUploadService {
           sourceType: 'upload',
           sourceUrl: tempFilePath, // Temporary path, will be updated after Cloudinary upload
           status: 'pending',
-          duration: Math.round(validation.metadata.duration),
+          duration: Math.round(validation.metadata!.duration),
           fileSize: BigInt(stats.size),
+          metadata: {
+            duration: validation.metadata!.duration,
+            width: validation.metadata!.width,
+            height: validation.metadata!.height,
+            format: validation.metadata!.format,
+            fps: validation.metadata!.fps,
+            bitrate: validation.metadata!.bitrate,
+          },
           processingStats: {
-            inputQuality: `${validation.metadata.height}p`,
-            durationSec: validation.metadata.duration,
+            momentsFound: 0,
+            inputQuality: `${validation.metadata!.height}p`,
+            durationSec: validation.metadata!.duration,
+            clipsGenerated: 0,
+            timeTakenMs: 0,
             uploadStarted: new Date().toISOString(),
           },
         },
@@ -213,7 +230,7 @@ export class VideoUploadService {
       // Estimate processing time (rough heuristic: ~2 min per minute of video)
       const estimatedSeconds = Math.max(
         60,
-        Math.round(validation.metadata.duration * 2),
+        Math.round(validation.metadata!.duration * 2),
       );
 
       return {

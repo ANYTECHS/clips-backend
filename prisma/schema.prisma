@@ -7,28 +7,34 @@ datasource db {
 }
 
 model User {
-  id            Int            @id @default(autoincrement())
-  email         String         @unique
-  password      String?
-  mfaEnabled    Boolean        @default(false)
-  mfaSecret     String?
-  provider      String?
-  providerId    String?
-  name          String?
-  picture       String?
-  emailVerified DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  videos        Video[]
-  userPlatforms UserPlatform[]
-  subscriptions Subscription[]
-  stellarPaymentIntents StellarPaymentIntent[]
-  wallets       Wallet[]
-  payouts       Payout[]
-  magicLinks     MagicLink[]
-  refreshTokens  RefreshToken[]
-  passwordResetTokens PasswordResetToken[]
+  id                     Int            @id @default(autoincrement())
+  email                  String         @unique
+  password               String?
+  mfaEnabled             Boolean        @default(false)
+  mfaSecret              String?
+  provider               String?
+  providerId             String?
+  name                   String?
+  picture                String?
+  emailVerified          DateTime?
+  stellarPublicKey       String?
+  walletType             String?
+  encryptedStellarSecret String?
+  role                   String         @default("user")
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  videos                 Video[]
+  userPlatforms          UserPlatform[]
+  subscriptions          Subscription[]
+  stellarPaymentIntents  StellarPaymentIntent[]
+  wallets                Wallet[]
+  payouts                Payout[]
+  payoutMethods          PayoutMethod[]
+  magicLinks             MagicLink[]
+  refreshTokens          RefreshToken[]
+  passwordResetTokens    PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
+  earningsAuditLogs       EarningsAuditLog[]
 
   @@unique([provider, providerId])
 }
@@ -47,6 +53,8 @@ model Video {
   processingError  String?
   // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, errorDetails?: string }
   processingStats  Json?
+  // Schema: { duration: number, width: number, height: number, format: string, fps: number, bitrate: number }
+  metadata         Json?
   targetPlatforms  Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -67,15 +75,18 @@ model Clip {
   caption       String?
   startTime     Float
   endTime       Float
-  duration      Int
+  duration      Float
   viralityScore Float?
-  royaltyBps    Int?
+  royaltyBps    Int?       @default(1000)
   postStatus    Json?
   postedAt      DateTime?
   metadataUri   String?
   mintAddress   String?    @unique
   mintedAt      DateTime?
   nftStatus     String     @default("none")
+  status        String     @default("pending")
+  localFilePath String?
+  error         String?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
@@ -102,14 +113,17 @@ model ClipPost {
 }
 
 model Earning {
-  id        Int      @id @default(autoincrement())
-  clipId    Int
-  amount    Float
-  currency  String   @default("USD")
-  date      DateTime
-  source    String?
-  createdAt DateTime @default(now())
-  clip      Clip     @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  id              Int       @id @default(autoincrement())
+  clipId          Int
+  amount          Float
+  currency        String    @default("USD")
+  date            DateTime
+  source          String?
+  isAnomaly       Boolean   @default(false)
+  anomalyReason   String?
+  createdAt       DateTime  @default(now())
+  deletedAt       DateTime?
+  clip            Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
 }
 
 model UserPlatform {
@@ -141,22 +155,36 @@ model Wallet {
 }
 
 model Payout {
-  id            Int       @id @default(autoincrement())
-  userId        Int
-  walletId      Int?
-  amount        Float
-  currency      String    @default("USD")
-  method        String
-  status        String
-  transactionId String?
-  stellarXdr    String?
-  onChainTxHash String?
-  confirmedAt   DateTime?
-  paidAt        DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet        Wallet?   @relation(fields: [walletId], references: [id])
+  id               Int           @id @default(autoincrement())
+  userId           Int
+  walletId         Int?
+  payoutMethodId   Int?
+  amount           Float
+  currency         String        @default("USD")
+  method           String
+  status           String
+  transactionId    String?
+  externalTransactionId String?
+  stellarXdr       String?
+  onChainTxHash    String?
+  confirmedAt      DateTime?
+  paidAt           DateTime?
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  feeAmount        Float?
+  feePercentage    Float?
+  finalAmount      Float?
+  retryCount       Int           @default(0)
+  lastAttemptAt    DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet           Wallet?       @relation(fields: [walletId], references: [id])
+  payoutMethod     PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
+
+  @@index([payoutMethodId])
+  @@index([status])
 }
 
 model Subscription {
@@ -250,5 +278,114 @@ model StellarWebhookLog {
   processedAt   DateTime @default(now())
 
   @@index([transactionId])
+  @@index([processedAt])
+}
+
+model PayoutFeeConfig {
+  id              Int      @id @default(autoincrement())
+  method          String   @unique
+  feePercentage   Float
+  fixedFee        Float    @default(0)
+  minFee          Float    @default(0)
+  maxFee          Float?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model PlatformWebhookLog {
+  id          Int      @id @default(autoincrement())
+  platform    String
+  eventType   String
+  payload     String
+  signature   String?
+  isValid     Boolean  @default(false)
+  processedAt DateTime @default(now())
+  error       String?
+
+  @@index([platform])
+  @@index([processedAt])
+}
+
+model AnomalyAlert {
+  id          Int      @id @default(autoincrement())
+  earningId   Int
+  userId      Int
+  amount      Float
+  reason      String
+  severity    String
+  isResolved  Boolean  @default(false)
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([isResolved])
+  @@index([createdAt])
+}
+
+model PayoutMethod {
+  id                      Int       @id @default(autoincrement())
+  userId                  Int
+  type                    String
+  isDefault               Boolean   @default(false)
+  encryptedAccountNumber  String?
+  encryptedRoutingNumber  String?
+  encryptedSwiftCode      String?
+  encryptedIban           String?
+  bankName                String?
+  accountHolderName       String?
+  country                 String?
+  currency                String    @default("USD")
+  lastFourDigits          String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  deletedAt               DateTime?
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payouts                 Payout[]
+
+  @@index([userId])
+  @@index([type])
+}
+
+model MonthlyEarning {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  year              Int
+  month             Int
+  totalAmount       Float
+  currency          String   @default("USD")
+  platformBreakdown Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, year, month])
+  @@index([userId])
+  @@index([year, month])
+}
+
+model EarningsAuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  amount     Float
+  actionType String
+  timestamp  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+
+model SubscriptionRevenue {
+  id              Int      @id @default(autoincrement())
+  subscriptionId  Int
+  transactionHash String   @unique
+  payerAddress    String
+  amount          Float
+  assetType       String
+  memo            String
+  processedAt     DateTime @default(now())
+
+  @@index([subscriptionId])
   @@index([processedAt])
 }

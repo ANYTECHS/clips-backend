@@ -1,3 +1,8 @@
+jest.mock('fs/promises', () => ({
+  stat: jest.fn(),
+  unlink: jest.fn(),
+}));
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { VideoUploadService } from './video-upload.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,12 +13,20 @@ import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+// Mock fluent-ffmpeg first
+jest.mock('fluent-ffmpeg', () => require('../../test/__mocks__/fluent-ffmpeg'));
+
 // Mock ffmpeg.util
-jest.mock('../clips/ffmpeg.util', () => ({
-  getVideoMetadata: jest.fn(),
-}));
+jest.mock('../clips/ffmpeg.util', () => {
+  const actual = jest.requireActual('../clips/ffmpeg.util');
+  return {
+    ...actual,
+    getVideoMetadata: jest.fn(actual.getVideoMetadata),
+  };
+});
 
 import { getVideoMetadata } from '../clips/ffmpeg.util';
+import { mockFFmpegSuccess, cleanupFFmpegMockAfterTest } from '../../test/helpers/ffmpeg-mock.helper';
 
 describe('VideoUploadService', () => {
   let service: VideoUploadService;
@@ -42,6 +55,7 @@ describe('VideoUploadService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockFFmpegSuccess(); // Ensure FFmpeg mock is in success state
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -58,6 +72,10 @@ describe('VideoUploadService', () => {
     service = module.get<VideoUploadService>(VideoUploadService);
     prismaService = module.get<PrismaService>(PrismaService);
     mockQueue = module.get(getQueueToken(CLIP_GENERATION_QUEUE));
+  });
+
+  afterEach(() => {
+    cleanupFFmpegMockAfterTest();
   });
 
   describe('validateVideoFile', () => {
@@ -234,9 +252,9 @@ describe('VideoUploadService', () => {
     };
 
     beforeEach(() => {
-      jest.spyOn(fs, 'stat').mockResolvedValue({
+      (fs.stat as jest.Mock).mockResolvedValue({
         size: 100 * 1024 * 1024,
-      } as any);
+      });
       (getVideoMetadata as jest.Mock).mockResolvedValue(mockMetadata);
     });
 
@@ -269,6 +287,14 @@ describe('VideoUploadService', () => {
           status: 'pending',
           duration: 300,
           fileSize: BigInt(100 * 1024 * 1024),
+          processingStats: {
+            momentsFound: 0,
+            inputQuality: '1080p',
+            durationSec: 300,
+            clipsGenerated: 0,
+            timeTakenMs: 0,
+            uploadStarted: expect.any(String),
+          },
         }),
       });
 
@@ -323,9 +349,9 @@ describe('VideoUploadService', () => {
     });
 
     it('should throw BadRequestException for file too large', async () => {
-      jest.spyOn(fs, 'stat').mockResolvedValue({
+      (fs.stat as jest.Mock).mockResolvedValue({
         size: 600 * 1024 * 1024, // 600 MB
-      } as any);
+      });
 
       await expect(
         service.processUpload('/tmp/upload-126.mp4', 'huge.mp4', 1),
@@ -335,7 +361,7 @@ describe('VideoUploadService', () => {
 
   describe('cleanupTempFile', () => {
     it('should delete temp file successfully', async () => {
-      jest.spyOn(fs, 'unlink').mockResolvedValue(undefined);
+      (fs.unlink as jest.Mock).mockResolvedValue(undefined);
 
       await service.cleanupTempFile('/tmp/test.mp4');
 
@@ -345,7 +371,7 @@ describe('VideoUploadService', () => {
     it('should not throw if file does not exist', async () => {
       const error = new Error('ENOENT: file not found');
       (error as any).code = 'ENOENT';
-      jest.spyOn(fs, 'unlink').mockRejectedValue(error);
+      (fs.unlink as jest.Mock).mockRejectedValue(error);
 
       await expect(
         service.cleanupTempFile('/tmp/nonexistent.mp4'),

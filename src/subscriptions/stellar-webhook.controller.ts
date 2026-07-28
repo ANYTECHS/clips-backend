@@ -7,8 +7,15 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags, ApiHeader } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+  ApiHeader,
+  ApiBody,
+} from '@nestjs/swagger';
 import { StellarWebhookService } from './stellar-webhook.service';
+import { StellarWebhookPayloadDto } from './dto/stellar-webhook-payload.dto';
 import { RawBody } from './decorators/raw-body.decorator';
 
 @ApiTags('webhooks')
@@ -20,7 +27,14 @@ export class StellarWebhookController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Receive Stellar payment webhook',
-    description: 'Endpoint for receiving Stellar payment webhooks with signature verification',
+    description:
+      'Endpoint for receiving Stellar payment webhooks with HMAC-SHA256 signature verification. ' +
+      'Duplicate webhooks (same transaction hash) are accepted idempotently and return 200.',
+  })
+  @ApiBody({
+    type: StellarWebhookPayloadDto,
+    description:
+      'Stellar payment event payload. Must include transaction_hash or hash.',
   })
   @ApiHeader({
     name: 'X-Webhook-Signature',

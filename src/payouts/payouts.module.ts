@@ -1,13 +1,56 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { PayoutsService } from './payouts.service';
+import { PayoutReceiptService } from './payout-receipt.service';
 import { PayoutsController } from './payouts.controller';
+import { AdminPayoutsController } from './admin.controller';
+import { AdminFeesController } from './fees.controller';
+import { FeeService } from './fee.service';
+import { PayoutMethodService } from './payout-method.service';
+import { PayoutMethodController } from './payout-method.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
+import { AuthModule } from '../auth/auth.module';
+import { EncryptionModule } from '../encryption/encryption.module';
+import { MetricsModule } from '../metrics/metrics.module';
+import { PayoutRetryProcessor } from './payout-retry.processor';
+import { PAYOUT_RETRY_QUEUE, PAYOUT_RETRY_QUEUE_PRIORITY } from './payout-retry.queue';
+import { StellarConfirmationProcessor } from './stellar-confirmation.processor';
+import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
+import { PayoutApprovalService } from './payout-approval.service';
+import { ConfigService } from '../config/config.service';
 
 @Module({
-  imports: [PrismaModule, StellarModule],
-  controllers: [PayoutsController],
-  providers: [PayoutsService],
-  exports: [PayoutsService],
+  imports: [
+    PrismaModule,
+    StellarModule,
+    AuthModule,
+    EncryptionModule,
+    MetricsModule,
+    BullModule.registerQueue({
+      name: PAYOUT_RETRY_QUEUE,
+      defaultJobOptions: { priority: PAYOUT_RETRY_QUEUE_PRIORITY },
+    }),
+    BullModule.registerQueue({
+      name: STELLAR_CONFIRMATION_QUEUE,
+    }),
+  ],
+  controllers: [
+    PayoutsController,
+    AdminPayoutsController,
+    AdminFeesController,
+    PayoutMethodController,
+  ],
+  providers: [
+    PayoutsService,
+    PayoutReceiptService,
+    FeeService,
+    PayoutMethodService,
+    PayoutRetryProcessor,
+    StellarConfirmationProcessor,
+    PayoutApprovalService,
+    ConfigService,
+  ],
+  exports: [PayoutsService, FeeService, PayoutMethodService],
 })
 export class PayoutsModule {}
