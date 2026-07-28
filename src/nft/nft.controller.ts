@@ -51,6 +51,8 @@ import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
+import { MintSignatureVerificationService } from './mint-signature-verification.service';
+import { PrepareTransferDto } from './dto/prepare-transfer.dto';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { maskAddress } from '../wallets/wallet.utils';
@@ -319,5 +321,71 @@ export class NftController {
     @Param('mintAddress') mintAddress: string,
   ): Promise<RoyaltyInfo> {
     return this.royaltyQueryService.getRoyaltyInfo(mintAddress);
+  }
+
+  /**
+   * POST /nfts/prepare-transfer
+   *
+   * Builds an unsigned Soroban `transfer_with_royalty` XDR for the caller
+   * to sign and submit on-chain.  The response includes a full royalty
+   * breakdown (royaltyBps, royaltyAmount, royaltyPercent, recipient) so the
+   * frontend can display the royalty fee to the user before they sign.
+   *
+   * Royalty enforcement flow:
+   *   1. Backend resolves royaltyBps (override > on-chain per-token > default > 0)
+   *   2. Computes royaltyAmount = salePrice × royaltyBps / 10_000
+   *   3. Returns XDR for `transfer_with_royalty(from, to, token_id, sale_price)`
+   *   4. On-chain: contract emits `transfer` + `royalty_paid` events
+   */
+  @UseGuards(LoginGuard)
+  @Post('prepare-transfer')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Prepare a transfer_with_royalty Soroban XDR',
+    description:
+      'Builds an unsigned Soroban transfer_with_royalty XDR for the caller to sign. ' +
+      'Royalty is automatically calculated from the on-chain per-token or contract-level ' +
+      'default BPS applied to salePrice. ' +
+      'The response royaltyBreakdown shows bps, amount in stroops, percent, and recipient ' +
+      'so the user can confirm the royalty before signing.',
+  })
+  @ApiBody({ type: PrepareTransferDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Transfer XDR and royalty breakdown returned',
+    schema: {
+      example: {
+        xdr: 'AAAAAgAAA...',
+        tokenId: 42,
+        fromWallet: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        toWallet: 'GBXXYQVNHHZSL3VQNNNQRXB2FHQWZYTQJ6JRYVJL7XP2KXFBH3TFQX',
+        salePrice: 5000000000,
+        royaltyBreakdown: {
+          royaltyBps: 1000,
+          royaltyAmount: 500000000,
+          royaltyPercent: 10,
+          recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid fromWallet/toWallet address, tokenId out of range, ' +
+      'or royaltyBpsOverride outside 0–10 000',
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  async prepareTransfer(@Body() dto: PrepareTransferDto) {
+    return this.nftMintService.prepareTransferTx(
+      dto.tokenId,
+      dto.fromWallet,
+      dto.toWallet,
+      dto.salePrice,
+      dto.royaltyBpsOverride,
+    );
   }
 }
