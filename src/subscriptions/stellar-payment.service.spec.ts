@@ -10,7 +10,9 @@ jest.mock('../prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
 }));
 
-jest.mock('@stellar/stellar-sdk', () => require('../../test/mocks/stellar-sdk.mock'));
+jest.mock('@stellar/stellar-sdk', () =>
+  require('../../test/mocks/stellar-sdk.mock'),
+);
 
 describe('StellarPaymentService', () => {
   let service: StellarPaymentService;
@@ -77,7 +79,9 @@ describe('StellarPaymentService', () => {
         expiresAt: new Date(),
       };
       mockPrismaService.wallet.findFirst.mockResolvedValue(mockWallet);
-      mockPrismaService.stellarPaymentIntent.create.mockResolvedValue(mockPaymentIntent);
+      mockPrismaService.stellarPaymentIntent.create.mockResolvedValue(
+        mockPaymentIntent,
+      );
 
       const result = await service.createPaymentIntent(userId, dto);
 
@@ -91,7 +95,9 @@ describe('StellarPaymentService', () => {
         status: 'pending',
         assetIssuer: null,
       });
-      expect(mockPrismaService.stellarPaymentIntent.create).toHaveBeenCalledWith(
+      expect(
+        mockPrismaService.stellarPaymentIntent.create,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ asset: 'XLM' }),
         }),
@@ -108,9 +114,9 @@ describe('StellarPaymentService', () => {
 
       mockPrismaService.wallet.findFirst.mockResolvedValue(null);
 
-      await expect(
-        service.createPaymentIntent(userId, dto),
-      ).rejects.toThrow('Stellar wallet not found');
+      await expect(service.createPaymentIntent(userId, dto)).rejects.toThrow(
+        'Stellar wallet not found',
+      );
     });
   });
 

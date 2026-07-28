@@ -27,7 +27,9 @@ describe('RoyaltyConfigurationService', () => {
 
   it('validates royalty bounds', () => {
     expect(() => service.validateRoyaltyBps(1501)).toThrow(BadRequestException);
-    expect(() => service.getCreatorRoyaltyBps(2000)).toThrow(BadRequestException);
+    expect(() => service.getCreatorRoyaltyBps(2000)).toThrow(
+      BadRequestException,
+    );
   });
 
   it('throws when combined creator + platform BPS exceeds protocol max', () => {
@@ -39,13 +41,17 @@ describe('RoyaltyConfigurationService', () => {
     } as ConfigService;
     const svc = new RoyaltyConfigurationService(highBpsConfig);
     expect(() =>
-      svc.buildRoyaltyMap('GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3'),
+      svc.buildRoyaltyMap(
+        'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+      ),
     ).toThrow(BadRequestException);
   });
 
   it('validateCombinedRoyaltyBps throws when total exceeds max', () => {
     // 9800 + 300 = 10100 > 10000 (ROYALTY_PROTOCOL_MAX_BPS)
-    expect(() => service.validateCombinedRoyaltyBps(9800, 300)).toThrow(BadRequestException);
+    expect(() => service.validateCombinedRoyaltyBps(9800, 300)).toThrow(
+      BadRequestException,
+    );
   });
 
   it('validateCombinedRoyaltyBps passes when total is within limit', () => {

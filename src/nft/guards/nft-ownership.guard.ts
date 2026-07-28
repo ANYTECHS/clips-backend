@@ -25,7 +25,9 @@ export class NftOwnershipGuard implements CanActivate {
       request.body?.walletAddress ?? request.query?.walletAddress;
 
     if (!tokenId) {
-      throw new BadRequestException('tokenId is required for ownership verification');
+      throw new BadRequestException(
+        'tokenId is required for ownership verification',
+      );
     }
     if (!walletAddress || typeof walletAddress !== 'string') {
       throw new BadRequestException(

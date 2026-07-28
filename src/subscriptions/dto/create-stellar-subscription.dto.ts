@@ -1,4 +1,11 @@
-import { IsString, IsNotEmpty, IsEnum, IsNumber, IsOptional, ValidateIf } from 'class-validator';
+import {
+  IsString,
+  IsNotEmpty,
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  ValidateIf,
+} from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateStellarSubscriptionDto {
@@ -16,12 +23,18 @@ export class CreateStellarSubscriptionDto {
   @IsEnum(['xlm', 'usdc', 'custom'])
   asset: string;
 
-  @ApiProperty({ example: 10, description: 'Payment amount in the selected asset' })
+  @ApiProperty({
+    example: 10,
+    description: 'Payment amount in the selected asset',
+  })
   @IsNumber()
   @IsNotEmpty()
   amount: number;
 
-  @ApiPropertyOptional({ description: 'Connected Stellar wallet ID', example: 'wallet_abc123' })
+  @ApiPropertyOptional({
+    description: 'Connected Stellar wallet ID',
+    example: 'wallet_abc123',
+  })
   @IsString()
   @IsOptional()
   walletId?: string;
@@ -43,7 +56,8 @@ export class CreateStellarSubscriptionDto {
   memo?: string;
 
   @ApiPropertyOptional({
-    description: 'Required when asset is custom — Stellar asset code (e.g. EURC)',
+    description:
+      'Required when asset is custom — Stellar asset code (e.g. EURC)',
     example: 'EURC',
   })
   @ValidateIf((o: CreateStellarSubscriptionDto) => o.asset === 'custom')
@@ -99,10 +113,16 @@ export class StellarPaymentIntentDto {
   @ApiProperty({ description: 'Payment intent ID', example: 'pi_123456789' })
   id: string;
 
-  @ApiProperty({ description: 'Payment amount in the selected asset', example: 10 })
+  @ApiProperty({
+    description: 'Payment amount in the selected asset',
+    example: 10,
+  })
   amount: number;
 
-  @ApiProperty({ description: 'Payment asset (xlm, usdc, custom)', example: 'xlm' })
+  @ApiProperty({
+    description: 'Payment asset (xlm, usdc, custom)',
+    example: 'xlm',
+  })
   asset: string;
 
   @ApiProperty({ description: 'Stellar destination address', example: 'G...' })
@@ -111,12 +131,22 @@ export class StellarPaymentIntentDto {
   @ApiProperty({ description: 'Payment memo for tracking', example: 'sub_xyz' })
   memo: string;
 
-  @ApiProperty({ description: 'Expiration date and time', example: '2023-12-31T23:59:59.000Z' })
+  @ApiProperty({
+    description: 'Expiration date and time',
+    example: '2023-12-31T23:59:59.000Z',
+  })
   expiresAt: Date;
 
-  @ApiProperty({ description: 'Payment intent status', enum: ['pending', 'completed', 'expired'], example: 'pending' })
+  @ApiProperty({
+    description: 'Payment intent status',
+    enum: ['pending', 'completed', 'expired'],
+    example: 'pending',
+  })
   status: 'pending' | 'completed' | 'expired';
 
-  @ApiPropertyOptional({ description: 'Required when asset is custom — issuing account public key', example: 'G...' })
+  @ApiPropertyOptional({
+    description: 'Required when asset is custom — issuing account public key',
+    example: 'G...',
+  })
   assetIssuer?: string | null;
 }

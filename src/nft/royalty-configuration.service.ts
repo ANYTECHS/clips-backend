@@ -84,7 +84,11 @@ export class RoyaltyConfigurationService {
     }
 
     const platformBps = this.config.platformRoyaltyBps;
-    if (!Number.isInteger(platformBps) || isNaN(platformBps) || platformBps < 0) {
+    if (
+      !Number.isInteger(platformBps) ||
+      isNaN(platformBps) ||
+      platformBps < 0
+    ) {
       throw new Error(
         `PLATFORM_ROYALTY_BPS must be a non-negative integer, got: ${platformBps}`,
       );

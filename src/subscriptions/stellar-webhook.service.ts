@@ -1,4 +1,9 @@
-import { Injectable, Logger, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { Horizon } from '@stellar/stellar-sdk';
@@ -25,16 +30,21 @@ export class StellarWebhookService {
    */
   async startTransactionListener(): Promise<void> {
     try {
-      const stellarWalletAddress = this.configService.get<string>('STELLAR_WALLET_ADDRESS');
+      const stellarWalletAddress = this.configService.get<string>(
+        'STELLAR_WALLET_ADDRESS',
+      );
       if (!stellarWalletAddress) {
-        this.logger.warn('STELLAR_WALLET_ADDRESS not configured, not starting transaction listener');
+        this.logger.warn(
+          'STELLAR_WALLET_ADDRESS not configured, not starting transaction listener',
+        );
         return;
       }
 
       this.logger.log('Starting Stellar transaction listener...');
 
       // Listen for account transactions (for payment monitoring)
-      this.horizon.transactions()
+      this.horizon
+        .transactions()
         .forAccount(stellarWalletAddress)
         .cursor('now')
         .stream({
@@ -48,7 +58,6 @@ export class StellarWebhookService {
         .catch((error: any) => {
           this.logger.error('Failed to start transaction stream:', error);
         });
-
     } catch (error) {
       this.logger.error('Error setting up Stellar webhook:', error);
     }
@@ -64,8 +73,9 @@ export class StellarWebhookService {
       const operations = operationsPage.records;
 
       // Look for payment operations with our memo format
-      const paymentOperations = operations
-        .filter((op: any) => op.type === 'payment');
+      const paymentOperations = operations.filter(
+        (op: any) => op.type === 'payment',
+      );
 
       for (const payment of paymentOperations) {
         // The memo is on the transaction, not the operation
@@ -82,20 +92,29 @@ export class StellarWebhookService {
   /**
    * Process payment from transaction
    */
-  private async processPayment(payment: any, transaction: any, memo: string): Promise<void> {
+  private async processPayment(
+    payment: any,
+    transaction: any,
+    memo: string,
+  ): Promise<void> {
     try {
       // Get asset code
-      const assetCode = payment.asset_type === 'native' ? 'XLM' : payment.asset_code;
+      const assetCode =
+        payment.asset_type === 'native' ? 'XLM' : payment.asset_code;
 
       // Use the StellarPaymentService to process detected payment
-      const processed = await this.stellarPaymentService.processDetectedPayment({
-        memo,
-        amount: parseFloat(payment.amount),
-        transactionId: transaction.hash,
-      });
+      const processed = await this.stellarPaymentService.processDetectedPayment(
+        {
+          memo,
+          amount: parseFloat(payment.amount),
+          transactionId: transaction.hash,
+        },
+      );
 
       if (processed) {
-        this.logger.log(`Payment processed and subscription activated for memo: ${memo}`);
+        this.logger.log(
+          `Payment processed and subscription activated for memo: ${memo}`,
+        );
       }
     } catch (error) {
       this.logger.error('Error processing payment:', error);
@@ -136,7 +155,9 @@ export class StellarWebhookService {
       );
     } catch (error) {
       // Signature lengths don't match or other error
-      this.logger.warn('Signature verification failed - length mismatch or invalid format');
+      this.logger.warn(
+        'Signature verification failed - length mismatch or invalid format',
+      );
       return false;
     }
   }
@@ -190,7 +211,10 @@ export class StellarWebhookService {
    * @throws UnauthorizedException for invalid signature
    * @throws BadRequestException for duplicate or invalid webhooks
    */
-  async processWebhook(payload: string | Buffer, signature: string): Promise<{ success: boolean; message: string }> {
+  async processWebhook(
+    payload: string | Buffer,
+    signature: string,
+  ): Promise<{ success: boolean; message: string }> {
     // Verify signature
     const isValidSignature = this.verifyWebhookSignature(payload, signature);
     if (!isValidSignature) {
@@ -217,8 +241,13 @@ export class StellarWebhookService {
     // Check for duplicates
     const isDuplicate = await this.isDuplicateWebhook(transactionId);
     if (isDuplicate) {
-      this.logger.log(`Duplicate webhook received for transaction: ${transactionId}`);
-      return { success: true, message: 'Duplicate webhook - already processed' };
+      this.logger.log(
+        `Duplicate webhook received for transaction: ${transactionId}`,
+      );
+      return {
+        success: true,
+        message: 'Duplicate webhook - already processed',
+      };
     }
 
     // Log webhook for idempotency
@@ -227,13 +256,20 @@ export class StellarWebhookService {
     // Process the webhook
     try {
       // For webhook, we'll need to fetch the full transaction from Horizon
-      const transaction = await this.horizon.transactions().transaction(transactionId).call();
+      const transaction = await this.horizon
+        .transactions()
+        .transaction(transactionId)
+        .call();
       await this.handleTransaction(transaction);
-      this.logger.log(`Webhook processed successfully for transaction: ${transactionId}`);
+      this.logger.log(
+        `Webhook processed successfully for transaction: ${transactionId}`,
+      );
       return { success: true, message: 'Webhook processed successfully' };
     } catch (error) {
       this.logger.error(`Error processing webhook: ${error.message}`);
-      throw new BadRequestException(`Webhook processing failed: ${error.message}`);
+      throw new BadRequestException(
+        `Webhook processing failed: ${error.message}`,
+      );
     }
   }
 }

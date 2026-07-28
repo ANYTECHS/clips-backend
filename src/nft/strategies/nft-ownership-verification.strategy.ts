@@ -17,9 +17,7 @@ export interface NftOwnershipVerificationStrategy {
 /**
  * Verifies ownership by simulating the Soroban NFT contract's owner_of call.
  */
-export class SorobanOwnerOfVerificationStrategy
-  implements NftOwnershipVerificationStrategy
-{
+export class SorobanOwnerOfVerificationStrategy implements NftOwnershipVerificationStrategy {
   constructor(
     private readonly rpcUrl: string,
     private readonly networkPassphrase: string,
@@ -56,7 +54,8 @@ export class SorobanOwnerOfVerificationStrategy
       };
     }
 
-    const results = (simulation as { results?: Array<{ xdr?: string }> }).results;
+    const results = (simulation as { results?: Array<{ xdr?: string }> })
+      .results;
     if (!results || results.length === 0) {
       return { isOwner: false, error: 'No simulation results returned' };
     }

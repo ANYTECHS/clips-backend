@@ -20,10 +20,14 @@ export class VerifyNftOwnershipDto {
 }
 
 export class NftOwnershipResultDto {
-  @ApiProperty({ example: true })
+  @ApiProperty({
+    description: 'Whether the wallet owns the NFT',
+    example: true,
+  })
   valid: boolean;
 
   @ApiPropertyOptional({
+    description: 'Error message when valid is false',
     example: 'NFT is not owned by the specified wallet',
   })
   error?: string;
@@ -40,23 +44,65 @@ export class NftRoyaltyResponseDto {
   recipient: string;
 }
 
+export class RoyaltyRecipientDto {
+  @ApiProperty({
+    description: 'Stellar wallet address of the royalty recipient',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  wallet: string;
+
+  @ApiProperty({
+    description:
+      'Royalty share in basis points (100 = 1%). Valid range: 0–1500.',
+    example: 1000,
+    minimum: 0,
+    maximum: 1500,
+  })
+  bps: number;
+
+  @ApiProperty({
+    description: 'Human-readable label identifying this recipient',
+    example: 'creator',
+    enum: ['creator', 'platform'],
+  })
+  label: string;
+}
+
 export class NftMintResponseDto {
-  @ApiProperty({ example: '42' })
+  @ApiProperty({ example: '42', description: 'Clip ID that was minted' })
   clipId: string;
 
   @ApiProperty({
     description: 'Masked Stellar wallet address of the creator',
     example: 'GC6X********UTZF3',
+    description: 'Creator wallet address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   creatorWallet: string;
 
   @ApiProperty({
+    description: 'On-chain metadata URI',
     example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   })
   metadataUri: string;
 
-  @ApiProperty({ example: 1000 })
+  @ApiProperty({
+    description: 'Creator royalty in basis points',
+    example: 1000,
+  })
   royaltyBps: number;
+
+  @ApiProperty({
+    description:
+      'Array of royalty recipients with wallet, bps, and label. ' +
+      'The combined total of all recipient bps must not exceed 1500.',
+    type: [RoyaltyRecipientDto],
+    example: [
+      { wallet: 'GCREATOR...', bps: 1000, label: 'creator' },
+      { wallet: 'GPLATFORM...', bps: 100, label: 'platform' },
+    ],
+  })
+  royalties: RoyaltyRecipientDto[];
 
   @ApiProperty({ example: 'minted' })
   status: string;

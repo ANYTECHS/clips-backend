@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe, ExecutionContext } from '@nestjs/common';
+import {
+  INestApplication,
+  ValidationPipe,
+  ExecutionContext,
+} from '@nestjs/common';
 import request from 'supertest';
 import { PayoutsController } from '../src/payouts/payouts.controller';
 import { PayoutsService } from '../src/payouts/payouts.service';
@@ -73,8 +77,14 @@ describe('Payouts E2E', () => {
         { provide: PayoutReceiptService, useValue: mockReceiptService },
         { provide: EarningsService, useValue: {} },
         { provide: FeeService, useValue: mockFeeService },
-        { provide: PayoutApprovalService, useValue: { resolveInitialStatus: () => 'approved' } },
-        { provide: ConfigService, useValue: { minStellarPayout: 10, platformWallet: 'GPLATFORM' } },
+        {
+          provide: PayoutApprovalService,
+          useValue: { resolveInitialStatus: () => 'approved' },
+        },
+        {
+          provide: ConfigService,
+          useValue: { minStellarPayout: 10, platformWallet: 'GPLATFORM' },
+        },
         { provide: PAYOUT_RETRY_QUEUE, useValue: mockQueue },
         // InjectQueue uses a Bull-specific token of the form `BullQueue_${queueName}`
         { provide: `BullQueue_${PAYOUT_RETRY_QUEUE}`, useValue: mockQueue },
@@ -85,8 +95,14 @@ describe('Payouts E2E', () => {
       .compile();
 
     const a = moduleFixture.createNestApplication();
-    a.useGlobalPipes(new ValidationPipe({ whitelist: true }));
-    await a.init();
+    a.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+    await a.listen(0, '127.0.0.1');
     return a;
   }
 
@@ -111,7 +127,11 @@ describe('Payouts E2E', () => {
     mockPrisma.wallet.findFirst.mockResolvedValue({ id: 11, address: 'GDEST' });
 
     // Fee calculation
-    mockFeeService.calculateFee.mockResolvedValue({ feeAmount: 1, feePercentage: 1, finalAmount: 119 });
+    mockFeeService.calculateFee.mockResolvedValue({
+      feeAmount: 1,
+      feePercentage: 1,
+      finalAmount: 119,
+    });
 
     const created = {
       id: 7,
@@ -136,6 +156,45 @@ describe('Payouts E2E', () => {
     expect(mockPrisma.payout.create).toHaveBeenCalled();
   });
 
+  it('trims string fields and transforms numeric payloads for payout requests', async () => {
+    mockPrisma.payout.findFirst.mockResolvedValue(null);
+    mockPrisma.earning.aggregate.mockResolvedValue({ _sum: { amount: 120 } });
+    mockPrisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    mockPrisma.wallet.findFirst.mockResolvedValue({ id: 11, address: 'GDEST' });
+    mockFeeService.calculateFee.mockResolvedValue({
+      feeAmount: 1,
+      feePercentage: 1,
+      finalAmount: 119,
+    });
+    mockPrisma.payout.create.mockResolvedValue({
+      id: 8,
+      userId: USER_ID,
+      walletId: 11,
+      amount: 120,
+      currency: 'USD',
+      method: 'stellar',
+      status: 'pending',
+      feeAmount: 1,
+      finalAmount: 119,
+      createdAt: new Date(),
+    });
+
+    await request(app.getHttpServer())
+      .post('/payouts/request')
+      .send({ amount: '120', currency: ' USD ', method: ' stellar ' })
+      .expect(201);
+
+    expect(mockPrisma.payout.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          amount: 120,
+          currency: 'USD',
+          method: 'stellar',
+        }),
+      }),
+    );
+  });
+
   it('validates minimum payout amount', async () => {
     mockPrisma.payout.findFirst.mockResolvedValue(null);
 
@@ -158,8 +217,24 @@ describe('Payouts E2E', () => {
       .expect(400);
   });
 
+  it('rejects unexpected properties on payout request payloads', async () => {
+    await request(app.getHttpServer())
+      .post('/payouts/request')
+      .send({
+        amount: 120,
+        currency: 'USD',
+        method: 'stellar',
+        unexpected: 'nope',
+      })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toContain('property unexpected should not exist');
+      });
+  });
+
   it('POST /payouts/initiate-stellar prepares a pending unsigned Stellar payout transaction', async () => {
-    const destination = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+    const destination =
+      'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
 
     mockPrisma.payout.findFirst
       .mockResolvedValueOnce({
@@ -181,25 +256,35 @@ describe('Payouts E2E', () => {
       status: 'pending',
     });
 
-    jest.spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount').mockResolvedValue({
-      sequenceNumber: () => '1',
-      accountId: () => 'GPLATFORM',
-    } as any);
-    jest.spyOn(StellarSdk.Operation, 'payment').mockImplementation(() => ({} as any));
-    jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation').mockImplementation(function () {
-      return this;
-    });
-    jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout').mockImplementation(function () {
-      return this;
-    });
+    jest
+      .spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount')
+      .mockResolvedValue({
+        sequenceNumber: () => '1',
+        accountId: () => 'GPLATFORM',
+      } as any);
+    jest
+      .spyOn(StellarSdk.Operation, 'payment')
+      .mockImplementation(() => ({}) as any);
+    jest
+      .spyOn(StellarSdk.TransactionBuilder.prototype, 'addOperation')
+      .mockImplementation(function () {
+        return this;
+      });
+    jest
+      .spyOn(StellarSdk.TransactionBuilder.prototype, 'setTimeout')
+      .mockImplementation(function () {
+        return this;
+      });
     const signSpy = jest.fn();
-    jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
-      return {
-        sign: signSpy,
-        hash: () => Buffer.from('abcd', 'hex'),
-        toXDR: () => 'mock-stellar-xdr',
-      };
-    });
+    jest
+      .spyOn(StellarSdk.TransactionBuilder.prototype, 'build')
+      .mockImplementation(function () {
+        return {
+          sign: signSpy,
+          hash: () => Buffer.from('abcd', 'hex'),
+          toXDR: () => 'mock-stellar-xdr',
+        };
+      });
 
     process.env.STELLAR_WALLET_ADDRESS = 'GPLATFORM';
 
@@ -212,5 +297,15 @@ describe('Payouts E2E', () => {
     expect(res.body.stellarXdr).toBe('mock-stellar-xdr');
     expect(res.body.transactionId).toBe('abcd');
     expect(signSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects unexpected properties on initiate-stellar payloads', async () => {
+    await request(app.getHttpServer())
+      .post('/payouts/initiate-stellar')
+      .send({ payoutId: 101, amount: 100, unexpected: true })
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.message).toContain('property unexpected should not exist');
+      });
   });
 });

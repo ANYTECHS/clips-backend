@@ -114,7 +114,9 @@ export class NftController {
     description: 'Mint transaction XDR returned',
     type: NftPrepareMintResponseDto,
   })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
   @ApiBadRequestResponse({ description: 'Invalid clip or wallet' })
   @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
   async prepareMint(
@@ -140,7 +142,9 @@ export class NftController {
   @ApiBadRequestResponse({
     description: 'Clip already minted or invalid request',
   })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
   @ApiNotFoundResponse({ description: 'Clip not found' })
   async confirmMint(@Body() dto: ConfirmMintDto, @Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
@@ -153,15 +157,22 @@ export class NftController {
   @ApiOperation({
     summary: 'Verify on-chain NFT ownership',
     description:
-      'Checks whether the given Stellar wallet owns the NFT token via Soroban owner_of.',
+      'Checks whether the given Stellar wallet owns the NFT token via Soroban owner_of. ' +
+      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise.',
   })
   @ApiBody({ type: VerifyNftOwnershipDto })
   @ApiResponse({
     status: 200,
-    description: 'Ownership check result',
+    description: 'Ownership check result (boolean response)',
     type: NftOwnershipResultDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid mint address or wallet' })
+  @ApiBadRequestResponse({
+    description: 'Invalid mint address or wallet address format',
+  })
+  @ApiNotFoundResponse({ description: 'NFT token not found on-chain' })
+  @ApiInternalServerErrorResponse({
+    description: 'Soroban RPC or contract query failure',
+  })
   async verifyOwnership(
     @Body() dto: VerifyNftOwnershipDto,
   ): Promise<NftOwnershipResultDto> {
@@ -241,7 +252,7 @@ export class NftController {
       createdAt: clip.createdAt,
       royaltyBps,
       royaltyRecipient,
-    }) as NftMetadataResponseDto;
+    });
   }
 
   /**

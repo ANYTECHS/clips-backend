@@ -41,7 +41,10 @@ describe('StellarWebhookController', () => {
         message: 'Webhook processed successfully',
       });
 
-      const result = await controller.receiveWebhook(validPayload, validSignature);
+      const result = await controller.receiveWebhook(
+        validPayload,
+        validSignature,
+      );
 
       expect(result).toEqual({
         success: true,
@@ -59,7 +62,10 @@ describe('StellarWebhookController', () => {
         message: 'Duplicate webhook - already processed',
       });
 
-      const result = await controller.receiveWebhook(validPayload, validSignature);
+      const result = await controller.receiveWebhook(
+        validPayload,
+        validSignature,
+      );
 
       expect(result).toEqual({
         success: true,
@@ -68,9 +74,9 @@ describe('StellarWebhookController', () => {
     });
 
     it('should throw UnauthorizedException for missing signature header', async () => {
-      await expect(
-        controller.receiveWebhook(validPayload, ''),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(controller.receiveWebhook(validPayload, '')).rejects.toThrow(
+        UnauthorizedException,
+      );
 
       expect(mockWebhookService.processWebhook).not.toHaveBeenCalled();
     });

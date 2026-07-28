@@ -74,7 +74,9 @@ export class NftOwnershipService {
       );
     } catch (error) {
       if (error?.name === 'ServiceUnavailableException') {
-        this.logger.error('Soroban service unavailable during ownership verification');
+        this.logger.error(
+          'Soroban service unavailable during ownership verification',
+        );
         return {
           isOwner: false,
           error:
@@ -83,7 +85,9 @@ export class NftOwnershipService {
       }
 
       const message =
-        error instanceof Error ? error.message : 'Ownership verification failed';
+        error instanceof Error
+          ? error.message
+          : 'Ownership verification failed';
       this.logger.error(`Ownership verification failed: ${message}`);
       return { isOwner: false, error: message };
     }

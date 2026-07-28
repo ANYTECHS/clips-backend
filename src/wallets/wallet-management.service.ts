@@ -33,7 +33,10 @@ export class WalletManagementService {
     };
   }
 
-  async disconnect(walletId: number, userId: number): Promise<DisconnectResult> {
+  async disconnect(
+    walletId: number,
+    userId: number,
+  ): Promise<DisconnectResult> {
     const wallet = await this.prisma.wallet.findUnique({
       where: { id: walletId },
       include: {

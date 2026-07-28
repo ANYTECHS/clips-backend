@@ -63,7 +63,7 @@ describe('IpfsUploadService', () => {
     const service = createService({
       ipfsProvider: 'nftstorage',
       nftStorageApiKey: 'nft-storage-key',
-    } as Partial<ConfigService>);
+    });
 
     (global.fetch as jest.Mock).mockResolvedValue({
       ok: true,
@@ -84,22 +84,22 @@ describe('IpfsUploadService', () => {
   });
 
   it('throws when Pinata credentials are missing', async () => {
-    const service = createService({ pinataJwt: '' } as Partial<ConfigService>);
+    const service = createService({ pinataJwt: '' });
 
-    await expect(service.uploadMetadata(sampleMetadata, 3)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.uploadMetadata(sampleMetadata, 3),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('throws when nft.storage credentials are missing', async () => {
     const service = createService({
       ipfsProvider: 'nftstorage',
       nftStorageApiKey: '',
-    } as Partial<ConfigService>);
+    });
 
-    await expect(service.uploadMetadata(sampleMetadata, 4)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.uploadMetadata(sampleMetadata, 4),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('throws when Pinata upload fails', async () => {
@@ -110,9 +110,9 @@ describe('IpfsUploadService', () => {
       text: async () => 'internal error',
     });
 
-    await expect(service.uploadMetadata(sampleMetadata, 5)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.uploadMetadata(sampleMetadata, 5),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   describe('validateMetadata', () => {
@@ -199,7 +199,9 @@ describe('IpfsUploadService', () => {
       expect(() =>
         service.validateMetadata({
           ...validMetadata,
-          attributes: [{ trait_type: 'Virality Score', value: undefined as any }],
+          attributes: [
+            { trait_type: 'Virality Score', value: undefined as any },
+          ],
         }),
       ).toThrow(BadRequestException);
     });
@@ -224,9 +226,9 @@ describe('IpfsUploadService', () => {
 
     it('rejects metadata before upload when validation fails', async () => {
       const invalidMetadata = { ...validMetadata, name: '' };
-      await expect(service.uploadMetadata(invalidMetadata, 99)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.uploadMetadata(invalidMetadata, 99),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(global.fetch).not.toHaveBeenCalled();
     });
 
@@ -241,11 +243,14 @@ describe('IpfsUploadService', () => {
     });
 
     it('throws when royalty info is missing', () => {
-      const { royalty: _royalty, seller_fee_basis_points: _bps, ...rest } =
-        validMetadata;
-      expect(() =>
-        service.validateMetadata(rest as NftMetadata),
-      ).toThrow(BadRequestException);
+      const {
+        royalty: _royalty,
+        seller_fee_basis_points: _bps,
+        ...rest
+      } = validMetadata;
+      expect(() => service.validateMetadata(rest as NftMetadata)).toThrow(
+        BadRequestException,
+      );
     });
   });
 });

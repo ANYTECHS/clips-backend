@@ -230,3 +230,113 @@ fn test_get_creator() {
     
     assert_eq!(client.get_creator(&10), Some(creator));
 }
+
+// ── Default royalty BPS configuration ────────────────────────────────────────
+
+#[test]
+fn test_get_default_royalty_bps_returns_none_before_set() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+
+    // No royalty has been configured yet — should return None.
+    assert_eq!(client.get_default_royalty_bps(), None);
+}
+
+#[test]
+fn test_set_and_get_default_royalty_bps() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // Set to 1000 BPS (10 %).
+    client.set_default_royalty_bps(&1000);
+
+    assert_eq!(client.get_default_royalty_bps(), Some(1000));
+}
+
+#[test]
+fn test_set_default_royalty_bps_zero_is_valid() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // 0 BPS is a valid value (no royalty).
+    client.set_default_royalty_bps(&0);
+
+    assert_eq!(client.get_default_royalty_bps(), Some(0));
+}
+
+#[test]
+fn test_set_default_royalty_bps_max_boundary_is_valid() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // 10 000 BPS = 100 % — the maximum allowed value.
+    client.set_default_royalty_bps(&10_000);
+
+    assert_eq!(client.get_default_royalty_bps(), Some(10_000));
+}
+
+#[test]
+fn test_set_default_royalty_bps_above_max_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // 10 001 BPS exceeds the 10 000 BPS ceiling — must return InvalidRoyaltyBps.
+    let result = client.try_set_default_royalty_bps(&10_001);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_default_royalty_bps_requires_admin() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    // Intentionally do NOT call env.mock_all_auths() — auth will not be satisfied.
+
+    // The call must fail because the non-admin caller cannot provide admin auth.
+    let result = client.try_set_default_royalty_bps(&500);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_default_royalty_bps_updates_value() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+    env.mock_all_auths();
+
+    // First write.
+    client.set_default_royalty_bps(&500);
+    assert_eq!(client.get_default_royalty_bps(), Some(500));
+
+    // Update to a different value — latest write wins.
+    client.set_default_royalty_bps(&1500);
+    assert_eq!(client.get_default_royalty_bps(), Some(1500));
+}
+
+#[test]
+fn test_set_default_royalty_bps_not_initialized_is_rejected() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, ClipsNftContract);
+    let client = ClipsNftContractClient::new(&env, &contract_id);
+
+    // Contract has never been initialized — no admin exists.
+    env.mock_all_auths();
+    let result = client.try_set_default_royalty_bps(&1000);
+    assert!(result.is_err());
+}

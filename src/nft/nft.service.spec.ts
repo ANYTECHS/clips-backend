@@ -18,10 +18,7 @@ describe('NftService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        NftService,
-        { provide: NftConfig, useValue: makeConfig() },
-      ],
+      providers: [NftService, { provide: NftConfig, useValue: makeConfig() }],
     }).compile();
 
     service = module.get<NftService>(NftService);
@@ -37,7 +34,10 @@ describe('NftService', () => {
       expect(creator).toMatchObject({ wallet: 'CREATOR_WALLET', bps: 1000 });
 
       const platform = royalties.find((r) => r.label === 'platform');
-      expect(platform).toMatchObject({ wallet: 'PLATFORM_WALLET_ADDR', bps: 100 });
+      expect(platform).toMatchObject({
+        wallet: 'PLATFORM_WALLET_ADDR',
+        bps: 100,
+      });
     });
 
     it('creator entry comes before platform entry', () => {
