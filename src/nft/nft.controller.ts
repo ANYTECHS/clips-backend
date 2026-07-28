@@ -77,13 +77,57 @@ export class NftController {
   @ApiOperation({
     summary: 'Mint a clip as an NFT',
     description:
-      'Builds metadata, uploads to IPFS when needed, then mints with split royalties.',
+      'Builds metadata, uploads to IPFS when needed, then calls the Soroban contract ' +
+      '`mint(to, token_id, clip_id, content_uri, is_soulbound, royalty_bps)` with split royalties.\n\n' +
+      '**On-chain behaviour**:\n' +
+      '- Ownership is stored on-chain keyed by `token_id`.\n' +
+      '- The metadata URI (`metadataUri`) is stored as `content_uri` on-chain.\n' +
+      '- A `mint` event is emitted: `(token_id, clip_id, is_soulbound, royalty_bps)`.\n' +
+      '- Duplicate `clip_id` minting is rejected by the contract (`DuplicateClipId` error).\n\n' +
+      '**Royalty split** (defaults from env):\n' +
+      '- Creator → 1000 bps (10%)\n' +
+      '- Platform →  100 bps  (1%)\n\n' +
+      'Combined total must not exceed 1500 bps (15%).',
   })
-  @ApiBody({ type: MintNftDto })
+  @ApiBody({
+    type: MintNftDto,
+    examples: {
+      basic: {
+        summary: 'Basic mint',
+        value: {
+          clipId: 42,
+          creatorWallet: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+      },
+      withMetadata: {
+        summary: 'Mint with pre-built IPFS metadata URI',
+        value: {
+          clipId: 42,
+          creatorWallet: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+          royaltyBps: 800,
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 201,
     description: 'NFT minted successfully',
     type: NftMintResponseDto,
+    schema: {
+      example: {
+        txHash: 'sim_tx_42_1722182400000',
+        transaction: {
+          clipId: '42',
+          metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+          royalties: [
+            { wallet: 'GC6XOTK6L...', bps: 1000, label: 'creator' },
+            { wallet: 'GPLATFORM...', bps: 100, label: 'platform' },
+          ],
+          builtAt: '2026-07-28T17:00:00.000Z',
+        },
+      },
+    },
   })
   @ApiBadRequestResponse({
     description:
@@ -117,16 +161,54 @@ export class NftController {
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
   @ApiBearerAuth('access-token')
   @ApiOperation({
-    summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
+    summary: 'Prepare a Soroban mint transaction (returns unsigned XDR)',
     description:
-      'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
-      '(testnet or public/mainnet, per STELLAR_NETWORK).',
+      'Builds metadata, optionally uploads it to IPFS, then assembles an unsigned Soroban ' +
+      'mint transaction XDR. The caller signs it via Freighter / Albedo and then calls ' +
+      'POST /nfts/confirm-mint to record the on-chain result.\n\n' +
+      '**Mint event**: the Soroban contract emits a `mint` event on-chain containing ' +
+      '`(token_id, clip_id, is_soulbound, royalty_bps)`.\n\n' +
+      '**Duplicate prevention**: if a token for this `clipId` was already minted, the ' +
+      'contract will reject the transaction with `DuplicateClipId`.\n\n' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per `STELLAR_NETWORK`).',
   })
-  @ApiBody({ type: CreateMintPreparationDto })
+  @ApiBody({
+    type: CreateMintPreparationDto,
+    description: 'Mint preparation request',
+    examples: {
+      basic: {
+        summary: 'Basic mint preparation',
+        value: {
+          walletAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          clipId: 42,
+        },
+      },
+      withMetadataUri: {
+        summary: 'With pre-built metadata URI',
+        value: {
+          walletAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          clipId: 42,
+          metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 201,
-    description: 'Mint transaction XDR returned',
+    description: 'Unsigned Soroban mint transaction XDR returned successfully',
     type: NftPrepareMintResponseDto,
+    schema: {
+      example: {
+        xdr: 'AAAAAgAAAABGC6XOTK6L...AAA',
+        clipId: 42,
+        tokenId: 42,
+        metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        royaltyBps: 1000,
+        to: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        network: 'testnet',
+      },
+    },
   })
   @ApiUnauthorizedResponse({
     description: 'Unauthorized — Bearer JWT required',

@@ -109,16 +109,59 @@ export class NftMintResponseDto {
 }
 
 export class NftPrepareMintResponseDto {
-  @ApiProperty({ example: 'AAAAAgAAA...', description: 'Unsigned Soroban XDR' })
+  @ApiProperty({
+    description:
+      'Base64-encoded unsigned Soroban transaction XDR. ' +
+      'Pass this to Freighter / Albedo for signing, then call POST /nfts/confirm-mint with the signed XDR.',
+    example: 'AAAAAgAAAAA...',
+  })
   xdr: string;
 
-  @ApiProperty({ example: 42 })
+  @ApiProperty({
+    description: 'Clip ID that was prepared for minting',
+    example: 42,
+  })
   clipId: number;
 
   @ApiProperty({
+    description:
+      'Numeric token ID that will be assigned to this NFT on-chain (equals the clip ID).',
+    example: 42,
+  })
+  tokenId: number;
+
+  @ApiProperty({
+    description: 'IPFS metadata URI embedded in the mint transaction.',
     example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   })
   metadataUri: string;
+
+  @ApiProperty({
+    description: 'Creator royalty in basis points that will be stored on-chain.',
+    example: 1000,
+    minimum: 0,
+    maximum: 1500,
+  })
+  royaltyBps: number;
+
+  @ApiProperty({
+    description: 'Stellar wallet address that will receive the NFT.',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  to: string;
+
+  @ApiProperty({
+    description: 'Soroban contract ID used for the mint transaction.',
+    example: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+  })
+  contractId: string;
+
+  @ApiProperty({
+    description: 'Stellar network the transaction is built for.',
+    example: 'testnet',
+    enum: ['testnet', 'public'],
+  })
+  network: string;
 }
 
 export class NftMetadataAttributeDto {
