@@ -24,6 +24,43 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const logger = new Logger('Bootstrap');
   const isProduction = process.env.NODE_ENV === 'production';
+  const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
+
+  // Security headers with Helmet. Registered before any route/router (including
+  // Swagger UI below) so every response — docs included — gets these headers;
+  // Express only applies middleware to requests that reach it in registration order.
+  // Swagger UI's bundled HTML injects an inline <script> to boot SwaggerUIBundle, so
+  // scriptSrc needs 'unsafe-inline' whenever the docs UI is exposed; kept locked down
+  // otherwise.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: [`'self'`],
+          styleSrc: [`'self'`, `'unsafe-inline'`],
+          scriptSrc: enableSwaggerUI ? [`'self'`, `'unsafe-inline'`] : [`'self'`],
+          imgSrc: [`'self'`, 'data:', 'https:'],
+          connectSrc: [`'self'`],
+          fontSrc: [`'self'`],
+          objectSrc: [`'none'`],
+          mediaSrc: [`'self'`],
+          frameSrc: [`'none'`],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
+      noSniff: true,
+      xssFilter: true,
+      hidePoweredBy: true,
+      frameguard: {
+        action: 'deny',
+      },
+    }),
+  );
 
   // Validate BullMQ Redis connection configuration on startup
   const configService = app.get(ConfigService);
@@ -107,7 +144,21 @@ async function bootstrap() {
       '- Use webhooks instead of polling for real-time updates\n' +
       '- Contact support for higher limits if needed for production use\n\n' +
       '### IP Whitelisting\n\n' +
-      'Trusted IPs can be whitelisted by setting `THROTTLER_WHITELIST` environment variable (comma-separated list).'
+      'Trusted IPs can be whitelisted by setting `THROTTLER_WHITELIST` environment variable (comma-separated list).\n\n' +
+      '## Security Headers\n\n' +
+      'All responses (including this documentation UI) are protected by [Helmet](https://helmetjs.github.io/):\n\n' +
+      '| Header | Value | Purpose |\n' +
+      '|--------|-------|---------|\n' +
+      '| `Content-Security-Policy` | `default-src \'self\'; ...` | Restricts sources for scripts, styles, images, etc. |\n' +
+      '| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Forces HTTPS for 1 year |\n' +
+      '| `X-Content-Type-Options` | `nosniff` | Prevents MIME-sniffing |\n' +
+      '| `X-XSS-Protection` | `0` (modern browsers rely on CSP instead) | Legacy XSS filter header |\n' +
+      '| `X-Powered-By` | removed | Hides the underlying framework |\n' +
+      '| `X-Frame-Options` | `DENY` | Blocks the API/docs from being framed (clickjacking protection) |\n\n' +
+      'The `Content-Security-Policy` directives (`scriptSrc`, `styleSrc`, ...) only relax to allow ' +
+      '`\'unsafe-inline\'` scripts when the Swagger UI is enabled (non-production, or ' +
+      '`ENABLE_SWAGGER_UI=true`), since the docs page needs an inline script to boot. ' +
+      'API JSON responses are never affected by this relaxation.'
     )
     .setVersion('1.0')
     .addBearerAuth(
@@ -153,7 +204,6 @@ async function bootstrap() {
   logger.log(`OpenAPI spec exported to ${openapiPath}`);
 
   // Setup Swagger UI (only in non-production or if explicitly enabled)
-  const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
   if (enableSwaggerUI) {
     SwaggerModule.setup('api/docs', app, document, {
       swaggerOptions: {
@@ -183,37 +233,6 @@ async function bootstrap() {
   // Raw body parser for webhook signature verification (must be before JSON parser for specific routes)
   // This preserves the raw body for HMAC signature verification
   app.use('/webhooks/stellar', bodyParser.raw({ type: 'application/json' }));
-
-  // Security headers with Helmet
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          scriptSrc: [`'self'`],
-          imgSrc: [`'self'`, 'data:', 'https:'],
-          connectSrc: [`'self'`],
-          fontSrc: [`'self'`],
-          objectSrc: [`'none'`],
-          mediaSrc: [`'self'`],
-          frameSrc: [`'none'`],
-        },
-      },
-      crossOriginEmbedderPolicy: false,
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
-      noSniff: true,
-      xssFilter: true,
-      hidePoweredBy: true,
-      frameguard: {
-        action: 'deny',
-      },
-    }),
-  );
 
   app.useGlobalPipes(
     new ValidationPipe({

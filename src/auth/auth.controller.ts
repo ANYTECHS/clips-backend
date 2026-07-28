@@ -65,7 +65,10 @@ export class AuthController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid input or user already exists',
+    description:
+      'Invalid input, weak password, or user already exists. Password validation errors ' +
+      'return a JSON-encoded message, e.g. ' +
+      '`{"score":1,"feedback":["Add numbers"],"suggestions":"Password is too weak. Add numbers"}`.',
   })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   @ApiQuery({
@@ -140,9 +143,12 @@ export class AuthController {
   @Get('google')
   @ApiOperation({
     summary: 'Initiate Google OAuth flow',
-    description: 'Redirects to Google for authentication',
+    description:
+      'Redirects the browser to Google\'s consent screen requesting the `profile` and ' +
+      '`email` scopes. On approval, Google redirects back to `GET /auth/google/callback`. ' +
+      'This endpoint is meant to be opened directly in a browser, not called via AJAX/fetch.',
   })
-  @ApiResponse({ status: 302, description: 'Redirects to Google OAuth' })
+  @ApiResponse({ status: 302, description: 'Redirects to Google OAuth consent screen' })
   @UseGuards(AuthGuard('google'))
   googleAuth() {
     return;
@@ -151,14 +157,22 @@ export class AuthController {
   @Get('google/callback')
   @ApiOperation({
     summary: 'Google OAuth callback',
-    description: 'Handles Google OAuth redirect',
+    description:
+      'Google redirects here after the user approves or denies access ' +
+      '(configured via the `GOOGLE_CALLBACK_URL` env var, default ' +
+      '`http://localhost:3000/auth/google/callback`). On success, finds or creates a user ' +
+      'from the Google profile, issues access/refresh tokens, and always sets them as ' +
+      'httpOnly cookies (this redirect-based flow has no JS context to read a JSON body). ' +
+      'A CSRF token is returned in the response body and also set as a cookie. Use the ' +
+      'returned `accessToken` as a `Bearer` token on subsequent authenticated requests ' +
+      '(`Authorization: Bearer <accessToken>`).',
   })
   @ApiResponse({
     status: 200,
-    description: 'Authentication successful',
+    description: 'Authentication successful — sets token cookies and returns the user + csrfToken',
     type: AuthSuccessResponseDto,
   })
-  @ApiResponse({ status: 401, description: 'Authentication failed' })
+  @ApiResponse({ status: 401, description: 'Google authentication failed or was denied' })
   @UseGuards(AuthGuard('google'))
   async googleCallback(
     @Req() req: any,
@@ -185,7 +199,13 @@ export class AuthController {
   }
 
   @Post('magic-link')
-  @ApiOperation({ summary: 'Request magic link for passwordless login' })
+  @ApiOperation({
+    summary: 'Request magic link for passwordless login',
+    description:
+      'Sends a one-time login link to the given email if an account exists. ' +
+      'The link token expires 15 minutes after issuance and can only be used once. ' +
+      'Always responds with 200 (even for unknown emails) to prevent email enumeration.',
+  })
   @ApiBody({ type: MagicLinkRequestDto })
   @ApiResponse({
     status: 200,
@@ -205,14 +225,27 @@ export class AuthController {
   @Get('verify-magic')
   @ApiOperation({
     summary: 'Verify magic link token',
-    description: 'Validates magic link and returns tokens',
+    description:
+      'Validates a magic link token and returns access/refresh tokens. ' +
+      'Tokens expire 15 minutes after the link was requested and are single-use — ' +
+      'reusing an already-consumed token returns 400.',
   })
   @ApiResponse({
     status: 200,
     description: 'Token verified successfully',
     type: AuthSuccessResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  @ApiResponse({ status: 400, description: 'Token query parameter is missing' })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Token has expired (>15 minutes old) or was already used. ' +
+      'Examples: `"Magic link has expired"`, `"Magic link has already been used"`.',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Token does not exist. Example: `"Invalid or expired magic link"`.',
+  })
   @ApiQuery({ name: 'token', required: true, description: 'Magic link token' })
   @ApiQuery({
     name: 'use_cookies',
@@ -360,7 +393,11 @@ export class AuthController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid token or password requirements not met',
+    description:
+      'Invalid/expired token or password does not meet strength requirements ' +
+      '(min 10 characters, zxcvbn score >= 3). Password validation errors return a ' +
+      'JSON-encoded message, e.g. ' +
+      '`{"score":1,"feedback":["Add numbers"],"suggestions":"Password is too weak. Add numbers"}`.',
   })
   @HttpCode(HttpStatus.OK)
   async resetPassword(
