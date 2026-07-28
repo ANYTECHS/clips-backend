@@ -177,6 +177,10 @@ async function bootstrap() {
     credentials: true, // required for cross-origin cookie support
   });
 
+  // Redundant with helmet's hidePoweredBy(), but explicit about disabling
+  // Express defaults that leak framework identity.
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+
   // Parse cookies (required for httpOnly cookie-based JWT support)
   app.use(cookieParser());
 
@@ -214,6 +218,15 @@ async function bootstrap() {
       },
     }),
   );
+
+  // API responses may contain user-specific or sensitive data — prevent
+  // shared/browser caches from storing them. Swagger UI is left cacheable.
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/docs')) {
+      res.set('Cache-Control', 'no-store');
+    }
+    next();
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
