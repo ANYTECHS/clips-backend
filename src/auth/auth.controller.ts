@@ -34,6 +34,8 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 import {
   AuthSuccessResponseDto,
   AuthTokensDto,
@@ -245,22 +247,113 @@ export class AuthController {
     summary: 'Verify email address',
     description: 'Confirms email verification token',
   })
+  @ApiBody({ type: VerifyEmailDto })
   @ApiResponse({
     status: 200,
     description: 'Email verified successfully',
     type: MessageResponseDto,
+    examples: {
+      success: {
+        summary: 'Success response',
+        value: {
+          message: 'Email successfully verified',
+        },
+      },
+    },
   })
-  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
-  @ApiQuery({
-    name: 'token',
-    required: true,
-    description: 'Email verification token',
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid or expired token',
+    examples: {
+      invalidToken: {
+        summary: 'Invalid token',
+        value: { message: 'Invalid or expired verification link' },
+      },
+      expiredToken: {
+        summary: 'Expired token',
+        value: { message: 'Verification link has expired' },
+      },
+    },
   })
-  async verifyEmail(@Query('token') token: string) {
-    if (!token) {
+  @ApiResponse({
+    status: 404,
+    description: 'Verification token not found',
+    examples: {
+      notFound: {
+        summary: 'Token not found',
+        value: { message: 'Invalid or expired verification link' },
+      },
+    },
+  })
+  async verifyEmail(
+    @Body(new ValidationPipe({ transform: true }))
+    dto: VerifyEmailDto,
+  ) {
+    if (!dto.token) {
       throw new BadRequestException('Token is required');
     }
-    return this.authService.verifyEmail(token);
+    return this.authService.verifyEmail(dto.token);
+  }
+
+  @Post('resend-verification')
+  @ApiOperation({
+    summary: 'Resend email verification',
+    description: 'Resends a new email verification token to the user',
+  })
+  @ApiBody({
+    type: ResendVerificationDto,
+    examples: {
+      resendVerification: {
+        summary: 'Resend verification request',
+        value: { email: 'user@example.com' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Verification email sent if email exists',
+    type: MessageResponseDto,
+    examples: {
+      success: {
+        summary: 'Success response',
+        value: {
+          message:
+            'If that email is registered, a verification email has been sent.',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid email format',
+    examples: {
+      invalidEmail: {
+        summary: 'Invalid email',
+        value: {
+          message: 'Validation failed: email must be a valid email address',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests',
+    examples: {
+      rateLimited: {
+        summary: 'Rate limited',
+        value: { message: 'Too many requests' },
+      },
+    },
+  })
+  @Throttle({ emailVerify: { limit: 3, ttl: 3600000 } })
+  async resendVerification(
+    @Body(new ValidationPipe({ transform: true })) dto: ResendVerificationDto,
+  ) {
+    await this.authService.resendVerification(dto.email);
+    return {
+      message:
+        'If that email is registered, a verification email has been sent.',
+    };
   }
 
   @Post('refresh')
@@ -330,14 +423,48 @@ export class AuthController {
     summary: 'Request password reset',
     description: 'Sends password reset link to email',
   })
-  @ApiBody({ type: ForgotPasswordDto })
+  @ApiBody({
+    type: ForgotPasswordDto,
+    examples: {
+      requestPasswordReset: {
+        summary: 'Request password reset',
+        value: { email: 'user@example.com' },
+      },
+    },
+  })
   @ApiResponse({
     status: 200,
     description: 'Reset link sent if email exists',
     type: MessageResponseDto,
+    examples: {
+      success: {
+        summary: 'Success response',
+        value: { message: 'If that email exists, a reset link has been sent.' },
+      },
+    },
   })
-  @ApiResponse({ status: 400, description: 'Invalid email format' })
-  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid email format',
+    examples: {
+      invalidEmail: {
+        summary: 'Invalid email',
+        value: {
+          message: 'Validation failed: email must be a valid email address',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests',
+    examples: {
+      rateLimited: {
+        summary: 'Rate limited',
+        value: { message: 'Too many requests' },
+      },
+    },
+  })
   @HttpCode(HttpStatus.OK)
   @Throttle({ sensitive: { limit: 3, ttl: 900000 } })
   async forgotPassword(
@@ -352,15 +479,42 @@ export class AuthController {
     summary: 'Reset password',
     description: 'Sets new password using reset token',
   })
-  @ApiBody({ type: ResetPasswordDto })
+  @ApiBody({
+    type: ResetPasswordDto,
+    examples: {
+      resetPassword: {
+        summary: 'Reset password',
+        value: {
+          token: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+          newPassword: 'NewSecurePass123!',
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 200,
     description: 'Password reset successful',
     type: MessageResponseDto,
+    examples: {
+      success: {
+        summary: 'Success response',
+        value: { message: 'Password reset successful.' },
+      },
+    },
   })
   @ApiResponse({
     status: 400,
     description: 'Invalid token or password requirements not met',
+    examples: {
+      invalidToken: {
+        summary: 'Invalid or expired token',
+        value: { message: 'Invalid reset token' },
+      },
+      weakPassword: {
+        summary: 'Weak password',
+        value: { message: 'Password must be at least 8 characters long' },
+      },
+    },
   })
   @HttpCode(HttpStatus.OK)
   async resetPassword(
