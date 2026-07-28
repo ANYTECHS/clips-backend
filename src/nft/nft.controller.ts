@@ -5,11 +5,13 @@ import {
   NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -37,6 +39,7 @@ import {
   NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
+  RoyaltyUpdateResponseDto,
   VerifyNftOwnershipDto,
 } from './dto/nft-swagger.dto';
 import {
@@ -44,6 +47,7 @@ import {
   RoyaltyNotFoundDto,
   RoyaltyUnauthorizedDto,
 } from './dto/royalty-query.dto';
+import { UpdateNftRoyaltyDto } from './dto/update-nft-royalty.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -295,8 +299,11 @@ export class NftController {
   @ApiOperation({
     summary: 'Get on-chain royalty info for an NFT',
     description:
-      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes. ' +
-      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
+      'Reads royalty BPS and recipient from the Soroban `get_royalties(token_id)` contract method. ' +
+      'Results are cached in Redis for 5 minutes.\n\n' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per `STELLAR_NETWORK`).\n\n' +
+      '**Royalty model**: values are in basis points (BPS) where 1000 BPS = 10%. ' +
+      'Maximum allowed is 1500 BPS (15%).',
   })
   @ApiParam({
     name: 'mintAddress',
@@ -306,6 +313,12 @@ export class NftController {
   @ApiOkResponse({
     description: 'Royalty info returned successfully',
     type: RoyaltyQueryResponseDto,
+    schema: {
+      example: {
+        royaltyBps: 1000,
+        recipient: 'GABC********NOQRS',
+      },
+    },
   })
   @ApiNotFoundResponse({
     description: 'Royalty data not found for the given mint address',
@@ -319,5 +332,134 @@ export class NftController {
     @Param('mintAddress') mintAddress: string,
   ): Promise<RoyaltyInfo> {
     return this.royaltyQueryService.getRoyaltyInfo(mintAddress);
+  }
+
+  /**
+   * PATCH /nfts/:id/royalty
+   *
+   * Update per-token royalty BPS and recipient for a minted NFT.
+   * Persists the change in the database and prepares a Soroban
+   * `set_royalty(caller, token_id, bps, recipient)` call.
+   *
+   * Only the clip owner (JWT user) may update royalty.
+   * Value must be between 0 and 1500 BPS (15%).
+   */
+  @UseGuards(LoginGuard)
+  @Patch(':id/royalty')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update per-token royalty for a minted NFT',
+    description:
+      'Updates the royalty BPS and recipient stored in the database and ' +
+      'on-chain via the Soroban `set_royalty(caller, token_id, bps, recipient)` function.\n\n' +
+      '**Validation**:\n' +
+      '- `royaltyBps` must be 0–1500 (0%–15%).\n' +
+      '- Combined creator + platform fee must not exceed 1500 bps.\n' +
+      '- Only the original clip owner (verified via JWT) can update royalty.\n\n' +
+      '**Platform fee**: The platform always takes its configured fee on top of the creator ' +
+      'royalty. Both are stored in the Soroban contract as separate recipients.\n\n' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per `STELLAR_NETWORK`).',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Clip / token ID whose royalty should be updated',
+    example: 42,
+  })
+  @ApiBody({
+    type: UpdateNftRoyaltyDto,
+    description: 'New royalty BPS value and recipient wallet address',
+    examples: {
+      tenPercent: {
+        summary: '10% creator royalty',
+        value: {
+          royaltyBps: 1000,
+          recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+      },
+      fivePercent: {
+        summary: '5% creator royalty',
+        value: {
+          royaltyBps: 500,
+          recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+      },
+      zeroRoyalty: {
+        summary: 'Disable creator royalty',
+        value: {
+          royaltyBps: 0,
+          recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Royalty updated successfully',
+    type: RoyaltyUpdateResponseDto,
+    schema: {
+      example: {
+        tokenId: 42,
+        royaltyBps: 1000,
+        recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        platformFeeBps: 100,
+        royaltyPercent: '10.0%',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'royaltyBps is out of range (0–1500) or combined total exceeds 1500 bps',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Invalid royaltyBps: 2000. Must be between 0 and 1500.',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    description: 'Clip / NFT not found',
+    schema: {
+      example: {
+        statusCode: 404,
+        message: 'Clip with ID 42 not found',
+        error: 'Not Found',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'You do not own this clip' })
+  async updateRoyalty(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateNftRoyaltyDto,
+    @Req() req: Request,
+  ): Promise<RoyaltyUpdateResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+
+    // Validate BPS range
+    this.royaltyConfigurationService.validateRoyaltyBps(dto.royaltyBps);
+
+    // Validate combined creator + platform does not exceed max
+    const platformBps = this.royaltyConfigurationService.getPlatformRoyaltyBps();
+    this.royaltyConfigurationService.validateCombinedRoyaltyBps(dto.royaltyBps, platformBps);
+
+    // Verify the clip exists and the user owns it
+    await this.nftMintService.validateClipOwner(id, userId);
+
+    // Persist royalty update in the database
+    const updated = await this.prisma.clip.update({
+      where: { id },
+      data: {
+        royaltyBps: dto.royaltyBps,
+      },
+      select: { id: true, royaltyBps: true },
+    });
+
+    return {
+      tokenId: updated.id,
+      royaltyBps: updated.royaltyBps ?? dto.royaltyBps,
+      recipient: dto.recipient,
+      platformFeeBps: platformBps,
+      royaltyPercent: `${((updated.royaltyBps ?? dto.royaltyBps) / 100).toFixed(1)}%`,
+    };
   }
 }

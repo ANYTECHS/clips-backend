@@ -184,3 +184,37 @@ export class NftMetadataResponseDto {
   })
   royalty: NftRoyaltyInfoDto;
 }
+
+export class RoyaltyUpdateResponseDto {
+  @ApiProperty({
+    description: 'Numeric token ID whose royalty was updated',
+    example: 42,
+  })
+  tokenId: number;
+
+  @ApiProperty({
+    description: 'Updated royalty value in basis points (0–1500)',
+    example: 1000,
+    minimum: 0,
+    maximum: 1500,
+  })
+  royaltyBps: number;
+
+  @ApiProperty({
+    description: 'Stellar wallet address that will receive royalty payments',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  recipient: string;
+
+  @ApiProperty({
+    description: 'Platform fee in basis points (read-only, set by the platform)',
+    example: 100,
+  })
+  platformFeeBps: number;
+
+  @ApiProperty({
+    description: 'Human-readable royalty percentage for the creator',
+    example: '10.0%',
+  })
+  royaltyPercent: string;
+}
