@@ -9,6 +9,7 @@ import {
   HttpStatus,
   Query,
 } from '@nestjs/common';
+import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import {
   ApiOperation,
   ApiResponse,
@@ -60,6 +61,7 @@ export class SubscriptionsController {
   @ApiBadRequestResponse({
     description: 'Invalid input or unsupported asset (Failure response)',
   })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async createStellarPaymentIntent(
     @Body() dto: CreateStellarSubscriptionDto,
     @Req() req: Request,
@@ -87,6 +89,7 @@ export class SubscriptionsController {
   @ApiBadRequestResponse({
     description: 'Invalid input or unsupported asset (Failure response)',
   })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async createPaymentIntent(
     @Body() dto: CreateStellarSubscriptionDto,
     @Req() req: Request,
@@ -106,6 +109,7 @@ export class SubscriptionsController {
     description: 'List of pending payment intents (Pending response)',
     type: [StellarPaymentIntentDto],
   })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiBadRequestResponse({ description: 'Invalid request (Failure response)' })
   async getPendingPaymentIntents(@Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
@@ -163,6 +167,7 @@ export class SubscriptionsController {
   @ApiNotFoundResponse({
     description: 'Payment intent not found (Failure response)',
   })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   async verifyStellarPayment(
     @Query('paymentIntentId') paymentIntentId: string,

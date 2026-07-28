@@ -26,6 +26,7 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
@@ -55,6 +56,7 @@ import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { maskAddress } from '../wallets/wallet.utils';
 
+@ApiTags('nfts')
 @ApiTags('nft')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
@@ -111,6 +113,17 @@ export class NftController {
     });
   }
 
+  /**
+   * POST /nfts/prepare-mint
+   * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
+   * The authenticated user must own the clip being minted.
+   */
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Prepare an NFT mint transaction for signing' })
+  @ApiResponse({ status: 201, description: 'Mint transaction prepared' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'User does not own the clip' })
+  @UseGuards(LoginGuard)
   @UseGuards(LoginGuard, NftMintGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
