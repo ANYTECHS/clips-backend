@@ -13,6 +13,7 @@ import { BatchRoyaltyController } from './batch-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
+import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
@@ -37,6 +38,7 @@ import { RedisModule } from '../redis/redis.module';
     BatchRoyaltyService,
     NftMintGuard,
     RoyaltyConfigurationService,
+    MintSignatureVerificationService,
   ],
   controllers: [
     NftController,
@@ -53,6 +55,7 @@ import { RedisModule } from '../redis/redis.module';
     IpfsUploadModule,
     NftOwnershipModule,
     RoyaltyConfigurationService,
+    MintSignatureVerificationService,
   ],
 })
 export class NftModule {}

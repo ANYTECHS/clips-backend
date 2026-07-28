@@ -6,12 +6,14 @@ import {
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { PlatformRevenueService } from './platform-revenue.service';
+import { LoginGuard } from '../auth/guards/login.guard';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 
 @ApiTags('platform')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('platform')
+@UseGuards(LoginGuard)
 @Auth()
 export class PlatformRevenueController {
   private readonly logger = new Logger(PlatformRevenueController.name);

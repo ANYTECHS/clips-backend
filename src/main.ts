@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -90,9 +91,50 @@ function buildCorsOptions(isProduction: boolean) {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
   const isProduction = process.env.NODE_ENV === 'production';
+  const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
+
+  // Security headers with Helmet. Registered before any route/router (including
+  // Swagger UI below) so every response — docs included — gets these headers;
+  // Express only applies middleware to requests that reach it in registration order.
+  // Swagger UI's bundled HTML injects an inline <script> to boot SwaggerUIBundle, so
+  // scriptSrc needs 'unsafe-inline' whenever the docs UI is exposed; kept locked down
+  // otherwise.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: [`'self'`],
+          styleSrc: [`'self'`, `'unsafe-inline'`],
+          scriptSrc: enableSwaggerUI ? [`'self'`, `'unsafe-inline'`] : [`'self'`],
+          imgSrc: [`'self'`, 'data:', 'https:'],
+          connectSrc: [`'self'`],
+          fontSrc: [`'self'`],
+          objectSrc: [`'none'`],
+          mediaSrc: [`'self'`],
+          frameSrc: [`'none'`],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      },
+      noSniff: true,
+      xssFilter: true,
+      hidePoweredBy: true,
+      frameguard: {
+        action: 'deny',
+      },
+    }),
+  );
+
+  if (process.env.TRUST_PROXY === 'true') {
+    app.set('trust proxy', 1);
+  }
 
   // Validate BullMQ Redis connection configuration on startup
   const configService = app.get(ConfigService);
@@ -141,6 +183,56 @@ async function bootstrap() {
     .setTitle('ClipCash API')
     .setDescription(
       'ClipCash backend API documentation\n\n' +
+      '## Rate Limits\n\n' +
+      'All API endpoints are protected by rate limiting to ensure fair usage and system stability.\n\n' +
+      '### Rate Limit Tiers\n\n' +
+      '| Tier | Limit | Window | Applies To |\n' +
+      '|------|-------|--------|------------|\n' +
+      '| **Default** | 100 requests | 60 seconds | Most endpoints |\n' +
+      '| **Auth** | 10 requests | 60 seconds | Login, registration, password reset |\n' +
+      '| **Sensitive** | 3 requests | 15 minutes | MFA setup, account deletion |\n' +
+      '| **Email Verify** | 3 requests | 60 minutes | Email verification resend |\n' +
+      '| **Clip Generate** | 10 requests | 60 seconds | Clip generation endpoints |\n' +
+      '| **NFT Mint** | 5 requests | 60 seconds | NFT minting endpoints |\n' +
+      '| **Wallet Connect** | 10 requests | 60 seconds | Wallet connection |\n' +
+      '| **Wallet Disconnect** | 10 requests | 60 seconds | Wallet disconnection |\n' +
+      '| **Transaction Send** | 5 requests | 60 seconds | Blockchain transactions |\n\n' +
+      '### Rate Limit Headers\n\n' +
+      'All responses include rate limit information in headers:\n' +
+      '- `X-RateLimit-Limit` — Maximum requests allowed in the window\n' +
+      '- `X-RateLimit-Remaining` — Requests remaining in current window\n' +
+      '- `X-RateLimit-Reset` — Unix timestamp when the limit resets\n\n' +
+      '### Rate Limit Exceeded\n\n' +
+      'When you exceed the rate limit, you will receive a `429 Too Many Requests` response:\n' +
+      '```json\n' +
+      '{\n' +
+      '  "statusCode": 429,\n' +
+      '  "message": "ThrottlerException: Too Many Requests",\n' +
+      '  "error": "Too Many Requests"\n' +
+      '}\n' +
+      '```\n\n' +
+      '### Best Practices\n\n' +
+      '- Implement exponential backoff when receiving 429 responses\n' +
+      '- Monitor rate limit headers to avoid hitting limits\n' +
+      '- Cache responses when possible to reduce API calls\n' +
+      '- Use webhooks instead of polling for real-time updates\n' +
+      '- Contact support for higher limits if needed for production use\n\n' +
+      '### IP Whitelisting\n\n' +
+      'Trusted IPs can be whitelisted by setting `THROTTLER_WHITELIST` environment variable (comma-separated list).\n\n' +
+      '## Security Headers\n\n' +
+      'All responses (including this documentation UI) are protected by [Helmet](https://helmetjs.github.io/):\n\n' +
+      '| Header | Value | Purpose |\n' +
+      '|--------|-------|---------|\n' +
+      '| `Content-Security-Policy` | `default-src \'self\'; ...` | Restricts sources for scripts, styles, images, etc. |\n' +
+      '| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` | Forces HTTPS for 1 year |\n' +
+      '| `X-Content-Type-Options` | `nosniff` | Prevents MIME-sniffing |\n' +
+      '| `X-XSS-Protection` | `0` (modern browsers rely on CSP instead) | Legacy XSS filter header |\n' +
+      '| `X-Powered-By` | removed | Hides the underlying framework |\n' +
+      '| `X-Frame-Options` | `DENY` | Blocks the API/docs from being framed (clickjacking protection) |\n\n' +
+      'The `Content-Security-Policy` directives (`scriptSrc`, `styleSrc`, ...) only relax to allow ' +
+      '`\'unsafe-inline\'` scripts when the Swagger UI is enabled (non-production, or ' +
+      '`ENABLE_SWAGGER_UI=true`), since the docs page needs an inline script to boot. ' +
+      'API JSON responses are never affected by this relaxation.'
         '## Rate Limits\n\n' +
         'All API endpoints are protected by rate limiting to ensure fair usage and system stability.\n\n' +
         '### Rate Limit Tiers\n\n' +
@@ -243,6 +335,10 @@ async function bootstrap() {
 
   app.enableCors(buildCorsOptions(isProduction));
 
+  // Redundant with helmet's hidePoweredBy(), but explicit about disabling
+  // Express defaults that leak framework identity.
+  app.getHttpAdapter().getInstance().disable('x-powered-by');
+
   // Parse cookies (required for httpOnly cookie-based JWT support)
   app.use(cookieParser());
 
@@ -257,29 +353,39 @@ async function bootstrap() {
         directives: {
           defaultSrc: [`'self'`],
           styleSrc: [`'self'`, `'unsafe-inline'`],
-          scriptSrc: [`'self'`],
+          scriptSrc: [`'self'`, `'unsafe-inline'`],
           imgSrc: [`'self'`, 'data:', 'https:'],
           connectSrc: [`'self'`],
-          fontSrc: [`'self'`],
+          fontSrc: [`'self'`, 'https:', 'data:'],
           objectSrc: [`'none'`],
           mediaSrc: [`'self'`],
           frameSrc: [`'none'`],
         },
       },
       crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      referrerPolicy: { policy: 'no-referrer' },
       hsts: {
         maxAge: 31536000,
         includeSubDomains: true,
         preload: true,
       },
       noSniff: true,
-      xssFilter: true,
       hidePoweredBy: true,
       frameguard: {
         action: 'deny',
       },
     }),
   );
+
+  // API responses may contain user-specific or sensitive data — prevent
+  // shared/browser caches from storing them. Swagger UI is left cacheable.
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/docs')) {
+      res.set('Cache-Control', 'no-store');
+    }
+    next();
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({

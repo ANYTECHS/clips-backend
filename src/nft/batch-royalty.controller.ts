@@ -14,6 +14,7 @@ import {
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { BatchRoyaltyService } from './batch-royalty.service';
+import { LoginGuard } from '../auth/guards/login.guard';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 
@@ -24,6 +25,7 @@ class BatchRoyaltyQueryDto {
 @ApiTags('nft')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nft')
+@UseGuards(LoginGuard)
 @Auth()
 export class BatchRoyaltyController {
   private readonly logger = new Logger(BatchRoyaltyController.name);

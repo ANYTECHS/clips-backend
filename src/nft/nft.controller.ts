@@ -26,6 +26,7 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
@@ -52,11 +53,11 @@ import { NftOwnershipVerificationService } from './nft-ownership-verification.se
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
-import { PrepareTransferDto } from './dto/prepare-transfer.dto';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { maskAddress } from '../wallets/wallet.utils';
 
+@ApiTags('nfts')
 @ApiTags('nft')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
@@ -70,6 +71,7 @@ export class NftController {
     private readonly ownershipVerificationService: NftOwnershipVerificationService,
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
+    private readonly mintSignatureVerification: MintSignatureVerificationService,
   ) {}
 
   @UseGuards(NftMintGuard)
@@ -113,6 +115,17 @@ export class NftController {
     });
   }
 
+  /**
+   * POST /nfts/prepare-mint
+   * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
+   * The authenticated user must own the clip being minted.
+   */
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Prepare an NFT mint transaction for signing' })
+  @ApiResponse({ status: 201, description: 'Mint transaction prepared' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'User does not own the clip' })
+  @UseGuards(LoginGuard)
   @UseGuards(LoginGuard, NftMintGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
@@ -145,13 +158,50 @@ export class NftController {
       },
     },
   })
-  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+    schema: {
+      example: {
+        statusCode: 403,
+        message: 'You do not own this clip',
+        error: 'Forbidden',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Wallet signature is invalid or does not match the provided walletAddress. ' +
+      'Required signature fields: walletAddress (Stellar G... key), ' +
+      'walletSignature (Ed25519 signature over the canonical challenge message: ' +
+      '"ClipCash mint authorization for clip <clipId> by <walletAddress>").',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
+  })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,
     @Req() req: Request,
   ) {
     const userId = Number((req as any).user?.id ?? 0);
+
+    // 1. Ownership check: clip must belong to the authenticated user.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
+
+    // 2. Signature check: when the caller provides a wallet signature, verify
+    //    it before building the XDR.  This proves the caller controls the
+    //    private key for walletAddress, preventing mints on behalf of others.
+    if (dto.walletSignature) {
+      this.mintSignatureVerification.verify(
+        dto.clipId,
+        dto.walletAddress,
+        dto.walletSignature,
+      );
+    }
+
     return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
   }
 
@@ -324,68 +374,66 @@ export class NftController {
   }
 
   /**
-   * POST /nfts/prepare-transfer
+   * GET /nfts/contract/info
    *
-   * Builds an unsigned Soroban `transfer_with_royalty` XDR for the caller
-   * to sign and submit on-chain.  The response includes a full royalty
-   * breakdown (royaltyBps, royaltyAmount, royaltyPercent, recipient) so the
-   * frontend can display the royalty fee to the user before they sign.
+   * Returns the currently deployed Soroban NFT contract details:
+   * contractId, network, rpcUrl, and networkPassphrase.
    *
-   * Royalty enforcement flow:
-   *   1. Backend resolves royaltyBps (override > on-chain per-token > default > 0)
-   *   2. Computes royaltyAmount = salePrice × royaltyBps / 10_000
-   *   3. Returns XDR for `transfer_with_royalty(from, to, token_id, sale_price)`
-   *   4. On-chain: contract emits `transfer` + `royalty_paid` events
+   * This is useful for frontends and tooling that need to know which
+   * contract to interact with on the currently configured network.
    */
-  @UseGuards(LoginGuard)
-  @Post('prepare-transfer')
-  @HttpCode(HttpStatus.CREATED)
-  @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
-  @ApiBearerAuth('access-token')
+  @Get('contract/info')
   @ApiOperation({
-    summary: 'Prepare a transfer_with_royalty Soroban XDR',
+    summary: 'Get deployed Soroban NFT contract info',
     description:
-      'Builds an unsigned Soroban transfer_with_royalty XDR for the caller to sign. ' +
-      'Royalty is automatically calculated from the on-chain per-token or contract-level ' +
-      'default BPS applied to salePrice. ' +
-      'The response royaltyBreakdown shows bps, amount in stroops, percent, and recipient ' +
-      'so the user can confirm the royalty before signing.',
+      'Returns the contract ID and network details for the currently deployed ' +
+      'ClipCash NFT Soroban contract. Network is driven by the STELLAR_NETWORK ' +
+      'environment variable (testnet | public).',
   })
-  @ApiBody({ type: PrepareTransferDto })
-  @ApiResponse({
-    status: 201,
-    description: 'Transfer XDR and royalty breakdown returned',
+  @ApiOkResponse({
+    description: 'Contract info returned successfully',
     schema: {
       example: {
-        xdr: 'AAAAAgAAA...',
-        tokenId: 42,
-        fromWallet: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
-        toWallet: 'GBXXYQVNHHZSL3VQNNNQRXB2FHQWZYTQJ6JRYVJL7XP2KXFBH3TFQX',
-        salePrice: 5000000000,
-        royaltyBreakdown: {
-          royaltyBps: 1000,
-          royaltyAmount: 500000000,
-          royaltyPercent: 10,
-          recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
-        },
         contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
         network: 'testnet',
+        rpcUrl: 'https://soroban-testnet.stellar.org',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        explorerUrl:
+          'https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
       },
     },
   })
-  @ApiBadRequestResponse({
-    description:
-      'Invalid fromWallet/toWallet address, tokenId out of range, ' +
-      'or royaltyBpsOverride outside 0–10 000',
-  })
-  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
-  async prepareTransfer(@Body() dto: PrepareTransferDto) {
-    return this.nftMintService.prepareTransferTx(
-      dto.tokenId,
-      dto.fromWallet,
-      dto.toWallet,
-      dto.salePrice,
-      dto.royaltyBpsOverride,
-    );
+  getContractInfo(): {
+    contractId: string;
+    network: string;
+    rpcUrl: string;
+    networkPassphrase: string;
+    explorerUrl: string;
+  } {
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const network = (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase();
+    const isMainnet = network === 'public';
+
+    const rpcUrl = isMainnet
+      ? 'https://soroban-rpc.stellar.org'
+      : 'https://soroban-testnet.stellar.org';
+
+    const networkPassphrase = isMainnet
+      ? 'Public Global Stellar Network ; September 2015'
+      : 'Test SDF Network ; September 2015';
+
+    const explorerBase = isMainnet
+      ? 'https://stellar.expert/explorer/public/contract'
+      : 'https://stellar.expert/explorer/testnet/contract';
+
+    return {
+      contractId,
+      network,
+      rpcUrl,
+      networkPassphrase,
+      explorerUrl: `${explorerBase}/${contractId}`,
+    };
   }
 }

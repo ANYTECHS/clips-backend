@@ -1,7 +1,8 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER } from '@nestjs/core';
+import { SecurityAuditFilter } from './common/filters/security-audit.filter';
 import { ThrottlerRedisModule } from './common/throttler/throttler-redis.module';
 import { ThrottlerStorageRedisService } from './common/throttler/throttler-storage-redis.service';
 import { AppController } from './app.controller';
@@ -53,13 +54,20 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
         throttlers: [
           {
             name: 'default',
-            ttl: 60000,
-            limit: 100,
+            ttl: config.get<number>('THROTTLE_DEFAULT_TTL', 60000),
+            limit: config.get<number>('THROTTLE_DEFAULT_LIMIT', 100),
           },
           {
             name: 'auth',
             ttl: 60000,
             limit: 10,
+          },
+          // Stricter tier for high-value auth actions (login, signup, refresh,
+          // password reset, OTP verification) per security hardening requirements.
+          {
+            name: 'authStrict',
+            ttl: 60000,
+            limit: 5,
           },
           {
             name: 'sensitive',
@@ -136,6 +144,10 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: SecurityAuditFilter,
     },
   ],
 })
