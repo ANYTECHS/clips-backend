@@ -75,7 +75,7 @@ export class AuthController {
     required: false,
     description: 'Return tokens in cookies instead of body',
   })
-  @Throttle({ auth: { limit: 10, ttl: 60000 } })
+  @Throttle({ auth: { limit: 10, ttl: 60000 }, authStrict: { limit: 5, ttl: 60000 } })
   async signup(
     @Body(new ValidationPipe({ transform: true })) signupDto: SignupDto,
     @Res({ passthrough: true }) res: Response,
@@ -116,7 +116,7 @@ export class AuthController {
     description: 'Return tokens in cookies instead of body',
   })
   @UseGuards(BruteForceGuard)
-  @Throttle({ auth: { limit: 10, ttl: 60000 } })
+  @Throttle({ auth: { limit: 10, ttl: 60000 }, authStrict: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async login(
     @Body(new ValidationPipe({ transform: true })) dto: LoginDto,
@@ -369,11 +369,13 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
   @ApiQuery({
     name: 'use_cookies',
     required: false,
     description: 'Return tokens in cookies instead of body',
   })
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Body(new ValidationPipe({ transform: true })) dto: RefreshTokenDto,
@@ -466,7 +468,7 @@ export class AuthController {
     },
   })
   @HttpCode(HttpStatus.OK)
-  @Throttle({ sensitive: { limit: 3, ttl: 900000 } })
+  @Throttle({ sensitive: { limit: 3, ttl: 900000 }, authStrict: { limit: 5, ttl: 60000 } })
   async forgotPassword(
     @Body(new ValidationPipe({ transform: true })) dto: ForgotPasswordDto,
   ) {
@@ -516,7 +518,9 @@ export class AuthController {
       },
     },
   })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async resetPassword(
     @Body(new ValidationPipe({ transform: true })) dto: ResetPasswordDto,
   ) {
@@ -556,7 +560,9 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: 'Invalid verification code' })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async enableMfa(@Req() req: any, @Body('code') code: string) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
     await this.authService.enableMfa(userId, code);
