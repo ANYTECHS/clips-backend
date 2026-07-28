@@ -1,29 +1,29 @@
 import {
+  Body,
   Controller,
-  Post,
   Get,
   Param,
-  Query,
-  Body,
-  Req,
   ParseIntPipe,
+  Post,
+  Query,
+  Req,
 } from '@nestjs/common';
 import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-  ApiQuery,
-  ApiParam,
-  ApiBody,
-  ApiUnauthorizedResponse,
-  ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
+  ApiBearerAuth,
+  ApiBody,
   ApiConflictResponse,
+  ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { Request } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
-import { PayoutsService } from './payouts.service';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import {
@@ -31,11 +31,27 @@ import {
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
 } from './dto/payout-responses.dto';
-import { Request } from 'express';
+import { PayoutsService } from './payouts.service';
 
 interface RequestWithUser extends Request {
   user: { userId: number };
 }
+
+const validationErrorSchema = {
+  type: 'object',
+  properties: {
+    message: {
+      type: 'array',
+      items: { type: 'string' },
+      example: [
+        'property unexpected should not exist',
+        'amount must not be less than 0.01',
+      ],
+    },
+    error: { type: 'string', example: 'Bad Request' },
+    statusCode: { type: 'number', example: 400 },
+  },
+};
 
 @ApiTags('payout')
 @ApiBearerAuth('access-token')
@@ -49,16 +65,27 @@ export class PayoutsController {
   @Post('request')
   @ApiOperation({
     summary: 'Request a payout with specified amount and method',
-    description: 'Initiates a creator payout. Requires JWT.',
+    description:
+      'Creates a payout request and returns the pending payout record for the authenticated creator.',
   })
-  @ApiBody({ type: CreatePayoutDto })
+  @ApiBody({
+    type: CreatePayoutDto,
+    examples: {
+      stellar: {
+        summary: 'Stellar payout request',
+        value: { amount: 120, currency: 'USD', method: 'stellar' },
+      },
+    },
+  })
   @ApiResponse({
     status: 201,
-    description: 'Payout request created',
+    description: 'Pending payout request created successfully',
     type: PayoutResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Invalid request or insufficient balance',
+    description:
+      'Invalid request payload, minimum threshold failure, or insufficient balance',
+    schema: validationErrorSchema,
   })
   @ApiConflictResponse({ description: 'Pending payout already exists' })
   async requestPayout(
@@ -76,16 +103,27 @@ export class PayoutsController {
   @Post('initiate-stellar')
   @ApiOperation({
     summary: 'Prepare an unsigned Stellar payout transaction',
-    description: 'Builds Stellar XDR for client signing. Requires JWT.',
+    description:
+      'Builds an unsigned Stellar XDR for client signing, stores tracking metadata, and leaves the payout in a pending state.',
   })
-  @ApiBody({ type: InitiateStellarPayoutDto })
+  @ApiBody({
+    type: InitiateStellarPayoutDto,
+    examples: {
+      approvedPayout: {
+        summary: 'Prepare a Stellar payout transaction',
+        value: { payoutId: 101, amount: 100 },
+      },
+    },
+  })
   @ApiResponse({
     status: 201,
-    description: 'Unsigned Stellar payout XDR returned; payout marked pending',
+    description: 'Unsigned Stellar payout transaction prepared successfully',
     type: StellarPayoutInitiationResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Invalid payout request or insufficient balance',
+    description:
+      'Validation failed, payout is not ready, or the platform balance is insufficient',
+    schema: validationErrorSchema,
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async initiateStellarPayout(
@@ -102,44 +140,8 @@ export class PayoutsController {
   @Get()
   @ApiOperation({
     summary: 'List payouts for the authenticated user',
-    description: 'Payout history. Optionally filter by status. Requires JWT.',
-  @ApiOperation({ summary: 'List payouts for the authenticated user' })
-  @ApiQuery({ name: 'status', required: false, description: 'Filter by payout status (pending, processing, completed, failed, approved, pending_approval)' })
-  @ApiResponse({
-    status: 200,
-    description: 'List of payouts including on-chain tracking fields',
-    schema: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'number' },
-          amount: { type: 'number' },
-          currency: { type: 'string' },
-          method: { type: 'string' },
-          status: {
-            type: 'string',
-            enum: ['pending', 'pending_approval', 'approved', 'processing', 'completed', 'failed'],
-          },
-          onChainTxHash: {
-            type: 'string',
-            nullable: true,
-            description: 'Stellar transaction hash once submitted on-chain',
-          },
-          confirmedAt: {
-            type: 'string',
-            format: 'date-time',
-            nullable: true,
-            description: 'Timestamp when the transaction was confirmed on Horizon',
-          },
-          retryCount: {
-            type: 'number',
-            description: 'Number of on-chain confirmation poll attempts',
-          },
-          createdAt: { type: 'string', format: 'date-time' },
-        },
-      },
-    },
+    description:
+      'Returns payout history for the authenticated user. Results can be filtered by payout status.',
   })
   @ApiQuery({
     name: 'status',
@@ -173,56 +175,15 @@ export class PayoutsController {
   @Get(':id')
   @ApiOperation({
     summary: 'Get a specific payout by ID',
-    description: 'Returns payout status and details. Requires JWT.',
+    description:
+      'Returns the current payout status and any stored Stellar transaction metadata.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
-    description: 'Payout details including current status',
+    description: 'Payout details',
     type: PayoutResponseDto,
   })
-  @ApiOperation({ summary: 'Get a specific payout by ID' })
-  @ApiParam({ name: 'id', description: 'Payout ID' })
-  @ApiResponse({
-    status: 200,
-    description: 'Payout details including on-chain status tracking',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'number' },
-        amount: { type: 'number' },
-        currency: { type: 'string' },
-        method: { type: 'string' },
-        status: {
-          type: 'string',
-          enum: ['pending', 'pending_approval', 'approved', 'processing', 'completed', 'failed'],
-        },
-        onChainTxHash: {
-          type: 'string',
-          nullable: true,
-          description: 'Stellar transaction hash once submitted on-chain',
-        },
-        confirmedAt: {
-          type: 'string',
-          format: 'date-time',
-          nullable: true,
-          description: 'Timestamp when the transaction was confirmed on Horizon',
-        },
-        retryCount: {
-          type: 'number',
-          description: 'Number of on-chain confirmation poll attempts made so far',
-        },
-        stellarXdr: {
-          type: 'string',
-          nullable: true,
-          description: 'Unsigned XDR envelope (present while awaiting signature)',
-        },
-        createdAt: { type: 'string', format: 'date-time' },
-      },
-    },
-  })
-  @ApiResponse({ status: 404, description: 'Payout not found' })
-  @ApiResponse({ status: 200, description: 'Payout details' })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async getPayout(
     @Req() req: RequestWithUser,
@@ -233,22 +194,22 @@ export class PayoutsController {
 
   @Post(':id/process')
   @ApiOperation({
-    summary: 'Process a payout (trigger Stellar transfer)',
+    summary: 'Process a payout',
     description:
-      'Submits the Stellar transfer and verifies the on-chain transaction.',
+      'Submits the payout and verifies the resulting Stellar transaction.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
-    description: 'Payout processed and verified on-chain',
+    description: 'Payout processed and verified',
     type: PayoutProcessResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Payout not approved or verification failed',
+    description: 'Payout is not approved or on-chain verification failed',
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
-  async processPayout(@Param('id') id: string) {
-    return this.payoutsService.processPayout(parseInt(id, 10));
+  async processPayout(@Param('id', ParseIntPipe) id: number) {
+    return this.payoutsService.processPayout(id);
   }
 
   @Post(':id/cancel')
