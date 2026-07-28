@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
+import { UserResponseDto } from './dto/user-responses.dto';
 
 @ApiTags('users')
 @ApiBearerAuth('access-token')
@@ -35,18 +36,7 @@ export class UsersController {
   @ApiResponse({
     status: 200,
     description: 'User profile with masked stellarPublicKey',
-    schema: {
-      example: {
-        id: 1,
-        email: 'user@example.com',
-        name: 'Jane Doe',
-        picture: 'https://cdn.example.com/avatars/1.jpg',
-        emailVerified: true,
-        stellarPublicKey: 'GC6X********UTZF3',
-        walletType: 'custodial',
-        createdAt: '2026-07-26T12:00:00.000Z',
-      },
-    },
+    type: UserResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMe(@Req() req: any) {

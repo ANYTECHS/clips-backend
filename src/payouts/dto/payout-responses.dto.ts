@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Exclude } from 'class-transformer';
 
 export class PayoutResponseDto {
   @ApiProperty({ example: 1, description: 'Payout ID' })
@@ -44,6 +45,8 @@ export class PayoutResponseDto {
     description: 'Timestamp when the transaction was confirmed on Horizon',
   })
   confirmedAt?: Date | null;
+
+  @ApiPropertyOptional({
     example: 'abcd1234',
     description:
       'Deterministic internal transaction identifier for payout processing',
@@ -109,4 +112,48 @@ export class RejectPayoutDto {
     example: 'Insufficient documentation',
   })
   reason?: string;
+}
+
+export class PayoutMethodResponseDto {
+  @ApiProperty({ example: 1 })
+  id: number;
+
+  @ApiProperty({ example: 'bank_transfer' })
+  type: string;
+
+  @ApiProperty({ example: true })
+  isDefault: boolean;
+
+  @ApiPropertyOptional({ example: 'Chase Bank' })
+  bankName?: string | null;
+
+  @ApiPropertyOptional({ example: 'John Doe' })
+  accountHolderName?: string | null;
+
+  @ApiPropertyOptional({ example: 'US' })
+  country?: string | null;
+
+  @ApiProperty({ example: 'USD' })
+  currency: string;
+
+  @ApiPropertyOptional({ example: '1234' })
+  lastFourDigits?: string | null;
+
+  @ApiProperty()
+  createdAt: Date;
+
+  @ApiProperty()
+  updatedAt: Date;
+
+  @Exclude()
+  encryptedAccountNumber?: string | null;
+
+  @Exclude()
+  encryptedRoutingNumber?: string | null;
+
+  @Exclude()
+  encryptedSwiftCode?: string | null;
+
+  @Exclude()
+  encryptedIban?: string | null;
 }

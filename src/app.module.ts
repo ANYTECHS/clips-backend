@@ -53,8 +53,8 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
         throttlers: [
           {
             name: 'default',
-            ttl: 60000,
-            limit: 100,
+            ttl: config.get<number>('THROTTLE_DEFAULT_TTL', 60000),
+            limit: config.get<number>('THROTTLE_DEFAULT_LIMIT', 100),
           },
           {
             name: 'auth',
