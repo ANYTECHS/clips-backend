@@ -45,13 +45,42 @@ Authorization: Bearer <accessToken>
 
 Tokens are issued by the auth endpoints. The access token expires after a short TTL; use `POST /auth/refresh` to rotate it.
 
-### Cookie Mode
+### Cookie Authentication
 
-Append `?use_cookies=true` to `signup`, `login`, `refresh`, and `verify-magic` to receive tokens in `HttpOnly` cookies instead of the response body. Google OAuth always uses cookies.
+The API supports cookie-based authentication for browser-based applications, which provides enhanced security compared to token-in-body authentication. When enabled, authentication tokens are stored in secure `HttpOnly` cookies that are automatically sent by the browser with every request.
 
-### CSRF
+#### Enabling Cookie Mode
+Append `?use_cookies=true` to the following endpoints to receive tokens in cookies instead of the response body:
+- `POST /auth/signup`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `GET /auth/verify-magic`
 
-On login and Google OAuth, the server sets a CSRF cookie and returns a `csrfToken` in the response body. State-mutating requests from a browser must include this value in the `x-csrf-token` header.
+Google OAuth **always uses cookies** due to its redirect flow requirements.
+
+#### Cookie Attributes
+
+All authentication cookies are configured with strict security attributes:
+
+| Cookie Name | Purpose | httpOnly | secure | sameSite | path | maxAge |
+|--------------|---------|----------|--------|----------|------|--------|
+| `access_token` | JWT access token for API authentication | ✅ Yes | Depends on `COOKIE_SECURE` env var (default: true in production) | Configurable via `COOKIE_SAME_SITE` (default: `lax`) | `/` (all endpoints) | 1 hour (configurable via `JWT_EXPIRES`) |
+| `refresh_token` | Long-lived refresh token for token rotation | ✅ Yes | Same as above | Same as above | `/auth/refresh` (only sent to refresh endpoint) | 14 days (configurable via `JWT_REFRESH_EXPIRES_DAYS`) |
+| `_csrf` | CSRF protection token | ❌ No (must be readable by JS) | True in production | `strict` | `/` | 24 hours |
+
+#### Attribute Details
+- **httpOnly**: Prevents JavaScript access to authentication tokens, mitigating XSS attacks
+- **secure**: Only sends cookies over HTTPS connections in production
+- **sameSite**: Restricts cookie sending to same-site requests, preventing CSRF attacks
+- **path restriction**: Refresh token is only sent to the refresh endpoint, limiting exposure
+- **maxAge**: Automatic expiration reduces window of opportunity for token misuse
+
+### CSRF Protection
+
+When using cookie authentication, the API implements CSRF protection:
+1. On successful authentication (login, Google OAuth), the server sets a `_csrf` cookie and returns a `csrfToken` in the response body
+2. All state-mutating (non-GET) requests from browsers must include this token in the `x-csrf-token` header
+3. The server validates that the header value matches the cookie value before processing the request
 
 ### Rate Limits
 
