@@ -6,13 +6,22 @@ Practical request/response examples for frontend developers. All endpoints are r
 
 ## Authentication
 
-### Sign Up
+The API supports two authentication methods:
+1. **Token-based authentication** for mobile apps, server-to-server, and non-browser clients
+2. **Cookie-based authentication** for browser-based applications (recommended for web frontends)
+
+---
+
+### Token-Based Authentication (Non-Browser Clients)
+
+#### Sign Up
 
 ```http
 POST /auth/signup
 Content-Type: application/json
 
 {
+  "name": "John Doe",
   "email": "user@example.com",
   "password": "StrongPass123!"
 }
@@ -21,14 +30,22 @@ Content-Type: application/json
 **Response `201`**
 ```json
 {
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "user": {
+    "id": 1,
+    "name": "John Doe",
+    "email": "user@example.com",
+    "emailVerified": false
+  },
+  "tokens": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }
 }
 ```
 
 ---
 
-### Log In
+#### Log In
 
 ```http
 POST /auth/login
@@ -43,14 +60,23 @@ Content-Type: application/json
 **Response `200`**
 ```json
 {
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "user": {
+    "id": 1,
+    "name": "John Doe",
+    "email": "user@example.com",
+    "emailVerified": true
+  },
+  "tokens": {
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  },
+  "csrfToken": "csrf-token-123456"
 }
 ```
 
 ---
 
-### Refresh Token
+#### Refresh Token
 
 ```http
 POST /auth/refresh
@@ -64,13 +90,14 @@ Content-Type: application/json
 **Response `200`**
 ```json
 {
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 }
 ```
 
 ---
 
-### Magic Link (Passwordless)
+#### Magic Link (Passwordless)
 
 ```http
 POST /auth/magic-link
@@ -84,11 +111,166 @@ Content-Type: application/json
 **Response `200`**
 ```json
 {
-  "message": "Magic link sent to user@example.com"
+  "message": "If that email exists, a magic link has been sent."
 }
 ```
 
 > All subsequent requests require the `Authorization: Bearer <accessToken>` header.
+
+---
+
+### Cookie-Based Authentication (Browser Applications)
+
+Cookie-based authentication is recommended for web browsers as it provides enhanced security with HttpOnly cookies that are protected from XSS attacks.
+
+#### Sign Up with Cookies
+
+```http
+POST /auth/signup?use_cookies=true
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "user@example.com",
+  "password": "StrongPass123!"
+}
+```
+
+**Response Headers (Set-Cookie)**
+```
+Set-Cookie: access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6...; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600
+```
+
+**Response `201`**
+```json
+{
+  "user": {
+    "id": 1,
+    "name": "John Doe",
+    "email": "user@example.com",
+    "emailVerified": false
+  }
+}
+```
+
+> Tokens are stored in cookies and automatically sent by the browser with every subsequent request.
+
+---
+
+#### Log In with Cookies
+
+```http
+POST /auth/login?use_cookies=true
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "StrongPass123!"
+}
+```
+
+**Response Headers (Set-Cookie)**
+```
+Set-Cookie: access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6...; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600
+Set-Cookie: refresh_token=eyJhbGciOiJIUzI1NiIsInR5cCI6...; HttpOnly; Secure; SameSite=Lax; Path=/auth/refresh; Max-Age=1209600
+Set-Cookie: _csrf=csrf-token-123456; Secure; SameSite=Strict; Path=/; Max-Age=86400
+```
+
+**Response `200`**
+```json
+{
+  "user": {
+    "id": 1,
+    "name": "John Doe",
+    "email": "user@example.com",
+    "emailVerified": true
+  },
+  "csrfToken": "csrf-token-123456"
+}
+```
+
+---
+
+#### Refresh Token with Cookies
+
+When using cookies, the refresh token is automatically sent by the browser - no need to include it in the request body.
+
+```http
+POST /auth/refresh?use_cookies=true
+Content-Type: application/json
+x-csrf-token: csrf-token-123456
+
+{}
+```
+
+**Response Headers (Set-Cookie - Rotated Tokens)**
+```
+Set-Cookie: access_token=new-access-token...; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600
+Set-Cookie: refresh_token=new-refresh-token...; HttpOnly; Secure; SameSite=Lax; Path=/auth/refresh; Max-Age=1209600
+```
+
+**Response `200`**
+```json
+{
+  "message": "Tokens refreshed successfully"
+}
+```
+
+---
+
+#### Google OAuth with Cookies (Redirect Flow)
+
+Google OAuth automatically uses cookies as it involves browser redirects:
+
+1. User is redirected to:
+   ```
+   GET /auth/google
+   ```
+
+2. After successful Google authentication, browser is redirected back to the frontend callback, with cookies already set.
+
+---
+
+#### Making Authenticated Requests with Cookies
+
+Once cookies are set, all API requests automatically include the authentication cookies. For state-mutating requests, you must include the CSRF token:
+
+```http
+POST /clips/generate
+x-csrf-token: csrf-token-123456
+Content-Type: application/json
+
+{
+  "videoId": "42",
+  "inputPath": "/tmp/uploads/video-42.mp4",
+  "outputPath": "/tmp/clips/clip-42-10-40.mp4",
+  "startTime": 10.5,
+  "endTime": 40.0
+}
+```
+
+> The browser automatically sends the `access_token` cookie with every request, so no `Authorization` header is needed.
+
+---
+
+#### Log Out with Cookies
+
+```http
+POST /auth/logout
+x-csrf-token: csrf-token-123456
+Content-Type: application/json
+
+{}
+```
+
+**Response Headers (Cookies Cleared)**
+```
+Set-Cookie: access_token=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0
+Set-Cookie: refresh_token=; HttpOnly; Secure; SameSite=Lax; Path=/auth/refresh; Max-Age=0
+Set-Cookie: _csrf=; Secure; SameSite=Strict; Path=/; Max-Age=0
+```
+
+**Response `204` - No Content**
 
 ---
 
