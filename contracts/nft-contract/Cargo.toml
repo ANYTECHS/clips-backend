@@ -1,8 +1,10 @@
 [package]
 name = "clips-nft-contract"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.74"
+description = "ClipCash NFT Soroban smart contract — mint, transfer, and royalty support on Stellar"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]
@@ -12,7 +14,6 @@ testutils = ["soroban-sdk/testutils"]
 
 [dependencies]
 soroban-sdk = { version = "22.0.0" }
-soroban-token-sdk = { version = "22.0.0" }
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.0", features = ["testutils"] }
