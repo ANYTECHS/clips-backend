@@ -1,13 +1,12 @@
 import { IsEmail, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
-export class MagicLinkRequestDto {
+export class ResendVerificationDto {
   @ApiProperty({
-    description: 'Email address to send the passwordless login link to',
-    description: 'Email address to receive the magic link',
+    description: 'Registered user email address',
     example: 'john@example.com',
   })
-  @IsEmail()
+  @IsEmail({}, { message: 'Please provide a valid email address' })
   @IsNotEmpty()
   email: string;
 }

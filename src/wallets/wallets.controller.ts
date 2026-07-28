@@ -118,24 +118,37 @@ export class WalletsController {
   @ApiOperation({
     summary: 'Get wallet XLM balance',
     description:
-      'Returns the current native XLM balance for the specified wallet and a warning flag when funds are below the 2 XLM threshold that may cause NFT mint failures.',
+      'Returns the current native XLM balance for the specified wallet and a warning flag when funds are below the 2 XLM threshold that may cause NFT mint failures. ' +
+      'Queries the Horizon server for the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
   @ApiResponse({
     status: 200,
     description: 'Balance retrieved successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        balance: {
-          type: 'number',
-          example: 5.2,
-          description: 'Available XLM balance',
+    content: {
+      'application/json': {
+        schema: {
+          type: 'object',
+          properties: {
+            balance: {
+              type: 'number',
+              description: 'Available XLM balance',
+            },
+            warning: {
+              type: 'boolean',
+              description: 'True when balance is below 2 XLM',
+            },
+          },
         },
-        warning: {
-          type: 'boolean',
-          example: false,
-          description: 'True when balance is below 2 XLM',
+        examples: {
+          sufficientBalance: {
+            summary: 'Balance above the 2 XLM threshold',
+            value: { balance: 5.2, warning: false },
+          },
+          lowBalanceWarning: {
+            summary: 'Balance below the 2 XLM threshold — may cause mint failures',
+            value: { balance: 0.5, warning: true },
+          },
         },
       },
     },
@@ -205,7 +218,6 @@ export class WalletsController {
       'Supports Stellar (freighter, lobstr, albedo), Solana (phantom, solflare, backpack), ' +
       'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
       'If a wallet with the same address+chain already exists it is re-activated.',
-      'Connect or update a wallet for the authenticated user. Supports Stellar wallets via Freighter, Lobstr, or Albedo.',
   })
   @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
   @ApiBadRequestResponse({

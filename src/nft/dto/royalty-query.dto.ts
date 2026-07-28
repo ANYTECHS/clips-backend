@@ -11,8 +11,8 @@ export class RoyaltyQueryResponseDto {
   royaltyBps: number;
 
   @ApiProperty({
-    description: 'Stellar account that receives royalty payments',
-    example: 'GABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCDEFGHIJKLMNOPQRS',
+    description: 'Masked Stellar account that receives royalty payments',
+    example: 'GABC********NOQRS',
   })
   recipient: string;
 }

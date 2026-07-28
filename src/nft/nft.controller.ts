@@ -26,6 +26,7 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
@@ -37,7 +38,6 @@ import {
   NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
-  NftRoyaltyResponseDto,
   VerifyNftOwnershipDto,
 } from './dto/nft-swagger.dto';
 import {
@@ -54,7 +54,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
+import { maskAddress } from '../wallets/wallet.utils';
 
+@ApiTags('nfts')
 @ApiTags('nft')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
@@ -85,7 +87,18 @@ export class NftController {
     description: 'NFT minted successfully',
     type: NftMintResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid mint payload' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid mint payload, or the clip cannot be minted because it is already minting/minted ' +
+      'or has already been posted to a social platform (business rule: posted clips cannot be minted).',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Posted clips cannot be minted.',
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiForbiddenResponse({ description: 'Mint guard rejected the request' })
   async mint(@Body() dto: MintNftDto): Promise<MintResult> {
     const metadataUri =
@@ -100,6 +113,17 @@ export class NftController {
     });
   }
 
+  /**
+   * POST /nfts/prepare-mint
+   * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
+   * The authenticated user must own the clip being minted.
+   */
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Prepare an NFT mint transaction for signing' })
+  @ApiResponse({ status: 201, description: 'Mint transaction prepared' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'User does not own the clip' })
+  @UseGuards(LoginGuard)
   @UseGuards(LoginGuard, NftMintGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
@@ -107,6 +131,9 @@ export class NftController {
   @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
+    description:
+      'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
+      '(testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
@@ -117,7 +144,18 @@ export class NftController {
   @ApiUnauthorizedResponse({
     description: 'Unauthorized — Bearer JWT required',
   })
-  @ApiBadRequestResponse({ description: 'Invalid clip or wallet' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid clip or wallet, or the clip cannot be minted because it is already minting/minted ' +
+      'or has already been posted to a social platform (business rule: posted clips cannot be minted).',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Posted clips cannot be minted.',
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,
@@ -158,7 +196,8 @@ export class NftController {
     summary: 'Verify on-chain NFT ownership',
     description:
       'Checks whether the given Stellar wallet owns the NFT token via Soroban owner_of. ' +
-      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise.',
+      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise. ' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiBody({ type: VerifyNftOwnershipDto })
   @ApiResponse({
@@ -193,6 +232,28 @@ export class NftController {
     status: 200,
     description: 'NFT metadata returned',
     type: NftMetadataResponseDto,
+    schema: {
+      example: {
+        name: 'Game-winning goal',
+        description: 'ClipCash generated clip 42',
+        image: 'https://cdn.example.com/thumbs/42.jpg',
+        animation_url: 'https://cdn.example.com/clips/42.mp4',
+        attributes: [
+          { trait_type: 'Clip Duration', value: 34 },
+          { trait_type: 'Virality Score', value: 87 },
+          { trait_type: 'Creation Date', value: '2026-07-20T09:30:00.000Z' },
+          { trait_type: 'Royalty BPS', value: 1000 },
+          { trait_type: 'Royalty Percent', value: 10 },
+        ],
+        seller_fee_basis_points: 1000,
+        fee_recipient: 'GC6X********UTZF3',
+        royalty: {
+          bps: 1000,
+          percent: 10,
+          recipient: 'GC6X********UTZF3',
+        },
+      },
+    },
   })
   @ApiNotFoundResponse({ description: 'Clip not found or not ready' })
   async getMetadata(
@@ -213,7 +274,8 @@ export class NftController {
     );
     let royaltyRecipient: string | undefined;
     try {
-      royaltyRecipient = this.royaltyConfigurationService.getPlatformWallet();
+      const platformWallet = this.royaltyConfigurationService.getPlatformWallet();
+      royaltyRecipient = platformWallet ? maskAddress(platformWallet) : undefined;
     } catch {
       royaltyRecipient = undefined;
     }
@@ -246,7 +308,8 @@ export class NftController {
   @ApiOperation({
     summary: 'Get on-chain royalty info for an NFT',
     description:
-      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes.',
+      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes. ' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiParam({
     name: 'mintAddress',

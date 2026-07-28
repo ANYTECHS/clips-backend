@@ -39,8 +39,25 @@ export class PayoutResponseDto {
   })
   onChainTxHash?: string | null;
 
+  @ApiPropertyOptional({
+    example: '2026-07-26T12:05:00.000Z',
+    description: 'Timestamp when the transaction was confirmed on Horizon',
+  })
+  confirmedAt?: Date | null;
+    example: 'abcd1234',
+    description:
+      'Deterministic internal transaction identifier for payout processing',
+  })
+  transactionId?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'AAAAAgAAAADh1...',
+    description: 'Unsigned Stellar transaction XDR awaiting client signature',
+  })
+  stellarXdr?: string | null;
+
   @ApiProperty({
-    example: '2026-07-26T12:00:00.000Z',
+    example: '2026-07-27T12:00:00.000Z',
     description: 'Creation timestamp',
   })
   createdAt: Date;
@@ -48,13 +65,22 @@ export class PayoutResponseDto {
 
 export class StellarPayoutInitiationResponseDto {
   @ApiProperty({ example: 1, description: 'Payout ID' })
-  payoutId: number;
+  id: number;
+
+  @ApiProperty({ example: 100, description: 'Pending payout amount' })
+  amount: number;
+
+  @ApiProperty({
+    example: 'abcd1234',
+    description: 'Internal transaction identifier for payout tracking',
+  })
+  transactionId: string;
 
   @ApiProperty({
     example: 'AAAAAgAAAADh1...',
     description: 'Unsigned Stellar transaction XDR for client signing',
   })
-  xdr: string;
+  stellarXdr: string;
 
   @ApiProperty({ example: 'pending', description: 'Updated payout status' })
   status: string;
@@ -71,7 +97,7 @@ export class PayoutProcessResponseDto {
   onChainTxHash?: string;
 
   @ApiPropertyOptional({
-    example: '2026-07-26T12:05:00.000Z',
+    example: '2026-07-27T12:05:00.000Z',
     description: 'On-chain confirmation time after verification',
   })
   confirmedAt?: Date;
