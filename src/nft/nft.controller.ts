@@ -333,4 +333,68 @@ export class NftController {
   ): Promise<RoyaltyInfo> {
     return this.royaltyQueryService.getRoyaltyInfo(mintAddress);
   }
+
+  /**
+   * GET /nfts/contract/info
+   *
+   * Returns the currently deployed Soroban NFT contract details:
+   * contractId, network, rpcUrl, and networkPassphrase.
+   *
+   * This is useful for frontends and tooling that need to know which
+   * contract to interact with on the currently configured network.
+   */
+  @Get('contract/info')
+  @ApiOperation({
+    summary: 'Get deployed Soroban NFT contract info',
+    description:
+      'Returns the contract ID and network details for the currently deployed ' +
+      'ClipCash NFT Soroban contract. Network is driven by the STELLAR_NETWORK ' +
+      'environment variable (testnet | public).',
+  })
+  @ApiOkResponse({
+    description: 'Contract info returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        network: 'testnet',
+        rpcUrl: 'https://soroban-testnet.stellar.org',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        explorerUrl:
+          'https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+      },
+    },
+  })
+  getContractInfo(): {
+    contractId: string;
+    network: string;
+    rpcUrl: string;
+    networkPassphrase: string;
+    explorerUrl: string;
+  } {
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const network = (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase();
+    const isMainnet = network === 'public';
+
+    const rpcUrl = isMainnet
+      ? 'https://soroban-rpc.stellar.org'
+      : 'https://soroban-testnet.stellar.org';
+
+    const networkPassphrase = isMainnet
+      ? 'Public Global Stellar Network ; September 2015'
+      : 'Test SDF Network ; September 2015';
+
+    const explorerBase = isMainnet
+      ? 'https://stellar.expert/explorer/public/contract'
+      : 'https://stellar.expert/explorer/testnet/contract';
+
+    return {
+      contractId,
+      network,
+      rpcUrl,
+      networkPassphrase,
+      explorerUrl: `${explorerBase}/${contractId}`,
+    };
+  }
 }
