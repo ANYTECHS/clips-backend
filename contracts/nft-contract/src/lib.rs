@@ -233,6 +233,44 @@ impl ClipsNftContract {
     pub fn get_default_royalty_bps(env: Env) -> Option<u32> {
         storage::get_default_royalty_bps(&env)
     }
+
+    /// Record a royalty payment for a secondary-market sale.
+    ///
+    /// This is a **notification-only** entry point: it verifies the token
+    /// exists and emits a `RoyaltyPaid` event so that frontends and indexers
+    /// can track royalty flows.  Actual fund movement (XLM / token transfer
+    /// to the creator) is the responsibility of the marketplace contract.
+    ///
+    /// # Parameters
+    /// * `token_id`      – The NFT for which the royalty is being paid.
+    /// * `payer`         – The account settling the royalty (authorisation
+    ///                     required to prevent event spam).
+    /// * `amount_stroops`– The royalty amount in stroops (1 XLM = 10 000 000).
+    ///
+    /// # Errors
+    /// * `Error::TokenNotFound` – `token_id` does not exist.
+    pub fn pay_royalty(
+        env: Env,
+        token_id: u64,
+        payer: Address,
+        amount_stroops: u64,
+    ) -> Result<(), Error> {
+        // Require the payer to authorise the call so that third parties
+        // cannot forge royalty-paid events on behalf of others.
+        payer.require_auth();
+
+        let token_data =
+            storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+
+        events::emit_royalty_paid(
+            &env,
+            token_id,
+            &payer,
+            &token_data.creator,
+            amount_stroops,
+        );
+        Ok(())
+    }
 }
 
 mod events {
@@ -254,5 +292,31 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    /// EV-01: emitted whenever the default royalty BPS is changed.
+    /// `old_bps` is 0 when no royalty was previously configured.
+    pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
+        let topics = (Symbol::new(env, "royalty_updated"),);
+        env.events().publish(topics, (old_bps, new_bps));
+    }
+
+    /// Emitted by `pay_royalty` whenever a secondary-sale royalty is recorded.
+    ///
+    /// Topics (indexed):  `("royalty_paid", token_id, payer)`
+    /// Data:              `(creator, amount_stroops)`
+    pub fn emit_royalty_paid(
+        env: &Env,
+        token_id: u64,
+        payer: &Address,
+        creator: &Address,
+        amount_stroops: u64,
+    ) {
+        let topics = (
+            Symbol::new(env, "royalty_paid"),
+            token_id,
+            payer.clone(),
+        );
+        env.events().publish(topics, (creator.clone(), amount_stroops));
     }
 }

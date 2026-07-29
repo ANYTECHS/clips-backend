@@ -29,13 +29,29 @@ fn s(env: &Env, v: &str) -> String {
 fn test_initialize_succeeds_once() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    // AC-01 fix: admin must authorise its own appointment.
+    env.mock_all_auths();
     client.initialize(&admin);
+}
+
+#[test]
+fn test_initialize_requires_admin_auth() {
+    // AC-01 regression test: initialize without admin auth must fail.
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    // Intentionally do NOT call env.mock_all_auths().
+    let result = client.try_initialize(&admin);
+    assert!(
+        result.is_err(),
+        "initialize without admin auth must fail (AC-01 frontrunning prevention)"
+    );
 }
 
 #[test]
 fn test_initialize_rejects_double_init() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.initialize(&admin);
 
     let result = client.try_initialize(&admin);
@@ -56,8 +72,8 @@ fn test_mint_regular_token() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &1, &s(&env, "clip_001"), &s(&env, "https://clips.cash/1"), &false);
 
@@ -73,8 +89,8 @@ fn test_mint_soulbound_token() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &2, &s(&env, "clip_002"), &s(&env, "https://clips.cash/2"), &true);
 
@@ -92,8 +108,8 @@ fn test_mint_multiple_tokens_increments_supply() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let ids: [(u64, &str, &str); 5] = [
         (1, "clip_001", "https://clips.cash/1"),
@@ -120,8 +136,8 @@ fn test_mint_duplicate_token_id_is_rejected() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     // First mint succeeds.
     client.mint(&owner, &99, &s(&env, "dup"), &s(&env, "uri://dup"), &false);
@@ -154,7 +170,11 @@ fn test_mint_requires_admin_authorization() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
+    // admin.require_auth() is now enforced by initialize (AC-01 fix).
+    env.mock_all_auths();
     client.initialize(&admin);
+    // Clear recorded auths so subsequent calls have no auth — as intended by this test.
+    env.mock_auths(&[]);
     // Intentionally do NOT call env.mock_all_auths() — no auth will be provided.
 
     let result = client.try_mint(
@@ -202,6 +222,7 @@ fn test_mint_not_initialized_is_rejected() {
 fn test_royalty_bps_unset_returns_none() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
 
     assert_eq!(
@@ -215,8 +236,8 @@ fn test_royalty_bps_unset_returns_none() {
 fn test_set_and_get_royalty_bps() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.set_default_royalty_bps(&1000);
     assert_eq!(client.get_default_royalty_bps(), Some(1000));
@@ -226,8 +247,8 @@ fn test_set_and_get_royalty_bps() {
 fn test_royalty_bps_zero_is_valid() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.set_default_royalty_bps(&0);
     assert_eq!(client.get_default_royalty_bps(), Some(0));
@@ -237,8 +258,8 @@ fn test_royalty_bps_zero_is_valid() {
 fn test_royalty_bps_max_boundary_is_valid() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     // 10 000 BPS == 100% — must be accepted.
     client.set_default_royalty_bps(&10_000);
@@ -249,8 +270,8 @@ fn test_royalty_bps_max_boundary_is_valid() {
 fn test_royalty_bps_above_max_is_rejected() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let result = client.try_set_default_royalty_bps(&10_001);
     assert_eq!(
@@ -264,8 +285,8 @@ fn test_royalty_bps_above_max_is_rejected() {
 fn test_royalty_bps_update_overwrites_previous_value() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.set_default_royalty_bps(&500);
     assert_eq!(client.get_default_royalty_bps(), Some(500));
@@ -278,8 +299,9 @@ fn test_royalty_bps_update_overwrites_previous_value() {
 fn test_royalty_bps_requires_admin_auth() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
-    // No mock_all_auths — auth check must fail.
+    env.mock_auths(&[]); // clear — No mock_all_auths for the subsequent call: auth check must fail.
 
     let result = client.try_set_default_royalty_bps(&500);
     assert!(
@@ -364,8 +386,8 @@ fn test_transfer_regular_token() {
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &3, &s(&env, "clip_003"), &s(&env, "uri://3"), &false);
     client.transfer(&owner, &recipient, &3);
@@ -382,8 +404,8 @@ fn test_transfer_soulbound_token_is_rejected() {
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &4, &s(&env, "soul"), &s(&env, "uri://soul"), &true);
 
@@ -401,8 +423,8 @@ fn test_transfer_nonexistent_token_is_rejected() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let result = client.try_transfer(&a, &b, &9999);
     assert_eq!(result.unwrap_err().unwrap(), Error::TokenNotFound);
@@ -416,8 +438,8 @@ fn test_transfer_by_non_owner_is_rejected() {
     let intruder = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &5, &s(&env, "clip_005"), &s(&env, "uri://5"), &false);
 
@@ -438,8 +460,8 @@ fn test_approve_and_transfer_from() {
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &7, &s(&env, "clip_007"), &s(&env, "uri://7"), &false);
     client.approve(&owner, &spender, &7);
@@ -459,8 +481,8 @@ fn test_approve_soulbound_token_is_rejected() {
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &6, &s(&env, "soul_006"), &s(&env, "uri://6"), &true);
 
@@ -479,8 +501,8 @@ fn test_transfer_from_unapproved_spender_is_rejected() {
     let stranger = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &20, &s(&env, "clip_020"), &s(&env, "uri://20"), &false);
 
@@ -497,6 +519,7 @@ fn test_transfer_from_unapproved_spender_is_rejected() {
 fn test_owner_of_unknown_token_returns_none() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
 
     assert_eq!(client.owner_of(&42), None);
@@ -508,8 +531,8 @@ fn test_get_token_data_fields() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let clip_id = s(&env, "clip_009");
     let content_uri = s(&env, "https://clips.cash/9");
@@ -530,8 +553,8 @@ fn test_get_creator_returns_original_minter() {
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&creator, &10, &s(&env, "clip_010"), &s(&env, "uri://10"), &false);
     assert_eq!(client.get_creator(&10), Some(creator));
@@ -544,8 +567,8 @@ fn test_creator_is_preserved_after_transfer() {
     let creator = Address::generate(&env);
     let buyer = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&creator, &15, &s(&env, "clip_015"), &s(&env, "uri://15"), &false);
     client.transfer(&creator, &buyer, &15);
@@ -559,8 +582,179 @@ fn test_creator_is_preserved_after_transfer() {
 fn test_balance_of_unknown_address_returns_zero() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
 
     let stranger = Address::generate(&env);
     assert_eq!(client.balance_of(&stranger), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Events — assert published topics and data
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_mint_emits_mint_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &100, &s(&env, "clip_ev_01"), &s(&env, "uri://ev1"), &false);
+
+    let all = env.events().all();
+    // The mint event is the last one published.
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id, "event source must be the contract");
+
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        symbol_short!("mint").into_val(&env),
+        owner.into_val(&env),
+    ];
+    assert_eq!(topics, expected_topics, "mint topics must be (\"mint\", to)");
+
+    let expected_data: (u64, bool) = (100u64, false);
+    assert_eq!(
+        data,
+        expected_data.into_val(&env),
+        "mint data must be (token_id, is_soulbound)"
+    );
+}
+
+#[test]
+fn test_transfer_emits_transfer_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &200, &s(&env, "clip_ev_02"), &s(&env, "uri://ev2"), &false);
+    client.transfer(&owner, &recipient, &200);
+
+    let all = env.events().all();
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id);
+
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        symbol_short!("transfer").into_val(&env),
+        owner.into_val(&env),
+        recipient.into_val(&env),
+    ];
+    assert_eq!(
+        topics, expected_topics,
+        "transfer topics must be (\"transfer\", from, to)"
+    );
+    assert_eq!(
+        data,
+        (200u64).into_val(&env),
+        "transfer data must be token_id"
+    );
+}
+
+#[test]
+fn test_pay_royalty_emits_royalty_paid_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &300, &s(&env, "clip_ev_03"), &s(&env, "uri://ev3"), &false);
+
+    let amount_stroops: u64 = 5_000_000; // 0.5 XLM
+    client.pay_royalty(&300, &payer, &amount_stroops);
+
+    let all = env.events().all();
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id);
+
+    // "royalty_paid" is 12 chars — must use Symbol::new, not symbol_short! (9-char limit).
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        soroban_sdk::Symbol::new(&env, "royalty_paid").into_val(&env),
+        (300u64).into_val(&env),
+        payer.into_val(&env),
+    ];
+    assert_eq!(
+        topics, expected_topics,
+        "royalty_paid topics must be (\"royalty_paid\", token_id, payer)"
+    );
+
+    let expected_data: (Address, u64) = (creator.clone(), amount_stroops);
+    assert_eq!(
+        data,
+        expected_data.into_val(&env),
+        "royalty_paid data must be (creator, amount_stroops)"
+    );
+}
+
+#[test]
+fn test_set_default_royalty_bps_emits_royalty_updated_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // First call: old_bps is 0 (never configured), new_bps = 500.
+    client.set_default_royalty_bps(&500);
+
+    let all = env.events().all();
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id);
+
+    // "royalty_updated" is 15 chars — must use Symbol::new, not symbol_short! (9-char limit).
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        soroban_sdk::Symbol::new(&env, "royalty_updated").into_val(&env),
+    ];
+    assert_eq!(
+        topics, expected_topics,
+        "royalty_updated topic must be (\"royalty_updated\",)"
+    );
+    assert_eq!(
+        data,
+        (0u32, 500u32).into_val(&env),
+        "royalty_updated data must be (old_bps, new_bps)"
+    );
+}
+
+#[test]
+fn test_pay_royalty_unknown_token_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // Token 9999 was never minted.
+    let result = client.try_pay_royalty(&9999, &payer, &1_000_000);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::Error::TokenNotFound,
+        "pay_royalty on unknown token must return TokenNotFound"
+    );
 }
