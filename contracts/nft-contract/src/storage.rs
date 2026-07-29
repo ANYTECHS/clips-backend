@@ -98,6 +98,21 @@ pub fn get_default_royalty_bps(env: &Env) -> Option<u32> {
         .get(&Symbol::new(env, DEFAULT_ROYALTY_BPS_KEY))
 }
 
+/// Store a per-token royalty override in basis points.
+/// This takes precedence over the contract-level default in `transfer_with_royalty`.
+pub fn set_token_royalty_bps(env: &Env, token_id: u64, bps: u32) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "royalty_bps")), &bps);
+}
+
+/// Retrieve the per-token royalty BPS override, or `None` when not set.
+pub fn get_token_royalty_bps(env: &Env, token_id: u64) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "royalty_bps")))
+}
+
 pub fn set_token_metadata(env: &Env, token_id: u64, metadata: &crate::ClipMetadata) {
     env.storage().persistent().set(&(token_id, Symbol::new(env, "metadata")), metadata);
 }
