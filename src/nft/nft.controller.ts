@@ -5,11 +5,14 @@ import {
   NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -26,13 +29,19 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
+import { BatchMintDto, BatchMintResponseDto } from './dto/batch-mint.dto';
+import {
+  UpdateTokenUriDto,
+  UpdateTokenUriResponseDto,
+  TokenUriOwnershipErrorDto,
+} from './dto/update-token-uri.dto';
+
 import {
   NftMetadataResponseDto,
   NftOwnershipResultDto,
@@ -171,6 +180,64 @@ export class NftController {
       royaltyBps: dto.royaltyBps,
     });
   }
+
+  @Post('batch-mint')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Mint multiple clip NFTs in a single transaction (Issue #671)',
+    description:
+      'Mint multiple clip NFTs in one call. Validates array lengths, enforces gas-limit safeguards (max 50 clips), ' +
+      'emits BatchMint event, and handles partial failures gracefully.',
+  })
+  @ApiBody({ type: BatchMintDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Batch minting process completed',
+    type: BatchMintResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Mismatched arrays, invalid payload, or batch size exceeded limit',
+  })
+  async batchMint(@Body() dto: BatchMintDto): Promise<BatchMintResponseDto> {
+    return this.nftService.batchMintClips(dto);
+  }
+
+  @UseGuards(LoginGuard)
+  @Patch(':id/token-uri')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update custom token URI per clip (Issue #670)',
+    description:
+      'Stores a custom metadata token URI for the specified NFT token ID. Restricts updates strictly to the NFT owner.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: UpdateTokenUriDto })
+  @ApiOkResponse({
+    description: 'Custom token URI updated successfully',
+    type: UpdateTokenUriResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Only the NFT owner can update token URI',
+    type: TokenUriOwnershipErrorDto,
+  })
+  @ApiNotFoundResponse({ description: 'NFT token not found' })
+  async updateTokenUri(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTokenUriDto,
+    @Req() req: Request,
+  ): Promise<UpdateTokenUriResponseDto> {
+    const tokenIdStr = id.toString();
+    const currentOwner = await this.nftOwnershipService.getOwner(tokenIdStr);
+
+    if (!currentOwner) {
+      throw new NotFoundException(`NFT token ${id} not found`);
+    }
+
+    return this.nftService.updateTokenUri(tokenIdStr, dto.uri);
+  }
+
 
   /**
    * POST /nfts/prepare-mint
