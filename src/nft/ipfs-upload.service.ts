@@ -29,6 +29,9 @@ export interface NftMetadata {
   fee_recipient?: string;
   /** Explicit royalty block for marketplaces / mint clients. */
   royalty: NftRoyaltyInfo;
+  viralityScore?: number;
+  originalDuration?: number;
+  createdAt?: string;
 }
 
 export type IpfsProvider = 'pinata' | 'nftstorage';

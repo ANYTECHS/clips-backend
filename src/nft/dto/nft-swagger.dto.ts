@@ -213,4 +213,13 @@ export class NftMetadataResponseDto {
     description: 'Explicit royalty block for marketplaces / mint clients',
   })
   royalty: NftRoyaltyInfoDto;
+
+  @ApiPropertyOptional({ example: 87, description: 'Clip virality score' })
+  viralityScore?: number;
+
+  @ApiPropertyOptional({ example: 34, description: 'Original clip duration in seconds' })
+  originalDuration?: number;
+
+  @ApiPropertyOptional({ example: '2026-07-20T09:30:00.000Z', description: 'Creation timestamp' })
+  createdAt?: string;
 }
