@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -166,13 +167,13 @@ export class NftMintService {
 
     // Prevent double minting
     if (clip.nftStatus === 'minting' || clip.nftStatus === 'minted') {
-      throw new BadRequestException(
+      throw new ConflictException(
         'Clip is already being minted or has been minted',
       );
     }
 
     if (clip.mintAddress) {
-      throw new BadRequestException('Clip has already been minted on-chain');
+      throw new ConflictException('Clip has already been minted on-chain');
     }
 
     // Prevent minting of posted clips
@@ -262,6 +263,7 @@ export class NftMintService {
 
       if (
         error instanceof BadRequestException ||
+        error instanceof ConflictException ||
         error instanceof NotFoundException
       ) {
         throw error;
