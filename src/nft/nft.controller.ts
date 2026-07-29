@@ -26,7 +26,6 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
@@ -177,12 +176,6 @@ export class NftController {
    * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
    * The authenticated user must own the clip being minted.
    */
-  @ApiBearerAuth('access-token')
-  @ApiOperation({ summary: 'Prepare an NFT mint transaction for signing' })
-  @ApiResponse({ status: 201, description: 'Mint transaction prepared' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'User does not own the clip' })
-  @UseGuards(LoginGuard)
   @UseGuards(LoginGuard, NftMintGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
@@ -201,7 +194,7 @@ export class NftController {
     type: NftPrepareMintResponseDto,
   })
   @ApiUnauthorizedResponse({
-    description: 'Unauthorized — Bearer JWT required',
+    description: 'Unauthorized - Bearer JWT required',
   })
   @ApiBadRequestResponse({
     description:
@@ -222,20 +215,6 @@ export class NftController {
         statusCode: 403,
         message: 'You do not own this clip',
         error: 'Forbidden',
-      },
-    },
-  })
-  @ApiUnauthorizedResponse({
-    description:
-      'Wallet signature is invalid or does not match the provided walletAddress. ' +
-      'Required signature fields: walletAddress (Stellar G... key), ' +
-      'walletSignature (Ed25519 signature over the canonical challenge message: ' +
-      '"ClipCash mint authorization for clip <clipId> by <walletAddress>").',
-    schema: {
-      example: {
-        statusCode: 401,
-        message: 'Mint signature is invalid — wallet authorization failed',
-        error: 'Unauthorized',
       },
     },
   })

@@ -18,6 +18,8 @@ import { NftMintGuard } from '../src/nft/guards/nft-mint.guard';
 import { NftOwnershipVerificationService } from '../src/nft/nft-ownership-verification.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RoyaltyConfigurationService } from '../src/nft/royalty-configuration.service';
+import { NftOwnershipService } from '../src/nft/nft-ownership.service';
+import { MintSignatureVerificationService } from '../src/nft/mint-signature-verification.service';
 
 describe('NFT mint preparation (e2e)', () => {
   let app: INestApplication<App>;
@@ -43,6 +45,8 @@ describe('NFT mint preparation (e2e)', () => {
         { provide: NftOwnershipVerificationService, useValue: {} },
         { provide: PrismaService, useValue: {} },
         { provide: RoyaltyConfigurationService, useValue: {} },
+        { provide: NftOwnershipService, useValue: {} },
+        { provide: MintSignatureVerificationService, useValue: {} },
       ],
     })
       .overrideGuard(LoginGuard)
