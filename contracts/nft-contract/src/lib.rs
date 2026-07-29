@@ -177,6 +177,13 @@ impl ClipsNftContract {
         Ok(())
     }
 
+    /// **View-only** — returns the current owner of `token_id`, or `None` if the
+    /// token has not been minted.
+    ///
+    /// # Notes
+    /// This function performs no state mutation and requires no authorisation.
+    /// Callers should invoke it via simulation (i.e. `simulateTransaction`) to
+    /// avoid unnecessary fees.
     pub fn owner_of(env: Env, token_id: u64) -> Option<Address> {
         storage::get_token(&env, token_id).map(|t| t.owner)
     }
@@ -195,8 +202,28 @@ impl ClipsNftContract {
         storage::get_token(&env, token_id).map(|t| t.creator)
     }
 
+    /// **View-only** — returns the number of NFTs currently held by `owner`.
+    ///
+    /// Returns `0` for any address that owns no tokens (including addresses
+    /// that have never interacted with the contract).
+    ///
+    /// # Notes
+    /// This function performs no state mutation and requires no authorisation.
     pub fn balance_of(env: Env, owner: Address) -> u64 {
         storage::get_owner_tokens(&env, &owner).len() as u64
+    }
+
+    /// **View-only** — returns the content URI stored for `token_id`, or `None`
+    /// if the token does not exist.
+    ///
+    /// The URI is set at mint time via the `content_uri` field and is immutable
+    /// thereafter. It typically points to an IPFS CID or an HTTPS metadata
+    /// endpoint, following the ERC-721 `tokenURI` convention.
+    ///
+    /// # Notes
+    /// This function performs no state mutation and requires no authorisation.
+    pub fn token_uri(env: Env, token_id: u64) -> Option<String> {
+        storage::get_token(&env, token_id).map(|t| t.content_uri)
     }
 
     pub fn total_supply(env: Env) -> u64 {

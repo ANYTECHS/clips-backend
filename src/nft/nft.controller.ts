@@ -35,10 +35,12 @@ import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
 import {
   NftMetadataResponseDto,
-  NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
   VerifyNftOwnershipDto,
+  NftOwnerResponseDto,
+  WalletNftsResponseDto,
+  NftMintResponseDto,
 } from './dto/nft-swagger.dto';
 import {
   RoyaltyQueryResponseDto,
@@ -50,6 +52,7 @@ import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
 import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
+import { NftOwnershipService } from './nft-ownership.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
@@ -69,10 +72,64 @@ export class NftController {
     private readonly ipfsUploadService: IpfsUploadService,
     private readonly royaltyQueryService: RoyaltyQueryService,
     private readonly ownershipVerificationService: NftOwnershipVerificationService,
+    private readonly nftOwnershipService: NftOwnershipService,
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
     private readonly mintSignatureVerification: MintSignatureVerificationService,
   ) {}
+
+  @Get(':id/owner')
+  @ApiOperation({
+    summary: 'Get the current owner of an NFT',
+    description:
+      'Queries the on-chain Soroban contract to find the current owner of the given token ID. ' +
+      'Returns null if the token has not been minted.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Owner address returned successfully',
+    type: NftOwnerResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID format' })
+  async getOwner(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<NftOwnerResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    const owner = await this.nftOwnershipService.getOwner(id.toString());
+    return { owner };
+  }
+
+  @Get('/wallets/:address/nfts')
+  @ApiOperation({
+    summary: 'Get NFTs owned by a wallet',
+    description:
+      'Queries the on-chain Soroban contract to get all token IDs currently held by the specified wallet.',
+  })
+  @ApiParam({
+    name: 'address',
+    description: 'Stellar wallet address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @ApiOkResponse({
+    description: 'Owned NFTs returned successfully',
+    type: WalletNftsResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid wallet address' })
+  async getWalletNfts(
+    @Param('address') address: string,
+  ): Promise<WalletNftsResponseDto> {
+    if (!address || address.length !== 56 || !address.startsWith('G')) {
+      throw new BadRequestException('Invalid Stellar wallet address');
+    }
+    const tokenIds = await this.nftOwnershipService.getWalletTokenIds(address);
+    return {
+      address,
+      tokenIds,
+      balance: tokenIds.length,
+    };
+  }
 
   @UseGuards(NftMintGuard)
   @Post('mint')
