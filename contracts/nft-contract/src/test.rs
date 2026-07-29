@@ -590,6 +590,13 @@ fn test_balance_of_unknown_address_returns_zero() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// View functions — owner_of, balance_of, token_uri
+// ─────────────────────────────────────────────────────────────
+
+/// token_uri must return the content_uri supplied at mint time.
+#[test]
+fn test_token_uri_returns_content_uri() {
+    let (env, _cid, client) = setup_env();
 // Events — assert published topics and data
 // ─────────────────────────────────────────────────────────────
 
@@ -604,6 +611,48 @@ fn test_mint_emits_mint_event() {
 
     env.mock_all_auths();
     client.initialize(&admin);
+
+    let uri = s(&env, "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    client.mint(&owner, &50, &s(&env, "clip_050"), &uri, &false);
+
+    assert_eq!(
+        client.token_uri(&50),
+        Some(uri),
+        "token_uri must equal the content_uri passed to mint"
+    );
+}
+
+/// token_uri for a token that was never minted must return None.
+#[test]
+fn test_token_uri_unknown_token_returns_none() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    assert_eq!(client.token_uri(&9999), None);
+}
+
+/// owner_of must return the correct owner immediately after mint.
+#[test]
+fn test_owner_of_returns_minted_owner() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &51, &s(&env, "clip_051"), &s(&env, "uri://51"), &false);
+
+    assert_eq!(client.owner_of(&51), Some(owner));
+}
+
+/// balance_of must increment by 1 for each token minted to the same address.
+#[test]
+fn test_balance_of_increments_on_each_mint() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
     client.mint(&owner, &100, &s(&env, "clip_ev_01"), &s(&env, "uri://ev1"), &false);
 
     let all = env.events().all();
@@ -717,6 +766,25 @@ fn test_set_default_royalty_bps_emits_royalty_updated_event() {
     env.mock_all_auths();
     client.initialize(&admin);
 
+    assert_eq!(client.balance_of(&owner), 0, "balance before any mint must be 0");
+
+    client.mint(&owner, &52, &s(&env, "clip_052"), &s(&env, "uri://52"), &false);
+    assert_eq!(client.balance_of(&owner), 1);
+
+    client.mint(&owner, &53, &s(&env, "clip_053"), &s(&env, "uri://53"), &false);
+    assert_eq!(client.balance_of(&owner), 2);
+
+    client.mint(&owner, &54, &s(&env, "clip_054"), &s(&env, "uri://54"), &false);
+    assert_eq!(client.balance_of(&owner), 3);
+}
+
+/// After a transfer, sender balance decrements and recipient balance increments.
+#[test]
+fn test_balance_of_updates_correctly_on_transfer() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
     // First call: old_bps is 0 (never configured), new_bps = 500.
     client.set_default_royalty_bps(&500);
 
@@ -750,6 +818,18 @@ fn test_pay_royalty_unknown_token_is_rejected() {
     env.mock_all_auths();
     client.initialize(&admin);
 
+    client.mint(&sender, &55, &s(&env, "clip_055"), &s(&env, "uri://55"), &false);
+    client.mint(&sender, &56, &s(&env, "clip_056"), &s(&env, "uri://56"), &false);
+
+    assert_eq!(client.balance_of(&sender), 2);
+    assert_eq!(client.balance_of(&recipient), 0);
+
+    client.transfer(&sender, &recipient, &55);
+
+    assert_eq!(client.balance_of(&sender), 1, "sender must lose 1 after transfer");
+    assert_eq!(client.balance_of(&recipient), 1, "recipient must gain 1 after transfer");
+    assert_eq!(client.owner_of(&55), Some(recipient.clone()), "owner_of must reflect new owner");
+    assert_eq!(client.owner_of(&56), Some(sender.clone()), "untransferred token must remain with sender");
     // Token 9999 was never minted.
     let result = client.try_pay_royalty(&9999, &payer, &1_000_000);
     assert_eq!(

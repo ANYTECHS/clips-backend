@@ -92,6 +92,42 @@ export class NftOwnershipService {
       return { isOwner: false, error: message };
     }
   }
+
+  /**
+   * Get the current owner of an NFT.
+   */
+  async getOwner(
+    tokenId: string,
+    contractId?: string,
+  ): Promise<string | null> {
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        () => this.strategy.getOwner(contractId ?? this.contractId, tokenId),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to get owner for token ${tokenId}`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the token IDs owned by a wallet address.
+   */
+  async getWalletTokenIds(
+    walletAddress: string,
+    contractId?: string,
+  ): Promise<number[]> {
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        () => this.strategy.getWalletTokenIds(contractId ?? this.contractId, walletAddress),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to get token IDs for wallet ${walletAddress}`, error);
+      return [];
+    }
+  }
 }
 
 export { NFT_OWNERSHIP_STRATEGY };
