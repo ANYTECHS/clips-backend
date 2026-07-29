@@ -588,3 +588,173 @@ fn test_balance_of_unknown_address_returns_zero() {
     let stranger = Address::generate(&env);
     assert_eq!(client.balance_of(&stranger), 0);
 }
+
+// ─────────────────────────────────────────────────────────────
+// Events — assert published topics and data
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_mint_emits_mint_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &100, &s(&env, "clip_ev_01"), &s(&env, "uri://ev1"), &false);
+
+    let all = env.events().all();
+    // The mint event is the last one published.
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id, "event source must be the contract");
+
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        symbol_short!("mint").into_val(&env),
+        owner.into_val(&env),
+    ];
+    assert_eq!(topics, expected_topics, "mint topics must be (\"mint\", to)");
+
+    let expected_data: (u64, bool) = (100u64, false);
+    assert_eq!(
+        data,
+        expected_data.into_val(&env),
+        "mint data must be (token_id, is_soulbound)"
+    );
+}
+
+#[test]
+fn test_transfer_emits_transfer_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &200, &s(&env, "clip_ev_02"), &s(&env, "uri://ev2"), &false);
+    client.transfer(&owner, &recipient, &200);
+
+    let all = env.events().all();
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id);
+
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        symbol_short!("transfer").into_val(&env),
+        owner.into_val(&env),
+        recipient.into_val(&env),
+    ];
+    assert_eq!(
+        topics, expected_topics,
+        "transfer topics must be (\"transfer\", from, to)"
+    );
+    assert_eq!(
+        data,
+        (200u64).into_val(&env),
+        "transfer data must be token_id"
+    );
+}
+
+#[test]
+fn test_pay_royalty_emits_royalty_paid_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &300, &s(&env, "clip_ev_03"), &s(&env, "uri://ev3"), &false);
+
+    let amount_stroops: u64 = 5_000_000; // 0.5 XLM
+    client.pay_royalty(&300, &payer, &amount_stroops);
+
+    let all = env.events().all();
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id);
+
+    // "royalty_paid" is 12 chars — must use Symbol::new, not symbol_short! (9-char limit).
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        soroban_sdk::Symbol::new(&env, "royalty_paid").into_val(&env),
+        (300u64).into_val(&env),
+        payer.into_val(&env),
+    ];
+    assert_eq!(
+        topics, expected_topics,
+        "royalty_paid topics must be (\"royalty_paid\", token_id, payer)"
+    );
+
+    let expected_data: (Address, u64) = (creator.clone(), amount_stroops);
+    assert_eq!(
+        data,
+        expected_data.into_val(&env),
+        "royalty_paid data must be (creator, amount_stroops)"
+    );
+}
+
+#[test]
+fn test_set_default_royalty_bps_emits_royalty_updated_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // First call: old_bps is 0 (never configured), new_bps = 500.
+    client.set_default_royalty_bps(&500);
+
+    let all = env.events().all();
+    let (source, topics, data) = all.last().unwrap();
+
+    assert_eq!(source, contract_id);
+
+    // "royalty_updated" is 15 chars — must use Symbol::new, not symbol_short! (9-char limit).
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = svec![
+        &env,
+        soroban_sdk::Symbol::new(&env, "royalty_updated").into_val(&env),
+    ];
+    assert_eq!(
+        topics, expected_topics,
+        "royalty_updated topic must be (\"royalty_updated\",)"
+    );
+    assert_eq!(
+        data,
+        (0u32, 500u32).into_val(&env),
+        "royalty_updated data must be (old_bps, new_bps)"
+    );
+}
+
+#[test]
+fn test_pay_royalty_unknown_token_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // Token 9999 was never minted.
+    let result = client.try_pay_royalty(&9999, &payer, &1_000_000);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        crate::Error::TokenNotFound,
+        "pay_royalty on unknown token must return TokenNotFound"
+    );
+}
