@@ -14,6 +14,10 @@ export interface NftRoyaltyInfo {
   bps: number;
   percent: number;
   recipient?: string;
+  /** Asset royalties are paid in: "native" (XLM) or a custom asset code (e.g. "USDC"). */
+  asset?: string;
+  /** Stellar Asset Contract (SAC) address, present when `asset` is not "native". */
+  assetContractId?: string;
 }
 
 export interface NftMetadata {

@@ -14,6 +14,7 @@ import { NftMintService } from '../clips/nft-mint.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
+import { AdminContractService } from './admin-contract.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
@@ -39,6 +40,7 @@ import { RedisModule } from '../redis/redis.module';
     NftMintGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
+    AdminContractService,
   ],
   controllers: [
     NftController,

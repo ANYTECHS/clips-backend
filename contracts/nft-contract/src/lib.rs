@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contractmeta, contracttype,
-    Address, Env, String, Symbol, Val, Vec,
+    token, Address, Env, String, Symbol, Val, Vec,
 };
 use soroban_token_sdk::metadata::TokenMetadata;
 
@@ -47,6 +47,10 @@ pub enum Error {
     InvalidTokenId = 6,
     /// Royalty value is outside the valid 0–10 000 BPS range.
     InvalidRoyaltyBps = 7,
+    /// The contract is paused; minting and transfers are disabled.
+    ContractPaused = 8,
+    /// The asset contract address is not on the admin-approved allow-list.
+    UnsupportedAsset = 9,
 }
 
 #[contractimpl]
@@ -69,6 +73,10 @@ impl ClipsNftContract {
     ) -> Result<(), Error> {
         let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
         admin.require_auth();
+
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
 
         if storage::has_token(&env, token_id) {
             return Err(Error::InvalidTokenId);
@@ -102,6 +110,10 @@ impl ClipsNftContract {
     ) -> Result<(), Error> {
         from.require_auth();
 
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
 
         if token_data.owner != from {
@@ -132,6 +144,10 @@ impl ClipsNftContract {
     ) -> Result<(), Error> {
         spender.require_auth();
 
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
 
         if token_data.owner != from {
@@ -161,6 +177,10 @@ impl ClipsNftContract {
 
     pub fn approve(env: Env, owner: Address, spender: Address, token_id: u64) -> Result<(), Error> {
         owner.require_auth();
+
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
 
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
 
@@ -233,6 +253,119 @@ impl ClipsNftContract {
     pub fn get_default_royalty_bps(env: Env) -> Option<u32> {
         storage::get_default_royalty_bps(&env)
     }
+
+    /// Pause the contract. While paused, `mint`, `transfer`, `transfer_from`,
+    /// and `approve` are rejected with `Error::ContractPaused`.
+    ///
+    /// Only the contract admin may call this function.
+    pub fn pause(env: Env) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        storage::set_paused(&env, true);
+        events::emit_paused(&env, &admin);
+        Ok(())
+    }
+
+    /// Unpause the contract, restoring minting and transfer functionality.
+    ///
+    /// Only the contract admin may call this function.
+    pub fn unpause(env: Env) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        storage::set_paused(&env, false);
+        events::emit_unpaused(&env, &admin);
+        Ok(())
+    }
+
+    /// Return whether the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        storage::is_paused(&env)
+    }
+
+    /// Set the Stellar asset contract (SAC) address that royalties are paid
+    /// in by default (e.g. the native XLM SAC or a USDC SAC address).
+    ///
+    /// The asset must already be on the admin-approved allow-list
+    /// (see `add_supported_asset`). Only the contract admin may call this.
+    pub fn set_default_royalty_asset(env: Env, asset: Address) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::is_supported_asset(&env, &asset) {
+            return Err(Error::UnsupportedAsset);
+        }
+
+        storage::set_default_royalty_asset(&env, &asset);
+        Ok(())
+    }
+
+    /// Return the currently configured default royalty asset, if any.
+    pub fn get_default_royalty_asset(env: Env) -> Option<Address> {
+        storage::get_default_royalty_asset(&env)
+    }
+
+    /// Add an asset contract address to the admin-approved allow-list of
+    /// assets that may be used for royalty payouts.
+    ///
+    /// Only the contract admin may call this function.
+    pub fn add_supported_asset(env: Env, asset: Address) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        storage::add_supported_asset(&env, &asset);
+        Ok(())
+    }
+
+    /// Remove an asset contract address from the royalty allow-list.
+    ///
+    /// Only the contract admin may call this function.
+    pub fn remove_supported_asset(env: Env, asset: Address) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        storage::remove_supported_asset(&env, &asset);
+        Ok(())
+    }
+
+    /// Return whether `asset` is on the royalty allow-list.
+    pub fn is_supported_asset(env: Env, asset: Address) -> bool {
+        storage::is_supported_asset(&env, &asset)
+    }
+
+    /// Pay the royalty owed on `token_id` to its creator, in `asset`.
+    ///
+    /// `asset` must be on the admin-approved allow-list. `amount` is the
+    /// sale price the royalty is computed from; the transferred amount is
+    /// `amount * royalty_bps / 10_000`, using the token's configured
+    /// royalty rate (falling back to the contract default). `payer` must
+    /// authorize the call and hold a sufficient balance of `asset`.
+    pub fn pay_royalty(
+        env: Env,
+        payer: Address,
+        token_id: u64,
+        asset: Address,
+        amount: i128,
+    ) -> Result<i128, Error> {
+        payer.require_auth();
+
+        if !storage::is_supported_asset(&env, &asset) {
+            return Err(Error::UnsupportedAsset);
+        }
+
+        let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+        let bps = storage::get_default_royalty_bps(&env).unwrap_or(0);
+        let royalty_amount = amount.saturating_mul(bps as i128) / (ROYALTY_BPS_MAX as i128);
+
+        if royalty_amount > 0 {
+            let asset_client = token::Client::new(&env, &asset);
+            asset_client.transfer(&payer, &token_data.creator, &royalty_amount);
+        }
+
+        events::emit_royalty_paid(&env, &payer, &token_data.creator, &asset, token_id, royalty_amount);
+        Ok(royalty_amount)
+    }
 }
 
 mod events {
@@ -254,5 +387,27 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    pub fn emit_paused(env: &Env, admin: &Address) {
+        let topics = (Symbol::new(env, "paused"), admin.clone());
+        env.events().publish(topics, ());
+    }
+
+    pub fn emit_unpaused(env: &Env, admin: &Address) {
+        let topics = (Symbol::new(env, "unpaused"), admin.clone());
+        env.events().publish(topics, ());
+    }
+
+    pub fn emit_royalty_paid(
+        env: &Env,
+        payer: &Address,
+        recipient: &Address,
+        asset: &Address,
+        token_id: u64,
+        amount: i128,
+    ) {
+        let topics = (Symbol::new(env, "royalty_paid"), payer.clone(), recipient.clone());
+        env.events().publish(topics, (asset.clone(), token_id, amount));
     }
 }

@@ -895,6 +895,8 @@ Rate limited: 10 requests / 60 s.
 
 ## 6. NFT Minting
 
+> **Contract reference:** for the full Soroban contract ABI (all public functions, events, and `stellar contract invoke` examples), see [`contracts/README.md`](../contracts/README.md).
+
 ### Clip Curation and Mint Flow
 
 The typical frontend workflow for minting a clip as an NFT:
@@ -912,7 +914,7 @@ The typical frontend workflow for minting a clip as an NFT:
 
 ### POST /nfts/mint _(requires JWT + NftMintGuard)_
 
-Build metadata, upload to IPFS if needed, and mint in one call.
+Build metadata, upload to IPFS if needed, and mint in one call. The authenticated caller must own the clip being minted — requests for clips that don't exist or belong to another user are rejected.
 
 Rate limited: 5 requests / 60 s.
 
@@ -954,7 +956,7 @@ Rate limited: 5 requests / 60 s.
 }
 ```
 
-**Errors:** `400` invalid payload · `403` mint guard rejected
+**Errors:** `400` invalid payload · `401` unauthorized · `403` caller does not own the clip, or mint guard rejected · `404` clip not found
 
 ---
 
@@ -1097,6 +1099,76 @@ Query on-chain royalty info for a minted NFT. Results are cached in Redis for 5 
 ```
 
 **Errors:** `404` royalty data not found for the given mint address
+
+---
+
+### Royalty asset fields
+
+`GET /nfts/:clipId/metadata` and the metadata built during minting include an `asset` field on the `royalty` object identifying which Stellar asset the royalty is paid in:
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `royalty.asset` | string | `"native"` for XLM, or a custom asset code (e.g. `"USDC"`) |
+| `royalty.assetContractId` | string | Stellar Asset Contract (SAC) address, present when `asset` is not `"native"` |
+
+Configured via `ROYALTY_ASSET_CODE` / `ROYALTY_ASSET_CONTRACT_ID` env vars. The configured asset must be on the contract's admin-approved allow-list (`add_supported_asset`) — see [`contracts/README.md § Royalties`](../contracts/README.md#royalties).
+
+**Example — royalty paid in USDC**
+
+```json
+{
+  "royalty": {
+    "bps": 1000,
+    "percent": 10,
+    "recipient": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+    "asset": "USDC",
+    "assetContractId": "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
+  }
+}
+```
+
+---
+
+### Contract Pause / Emergency Stop
+
+Admin-only endpoints for pausing the NFT contract in an emergency. Minting and transfers are rejected on-chain while paused (contract-level enforcement — see [`contracts/README.md § pause`](../contracts/README.md#3-public-functions)). All admin endpoints require the `x-admin-secret` header.
+
+#### GET /nfts/admin/pause-status
+
+Reads the current on-chain pause state. No authentication required (read-only).
+
+**Response `200`**
+
+```json
+{ "paused": false }
+```
+
+#### POST /nfts/admin/pause _(requires x-admin-secret)_
+
+Builds an unsigned Soroban `pause()` transaction. The admin wallet signs and submits the returned XDR — the admin key is never held server-side.
+
+**Request**
+
+```json
+{ "adminAddress": "GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3" }
+```
+
+**Response `201`**
+
+```json
+{
+  "xdr": "AAAAAgAAAAA...",
+  "action": "pause",
+  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4",
+  "network": "testnet"
+}
+```
+
+**Errors:** `401` missing/invalid `x-admin-secret`
+
+#### POST /nfts/admin/unpause _(requires x-admin-secret)_
+
+Builds an unsigned Soroban `unpause()` transaction. Same request/response shape as `pause`, with `"action": "unpause"`.
 
 ---
 

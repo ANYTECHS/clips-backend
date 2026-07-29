@@ -49,3 +49,15 @@ export class CreateMintPreparationDto {
   @IsString()
   walletSignature?: string;
 }
+
+/** Request body for POST /nfts/admin/pause and /nfts/admin/unpause. */
+export class PrepareContractPauseDto {
+  @ApiProperty({
+    description:
+      'Stellar wallet address of the contract admin that will sign the pause/unpause transaction',
+    example: 'GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @IsString()
+  @IsNotEmpty()
+  adminAddress: string;
+}

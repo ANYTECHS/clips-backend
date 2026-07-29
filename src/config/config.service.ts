@@ -39,6 +39,16 @@ export class ConfigService {
   readonly platformWallet =
     process.env.PLATFORM_WALLET_ADDRESS ?? process.env.PLATFORM_WALLET ?? '';
 
+  /**
+   * Stellar Asset Contract (SAC) address royalties are paid in.
+   * Defaults to "native" (XLM) when unset; set to a SAC address (e.g. USDC) to
+   * pay royalties in a custom asset. Must match a contract asset added via
+   * the NFT contract's `add_supported_asset` admin call.
+   */
+  readonly royaltyAssetCode = process.env.ROYALTY_ASSET_CODE ?? 'native';
+
+  readonly royaltyAssetContractId = process.env.ROYALTY_ASSET_CONTRACT_ID ?? '';
+
   readonly ipfsProvider = process.env.IPFS_PROVIDER ?? '';
 
   readonly pinataJwt = process.env.PINATA_JWT ?? process.env.IPFS_JWT ?? '';

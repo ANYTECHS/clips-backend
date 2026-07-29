@@ -303,6 +303,8 @@ export class NftMintService {
     const viralityScore = clip.viralityScore ?? 0;
     const royaltyRecipient = clip.royaltyRecipient?.trim() || undefined;
 
+    const asset = this.royaltyConfigurationService.getRoyaltyAsset();
+
     const attributes: NftAttribute[] = [
       { trait_type: 'Clip Duration', value: clip.duration },
       { trait_type: 'Virality Score', value: viralityScore },
@@ -324,6 +326,8 @@ export class NftMintService {
         bps: clip.royaltyBps,
         percent: clip.royaltyBps / 100,
         ...(royaltyRecipient ? { recipient: royaltyRecipient } : {}),
+        asset: asset.code,
+        ...(asset.contractId ? { assetContractId: asset.contractId } : {}),
       },
     };
   }

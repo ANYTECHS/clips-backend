@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { NftMetadata } from './ipfs-upload.service';
+import { RoyaltyConfigurationService } from './royalty-configuration.service';
 
 interface ClipData {
   id: number;
@@ -20,6 +21,10 @@ interface ClipData {
  */
 @Injectable()
 export class NftMetadataService {
+  constructor(
+    private readonly royaltyConfigurationService: RoyaltyConfigurationService,
+  ) {}
+
   /**
    * Generate an NFT metadata object from clip data.
    * Follows the ERC-721 / OpenSea metadata standard so it is compatible
@@ -28,6 +33,7 @@ export class NftMetadataService {
   build(clip: ClipData): NftMetadata {
     const royaltyBps = clip.royaltyBps;
     const royaltyRecipient = clip.royaltyRecipient?.trim() || undefined;
+    const asset = this.royaltyConfigurationService.getRoyaltyAsset();
 
     return {
       name: clip.title?.trim() || `Clip #${clip.id}`,
@@ -47,6 +53,8 @@ export class NftMetadataService {
         bps: royaltyBps,
         percent: royaltyBps / 100,
         ...(royaltyRecipient ? { recipient: royaltyRecipient } : {}),
+        asset: asset.code,
+        ...(asset.contractId ? { assetContractId: asset.contractId } : {}),
       },
     };
   }
