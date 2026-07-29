@@ -103,9 +103,7 @@ export class NftMintResponseDto {
   clipId: string;
 
   @ApiProperty({
-    description: 'Masked Stellar wallet address of the creator',
-    example: 'GC6X********UTZF3',
-    description: 'Creator wallet address',
+    description: 'Creator wallet address (may be masked in API responses)',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   creatorWallet: string;
@@ -146,6 +144,30 @@ export class NftPrepareMintResponseDto {
   clipId: number;
 
   @ApiProperty({
+    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
+  metadataUri: string;
+}
+
+/**
+ * Response after uploading clip NFT metadata to IPFS (before minting).
+ * Swagger documents metadataUri, IPFS CID, and a full example response.
+ */
+export class NftUploadMetadataResponseDto {
+  @ApiProperty({
+    description: 'Clip ID whose metadata was uploaded',
+    example: 42,
+  })
+  clipId: number;
+
+  @ApiProperty({
+    description: 'IPFS content identifier (CID) for the pinned metadata JSON',
+    example: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
+  cid: string;
+
+  @ApiProperty({
+    description: 'IPFS metadata URI persisted on the clip (ipfs://<cid>)',
     example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   })
   metadataUri: string;
