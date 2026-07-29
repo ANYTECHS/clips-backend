@@ -3,7 +3,6 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class TotpLoginDto {
   @ApiPropertyOptional({
-    description: 'TOTP code for MFA (6 digits)',
     description: '6-digit TOTP code for MFA-enabled accounts',
     example: '123456',
     minLength: 6,
