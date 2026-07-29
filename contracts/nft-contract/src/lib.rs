@@ -74,10 +74,22 @@ pub enum Error {
     ArrayLengthMismatch = 12,
     /// Batch size is 0 or exceeds maximum allowable limit.
     InvalidBatchSize = 13,
+    /// One-time metadata update limit reached for token ID.
+    MetadataAlreadyUpdated = 14,
 }
 
 #[contractimpl]
 impl ClipsNftContract {
+    /// Return collection name (Issue #686).
+    pub fn name(env: Env) -> String {
+        String::from_str(&env, "ClipCash NFT")
+    }
+
+    /// Return collection symbol (Issue #686).
+    pub fn symbol(env: Env) -> String {
+        String::from_str(&env, "CLIP")
+    }
+
     /// Initialise the contract and set the admin address.
     pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
         if storage::has_admin(&env) {
@@ -194,6 +206,55 @@ impl ClipsNftContract {
             .or_else(|| storage::get_token(&env, token_id).map(|t| t.content_uri))
     }
 
+    /// Update royalty recipient address for a given token ID (Issue #672).
+    /// Only the current recipient can update. Emits RoyaltyRecipientUpdated.
+    pub fn update_royalty_recipient(
+        env: Env,
+        token_id: u64,
+        new_recipient: Address,
+    ) -> Result<(), Error> {
+        let current_recipient = Self::get_royalty_recipient(env.clone(), token_id)
+            .ok_or(Error::TokenNotFound)?;
+
+        current_recipient.require_auth();
+
+        storage::set_token_royalty_recipient(&env, token_id, &new_recipient);
+        events::emit_royalty_recipient_updated(&env, token_id, &current_recipient, &new_recipient);
+        Ok(())
+    }
+
+    /// Retrieve the current royalty recipient address for a given token ID.
+    pub fn get_royalty_recipient(env: Env, token_id: u64) -> Option<Address> {
+        if !storage::has_token(&env, token_id) {
+            return None;
+        }
+        storage::get_token_royalty_recipient(&env, token_id)
+            .or_else(|| storage::get_token(&env, token_id).map(|t| t.creator))
+    }
+
+    /// Perform a one-time metadata update after minting (Issue #683).
+    /// Restricts updates strictly to the NFT owner and allows only one update.
+    pub fn update_metadata(
+        env: Env,
+        token_id: u64,
+        new_metadata: ClipMetadata,
+    ) -> Result<(), Error> {
+        let mut token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+        token_data.owner.require_auth();
+
+        if storage::is_metadata_updated(&env, token_id) {
+            return Err(Error::MetadataAlreadyUpdated);
+        }
+
+        token_data.content_uri = new_metadata.content_uri.clone();
+        storage::set_token(&env, token_id, &token_data);
+        storage::set_token_metadata(&env, token_id, &new_metadata);
+        storage::set_metadata_updated(&env, token_id);
+
+        events::emit_metadata_updated(&env, token_id, &token_data.owner, &new_metadata);
+        Ok(())
+    }
+
     /// Calculate fractional royalty for assets with custom decimal precision (Issue #685).
     pub fn calculate_fractional_royalty(
         _env: Env,
@@ -265,7 +326,8 @@ impl ClipsNftContract {
             sale_price * (royalty_bps as u64) / (storage::ROYALTY_BPS_MAX as u64)
         };
 
-        let recipient = token_data.creator.clone();
+        let recipient = Self::get_royalty_recipient(env.clone(), token_id)
+            .unwrap_or_else(|| token_data.creator.clone());
 
         storage::remove_owner_token(&env, &from, token_id);
         storage::set_owner_token(&env, &to, token_id);
@@ -422,9 +484,12 @@ impl ClipsNftContract {
 
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
 
+        let recipient = Self::get_royalty_recipient(env.clone(), token_id)
+            .unwrap_or_else(|| token_data.creator.clone());
+
         events::emit_royalty_paid(
             &env,
-            &token_data.creator,
+            &recipient,
             token_id,
             amount_stroops,
             0,
@@ -590,5 +655,25 @@ mod events {
     pub fn emit_upgrade(env: &Env, new_wasm_hash: &BytesN<32>) {
         let topics = (Symbol::new(env, "upgrade"),);
         env.events().publish(topics, (new_wasm_hash.clone(),));
+    }
+
+    pub fn emit_royalty_recipient_updated(
+        env: &Env,
+        token_id: u64,
+        old_recipient: &Address,
+        new_recipient: &Address,
+    ) {
+        let topics = (Symbol::new(env, "royalty_recipient_updated"), token_id);
+        env.events().publish(topics, (old_recipient.clone(), new_recipient.clone()));
+    }
+
+    pub fn emit_metadata_updated(
+        env: &Env,
+        token_id: u64,
+        owner: &Address,
+        metadata: &ClipMetadata,
+    ) {
+        let topics = (Symbol::new(env, "metadata_updated"), token_id, owner.clone());
+        env.events().publish(topics, metadata.clone());
     }
 }
