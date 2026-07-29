@@ -1,6 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contractmeta, contracttype,
+    Address, Env, Map, String, Symbol, Val,
     Address, BytesN, Env, String, Symbol, Val, Vec,
 };
 use soroban_token_sdk::metadata::TokenMetadata;
@@ -474,6 +475,36 @@ impl ClipsNftContract {
         storage::get_default_royalty_bps(&env)
     }
 
+    /// Permanently destroy a token. Only the current owner may burn it.
+    ///
+    /// Ownership, metadata, royalty overrides and any outstanding approval
+    /// are all removed from storage, so the token can never be transferred
+    /// again — `transfer`/`transfer_from`/`approve` all fail with
+    /// `Error::TokenNotFound` once a token has been burned.
+    pub fn burn(env: Env, owner: Address, token_id: u64) -> Result<(), Error> {
+        owner.require_auth();
+
+        let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+        if token_data.owner != owner {
+            return Err(Error::Unauthorized);
+        }
+
+        storage::remove_owner_token(&env, &owner, token_id);
+        storage::remove_token(&env, token_id);
+        storage::remove_token_metadata(&env, token_id);
+        storage::remove_approval(&env, token_id);
+        storage::decrement_total_supply(&env);
+
+        events::emit_burn(&env, &owner, token_id);
+        Ok(())
+    }
+
+    /// Set the admin-configured platform recipient + fee (in BPS) used as a
+    /// fallback royalty share for tokens that have no per-token override.
+    pub fn set_default_platform_fee(env: Env, recipient: Address, bps: u32) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
     pub fn pay_royalty(
         env: Env,
         token_id: u64,
@@ -510,6 +541,76 @@ impl ClipsNftContract {
             return Err(Error::InvalidRoyaltyBps);
         }
 
+        storage::set_platform_fee(&env, &recipient, bps);
+        Ok(())
+    }
+
+    /// Return the currently configured default platform recipient + fee, if any.
+    pub fn get_default_platform_fee(env: Env) -> Option<(Address, u32)> {
+        storage::get_platform_fee(&env)
+    }
+
+    /// Configure the royalty split for a specific token, overriding the
+    /// default royalty/platform fee fallback. Only the token owner may call
+    /// this. `royalties` maps each recipient to their share in basis points;
+    /// the combined total must not exceed `storage::ROYALTY_BPS_MAX`
+    /// (10 000 = 100%).
+    pub fn set_royalties(
+        env: Env,
+        token_id: u64,
+        royalties: Map<Address, u32>,
+    ) -> Result<(), Error> {
+        let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+        token_data.owner.require_auth();
+
+        let mut total: u32 = 0;
+        for (_, bps) in royalties.iter() {
+            total = total.saturating_add(bps);
+        }
+        if total > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        storage::set_royalty_shares(&env, token_id, &royalties);
+        events::emit_royalties_updated(&env, token_id, total);
+        Ok(())
+    }
+
+    /// Return the royalty split for a token: an explicit per-token override
+    /// when one has been configured via `set_royalties`, otherwise a
+    /// fallback built from the default royalty BPS (creator) plus the
+    /// configured platform fee, if any.
+    pub fn get_royalties(env: Env, token_id: u64) -> Map<Address, u32> {
+        if let Some(royalties) = storage::get_royalty_shares(&env, token_id) {
+            return royalties;
+        }
+
+        let mut royalties = Map::new(&env);
+        let Some(token_data) = storage::get_token(&env, token_id) else {
+            return royalties;
+        };
+        let Some(default_bps) = storage::get_default_royalty_bps(&env) else {
+            return royalties;
+        };
+
+        match storage::get_platform_fee(&env) {
+            Some((platform_recipient, platform_bps)) => {
+                let creator_bps = default_bps.saturating_sub(platform_bps);
+                if creator_bps > 0 {
+                    royalties.set(token_data.creator, creator_bps);
+                }
+                if platform_bps > 0 {
+                    royalties.set(platform_recipient, platform_bps);
+                }
+            }
+            None => {
+                if default_bps > 0 {
+                    royalties.set(token_data.creator, default_bps);
+                }
+            }
+        }
+
+        royalties
         storage::set_token_royalty_bps(&env, token_id, bps);
         Ok(())
     }
@@ -632,6 +733,14 @@ mod events {
         env.events().publish(topics, token_id);
     }
 
+    pub fn emit_burn(env: &Env, owner: &Address, token_id: u64) {
+        let topics = (Symbol::new(env, "burn"), owner.clone());
+        env.events().publish(topics, token_id);
+    }
+
+    pub fn emit_royalties_updated(env: &Env, token_id: u64, total_bps: u32) {
+        let topics = (Symbol::new(env, "royalties_updated"), token_id);
+        env.events().publish(topics, total_bps);
     pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
         let topics = (Symbol::new(env, "royalty_updated"),);
         env.events().publish(topics, (old_bps, new_bps));
