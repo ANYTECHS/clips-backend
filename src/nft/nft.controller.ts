@@ -5,6 +5,7 @@ import {
   NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -26,7 +27,6 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
@@ -45,6 +45,18 @@ import {
   RoyaltyNotFoundDto,
   RoyaltyUnauthorizedDto,
 } from './dto/royalty-query.dto';
+import {
+  BurnNftDto,
+  BurnNftResponseDto,
+  BurnForbiddenDto,
+  BurnNotFoundDto,
+} from './dto/burn-nft.dto';
+import {
+  RoyaltySplitsResponseDto,
+  UpdateRoyaltySplitsDto,
+  UpdateRoyaltySplitsResponseDto,
+  RoyaltySplitsValidationErrorDto,
+} from './dto/royalty-splits.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -371,6 +383,115 @@ export class NftController {
     @Param('mintAddress') mintAddress: string,
   ): Promise<RoyaltyInfo> {
     return this.royaltyQueryService.getRoyaltyInfo(mintAddress);
+  }
+
+  /**
+   * POST /nfts/:id/burn
+   * Prepares a Soroban transaction that permanently burns a minted clip NFT.
+   * Only the clip owner (authenticated user) may request this, and only the
+   * on-chain token owner's wallet can sign the returned transaction.
+   */
+  @UseGuards(LoginGuard)
+  @Post(':id/burn')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Burn a minted clip NFT',
+    description:
+      'Builds an unsigned Soroban transaction that calls the burn(owner, token_id) contract ' +
+      'method, permanently destroying the token. The caller must own the clip; the returned XDR ' +
+      "must be signed by the NFT owner's wallet and submitted to the network by the frontend.",
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID / token ID to burn', example: 42 })
+  @ApiBody({ type: BurnNftDto })
+  @ApiOkResponse({
+    description: 'Unsigned burn transaction XDR returned successfully',
+    type: BurnNftResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid wallet address, or clip not yet minted' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip being burned',
+    type: BurnForbiddenDto,
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found', type: BurnNotFoundDto })
+  async burn(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: BurnNftDto,
+    @Req() req: Request,
+  ): Promise<BurnNftResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+    return this.nftMintService.prepareBurnTx(id, dto.walletAddress);
+  }
+
+  /**
+   * GET /nfts/:id/royalties
+   * Returns the full multi-recipient royalty split configured for a token.
+   */
+  @Get(':id/royalties')
+  @ApiOperation({
+    summary: 'Get the multi-recipient royalty split for an NFT',
+    description:
+      'Reads the full royalty split (recipient -> basis points) from the Soroban get_royalties ' +
+      'contract method. Falls back to the default royalty/platform fee configuration when no ' +
+      'per-token override has been set.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID / token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Royalty split returned successfully',
+    type: RoyaltySplitsResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID' })
+  @ApiNotFoundResponse({ description: 'No royalty split configured for this token' })
+  async getRoyaltySplits(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<RoyaltySplitsResponseDto> {
+    const shares = await this.royaltyQueryService.getRoyaltySplits(id);
+    return {
+      tokenId: id,
+      shares: shares.map((s) => ({ recipient: s.recipient, bps: s.royaltyBps })),
+      totalBps: shares.reduce((sum, s) => sum + s.royaltyBps, 0),
+    };
+  }
+
+  /**
+   * PATCH /nfts/:id/royalties
+   * Prepares a Soroban transaction that configures a token's royalty split
+   * across multiple recipients.
+   */
+  @UseGuards(LoginGuard)
+  @Patch(':id/royalties')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Configure a multi-recipient royalty split for an NFT',
+    description:
+      'Builds an unsigned Soroban transaction that calls set_royalties(token_id, royalties), ' +
+      'splitting future royalty payouts across multiple recipients. Combined shares must not ' +
+      "exceed 10000 BPS (100%). The returned XDR must be signed by the NFT owner's wallet.",
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID / token ID', example: 42 })
+  @ApiBody({ type: UpdateRoyaltySplitsDto })
+  @ApiOkResponse({
+    description: 'Unsigned set_royalties transaction XDR returned successfully',
+    type: UpdateRoyaltySplitsResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid wallet address, clip not yet minted, or combined shares exceed 10000 BPS',
+    type: RoyaltySplitsValidationErrorDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async updateRoyaltySplits(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateRoyaltySplitsDto,
+    @Req() req: Request,
+  ): Promise<UpdateRoyaltySplitsResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+    return this.nftMintService.prepareSetRoyaltiesTx(id, dto.walletAddress, dto.shares);
   }
 
   /**
