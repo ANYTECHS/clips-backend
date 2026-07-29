@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{ClipsNftContract, ClipsNftContractClient, Error, TokenData};
+use crate::{ClipMetadata, ClipsNftContract, ClipsNftContractClient, Error};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String, Vec};
 
 
@@ -1155,5 +1155,101 @@ fn test_fractional_royalty_precision_and_rounding() {
 
     let royalty = client.calculate_fractional_royalty(&sale_price_stroops, &royalty_bps, &decimals);
     assert_eq!(royalty, 375_000);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issues #672, #686, #683 tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_name_and_symbol() {
+    let (env, _contract_id, client) = setup_env();
+    assert_eq!(client.name(), String::from_str(&env, "ClipCash NFT"));
+    assert_eq!(client.symbol(), String::from_str(&env, "CLIP"));
+}
+
+#[test]
+fn test_update_royalty_recipient_by_recipient() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let new_recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&creator, &5001, &String::from_str(&env, "c5001"), &String::from_str(&env, "uri5001"), &false);
+
+    assert_eq!(client.get_royalty_recipient(&5001), Some(creator.clone()));
+
+    client.update_royalty_recipient(&5001, &new_recipient);
+
+    assert_eq!(client.get_royalty_recipient(&5001), Some(new_recipient.clone()));
+
+    // Verify transfer_with_royalty uses new recipient
+    client.set_default_royalty_bps(&1000); // 10%
+    let buyer = Address::generate(&env);
+    let royalty_info = client.transfer_with_royalty(&creator, &buyer, &5001, &1000);
+    assert_eq!(royalty_info.recipient, new_recipient);
+    assert_eq!(royalty_info.royalty_amount, 100);
+}
+
+#[test]
+fn test_update_royalty_recipient_unauthorized_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&creator, &5002, &String::from_str(&env, "c5002"), &String::from_str(&env, "uri5002"), &false);
+
+    env.mock_auths(&[]); // clear auths so authorization fails
+
+    let result = client.try_update_royalty_recipient(&5002, &stranger);
+    assert!(result.is_err(), "Unauthorized update of royalty recipient must fail");
+}
+
+#[test]
+fn test_update_metadata_one_time_enforcement() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&owner, &6001, &String::from_str(&env, "c6001"), &String::from_str(&env, "uri6001"), &false);
+
+    let initial_meta = ClipMetadata {
+        name: String::from_str(&env, "Updated Clip"),
+        description: String::from_str(&env, "Updated description"),
+        content_uri: String::from_str(&env, "ipfs://QmUpdatedUri"),
+        creator: String::from_str(&env, "CreatorName"),
+        royalty_percent: 10,
+        is_soulbound: false,
+        created_at: env.ledger().timestamp(),
+        virality_score: 95,
+        original_duration: 30,
+    };
+
+    // First update succeeds
+    client.update_metadata(&6001, &initial_meta);
+    assert_eq!(client.token_uri(&6001), Some(String::from_str(&env, "ipfs://QmUpdatedUri")));
+
+    // Second update attempt fails with MetadataAlreadyUpdated
+    let second_meta = ClipMetadata {
+        name: String::from_str(&env, "Second Update Attempt"),
+        ..initial_meta.clone()
+    };
+
+    let result = client.try_update_metadata(&6001, &second_meta);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::MetadataAlreadyUpdated,
+        "Second metadata update must return MetadataAlreadyUpdated"
+    );
 }
 

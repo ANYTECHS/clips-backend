@@ -202,6 +202,31 @@ pub fn get_custom_token_uri(env: &Env, token_id: u64) -> Option<soroban_sdk::Str
         .get(&(token_id, Symbol::new(env, "custom_uri")))
 }
 
+pub fn set_token_royalty_recipient(env: &Env, token_id: u64, recipient: &Address) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "royalty_rec")), recipient);
+}
+
+pub fn get_token_royalty_recipient(env: &Env, token_id: u64) -> Option<Address> {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "royalty_rec")))
+}
+
+pub fn set_metadata_updated(env: &Env, token_id: u64) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "meta_updated")), &true);
+}
+
+pub fn is_metadata_updated(env: &Env, token_id: u64) -> bool {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "meta_updated")))
+        .unwrap_or(false)
+}
+
 // ── Issue #641: upgradeability ──────────────────────────────────────────────
 
 

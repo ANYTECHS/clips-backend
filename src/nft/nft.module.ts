@@ -18,7 +18,7 @@ import { AdminContractService } from './admin-contract.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
-import { RedisModule } from '../redis/redis.module';
+import { GasMetricsService } from './gas-metrics.service';
 
 @Module({
   imports: [
@@ -32,6 +32,7 @@ import { RedisModule } from '../redis/redis.module';
   providers: [
     NftConfig,
     NftService,
+    GasMetricsService,
     NftMintService,
     NftMetadataService,
     RoyaltyQueryService,
@@ -49,6 +50,7 @@ import { RedisModule } from '../redis/redis.module';
   ],
   exports: [
     NftService,
+    GasMetricsService,
     NftMintService,
     NftMetadataService,
     RoyaltyQueryService,
