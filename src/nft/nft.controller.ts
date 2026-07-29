@@ -26,6 +26,7 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
@@ -34,10 +35,12 @@ import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
 import {
   NftMetadataResponseDto,
-  NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
   VerifyNftOwnershipDto,
+  NftOwnerResponseDto,
+  WalletNftsResponseDto,
+  NftMintResponseDto,
 } from './dto/nft-swagger.dto';
 import {
   RoyaltyQueryResponseDto,
@@ -49,12 +52,15 @@ import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
 import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
+import { NftOwnershipService } from './nft-ownership.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
+import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { maskAddress } from '../wallets/wallet.utils';
 
+@ApiTags('nfts')
 @ApiTags('nft')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
@@ -66,9 +72,64 @@ export class NftController {
     private readonly ipfsUploadService: IpfsUploadService,
     private readonly royaltyQueryService: RoyaltyQueryService,
     private readonly ownershipVerificationService: NftOwnershipVerificationService,
+    private readonly nftOwnershipService: NftOwnershipService,
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
+    private readonly mintSignatureVerification: MintSignatureVerificationService,
   ) {}
+
+  @Get(':id/owner')
+  @ApiOperation({
+    summary: 'Get the current owner of an NFT',
+    description:
+      'Queries the on-chain Soroban contract to find the current owner of the given token ID. ' +
+      'Returns null if the token has not been minted.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Owner address returned successfully',
+    type: NftOwnerResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID format' })
+  async getOwner(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<NftOwnerResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    const owner = await this.nftOwnershipService.getOwner(id.toString());
+    return { owner };
+  }
+
+  @Get('/wallets/:address/nfts')
+  @ApiOperation({
+    summary: 'Get NFTs owned by a wallet',
+    description:
+      'Queries the on-chain Soroban contract to get all token IDs currently held by the specified wallet.',
+  })
+  @ApiParam({
+    name: 'address',
+    description: 'Stellar wallet address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @ApiOkResponse({
+    description: 'Owned NFTs returned successfully',
+    type: WalletNftsResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid wallet address' })
+  async getWalletNfts(
+    @Param('address') address: string,
+  ): Promise<WalletNftsResponseDto> {
+    if (!address || address.length !== 56 || !address.startsWith('G')) {
+      throw new BadRequestException('Invalid Stellar wallet address');
+    }
+    const tokenIds = await this.nftOwnershipService.getWalletTokenIds(address);
+    return {
+      address,
+      tokenIds,
+      balance: tokenIds.length,
+    };
+  }
 
   @UseGuards(NftMintGuard)
   @Post('mint')
@@ -111,6 +172,17 @@ export class NftController {
     });
   }
 
+  /**
+   * POST /nfts/prepare-mint
+   * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
+   * The authenticated user must own the clip being minted.
+   */
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Prepare an NFT mint transaction for signing' })
+  @ApiResponse({ status: 201, description: 'Mint transaction prepared' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'User does not own the clip' })
+  @UseGuards(LoginGuard)
   @UseGuards(LoginGuard, NftMintGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
@@ -143,13 +215,50 @@ export class NftController {
       },
     },
   })
-  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+    schema: {
+      example: {
+        statusCode: 403,
+        message: 'You do not own this clip',
+        error: 'Forbidden',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Wallet signature is invalid or does not match the provided walletAddress. ' +
+      'Required signature fields: walletAddress (Stellar G... key), ' +
+      'walletSignature (Ed25519 signature over the canonical challenge message: ' +
+      '"ClipCash mint authorization for clip <clipId> by <walletAddress>").',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
+  })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,
     @Req() req: Request,
   ) {
     const userId = Number((req as any).user?.id ?? 0);
+
+    // 1. Ownership check: clip must belong to the authenticated user.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
+
+    // 2. Signature check: when the caller provides a wallet signature, verify
+    //    it before building the XDR.  This proves the caller controls the
+    //    private key for walletAddress, preventing mints on behalf of others.
+    if (dto.walletSignature) {
+      this.mintSignatureVerification.verify(
+        dto.clipId,
+        dto.walletAddress,
+        dto.walletSignature,
+      );
+    }
+
     return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
   }
 
@@ -319,5 +428,69 @@ export class NftController {
     @Param('mintAddress') mintAddress: string,
   ): Promise<RoyaltyInfo> {
     return this.royaltyQueryService.getRoyaltyInfo(mintAddress);
+  }
+
+  /**
+   * GET /nfts/contract/info
+   *
+   * Returns the currently deployed Soroban NFT contract details:
+   * contractId, network, rpcUrl, and networkPassphrase.
+   *
+   * This is useful for frontends and tooling that need to know which
+   * contract to interact with on the currently configured network.
+   */
+  @Get('contract/info')
+  @ApiOperation({
+    summary: 'Get deployed Soroban NFT contract info',
+    description:
+      'Returns the contract ID and network details for the currently deployed ' +
+      'ClipCash NFT Soroban contract. Network is driven by the STELLAR_NETWORK ' +
+      'environment variable (testnet | public).',
+  })
+  @ApiOkResponse({
+    description: 'Contract info returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        network: 'testnet',
+        rpcUrl: 'https://soroban-testnet.stellar.org',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        explorerUrl:
+          'https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+      },
+    },
+  })
+  getContractInfo(): {
+    contractId: string;
+    network: string;
+    rpcUrl: string;
+    networkPassphrase: string;
+    explorerUrl: string;
+  } {
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const network = (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase();
+    const isMainnet = network === 'public';
+
+    const rpcUrl = isMainnet
+      ? 'https://soroban-rpc.stellar.org'
+      : 'https://soroban-testnet.stellar.org';
+
+    const networkPassphrase = isMainnet
+      ? 'Public Global Stellar Network ; September 2015'
+      : 'Test SDF Network ; September 2015';
+
+    const explorerBase = isMainnet
+      ? 'https://stellar.expert/explorer/public/contract'
+      : 'https://stellar.expert/explorer/testnet/contract';
+
+    return {
+      contractId,
+      network,
+      rpcUrl,
+      networkPassphrase,
+      explorerUrl: `${explorerBase}/${contractId}`,
+    };
   }
 }

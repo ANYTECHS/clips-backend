@@ -11,6 +11,14 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { UserPlatformService } from './user-platform.service';
+import { LoginGuard } from '../auth/guards/login.guard';
+import type { UserPlatformCreateInput, UserPlatformUpdateInput } from './user-platform.service';
+import { UserPlatformResponseDto, toUserPlatformResponseDto } from './dto/user-platform-response.dto';
+
+@ApiTags('user-platforms')
+@ApiBearerAuth('access-token')
 import {
   ApiTags,
   ApiOperation,
@@ -34,11 +42,14 @@ import type {
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller(['user-platforms', 'user-platform'])
-@UseGuards(AuthGuard('jwt'))
+@UseGuards(LoginGuard)
 export class UserPlatformController {
   constructor(private readonly userPlatformService: UserPlatformService) {}
 
   @Post()
+  @ApiOperation({ summary: 'Connect a platform account' })
+  @ApiResponse({ status: 201, description: 'Platform connected', type: UserPlatformResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiOperation({
     summary: 'Connect a social platform',
     description: 'Connects a social media platform to the authenticated user',
@@ -46,13 +57,17 @@ export class UserPlatformController {
   @ApiResponse({ status: 201, description: 'Platform connected successfully' })
   @ApiBadRequestResponse({ description: 'Invalid input' })
   async create(@Request() req: any, @Body() data: UserPlatformCreateInput) {
-    return this.userPlatformService.create({
+    const created = await this.userPlatformService.create({
       ...data,
       userId: req.user.id,
     });
+    return toUserPlatformResponseDto(created);
   }
 
   @Get()
+  @ApiOperation({ summary: 'List connected platforms for the current user' })
+  @ApiResponse({ status: 200, description: 'List of connected platforms', type: [UserPlatformResponseDto] })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiOperation({
     summary: 'List connected platforms',
     description:
@@ -60,10 +75,14 @@ export class UserPlatformController {
   })
   @ApiResponse({ status: 200, description: 'List of connected platforms' })
   async findAll(@Request() req: any) {
-    return this.userPlatformService.findAll(req.user.id);
+    const platforms = await this.userPlatformService.findAll(req.user.id);
+    return platforms.map(toUserPlatformResponseDto);
   }
 
   @Get('platform/:platform')
+  @ApiOperation({ summary: 'Get connection for a specific platform' })
+  @ApiResponse({ status: 200, description: 'Platform connection', type: UserPlatformResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiOperation({
     summary: 'Find platform by name',
     description: 'Returns platform connection details for a specific platform',
@@ -78,10 +97,15 @@ export class UserPlatformController {
     @Request() req: any,
     @Param('platform') platform: string,
   ) {
-    return this.userPlatformService.findByPlatform(req.user.id, platform);
+    const found = await this.userPlatformService.findByPlatform(req.user.id, platform);
+    return found ? toUserPlatformResponseDto(found) : null;
   }
 
   @Get(':id')
+  @ApiOperation({ summary: 'Get a platform connection by ID' })
+  @ApiResponse({ status: 200, description: 'Platform connection', type: UserPlatformResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   @ApiOperation({
     summary: 'Get platform by ID',
     description: 'Returns a specific platform connection by its ID',
@@ -90,10 +114,15 @@ export class UserPlatformController {
   @ApiResponse({ status: 200, description: 'Platform connection found' })
   @ApiNotFoundResponse({ description: 'Platform connection not found' })
   async findOne(@Request() req: any, @Param('id') id: string) {
-    return this.userPlatformService.findOne(Number(id), req.user.id);
+    const found = await this.userPlatformService.findOne(Number(id), req.user.id);
+    return toUserPlatformResponseDto(found);
   }
 
   @Put(':id')
+  @ApiOperation({ summary: 'Update a platform connection' })
+  @ApiResponse({ status: 200, description: 'Platform connection updated', type: UserPlatformResponseDto })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   @ApiOperation({
     summary: 'Update platform connection',
     description: 'Updates an existing social platform connection',
@@ -107,10 +136,15 @@ export class UserPlatformController {
     @Param('id') id: string,
     @Body() data: UserPlatformUpdateInput,
   ) {
-    return this.userPlatformService.update(Number(id), data, req.user.id);
+    const updated = await this.userPlatformService.update(Number(id), data, req.user.id);
+    return toUserPlatformResponseDto(updated);
   }
 
   @Delete(':id')
+  @ApiOperation({ summary: 'Disconnect a platform' })
+  @ApiResponse({ status: 204, description: 'Platform disconnected' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({
     summary: 'Disconnect platform',
@@ -120,10 +154,13 @@ export class UserPlatformController {
   @ApiResponse({ status: 204, description: 'Platform disconnected' })
   @ApiNotFoundResponse({ description: 'Platform connection not found' })
   async remove(@Request() req: any, @Param('id') id: string) {
-    return this.userPlatformService.remove(Number(id), req.user.id);
+    await this.userPlatformService.remove(Number(id), req.user.id);
   }
 
   @Post('migrate')
+  @ApiOperation({ summary: 'Migrate legacy unencrypted platform tokens to encrypted storage' })
+  @ApiResponse({ status: 200, description: 'Migration result' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Migrate platform records',
