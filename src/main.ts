@@ -118,13 +118,14 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      referrerPolicy: { policy: 'no-referrer' },
       hsts: {
         maxAge: 31536000,
         includeSubDomains: true,
         preload: true,
       },
       noSniff: true,
-      xssFilter: true,
       hidePoweredBy: true,
       frameguard: {
         action: 'deny',
@@ -233,6 +234,43 @@ async function bootstrap() {
       '`\'unsafe-inline\'` scripts when the Swagger UI is enabled (non-production, or ' +
       '`ENABLE_SWAGGER_UI=true`), since the docs page needs an inline script to boot. ' +
       'API JSON responses are never affected by this relaxation.',
+      'API JSON responses are never affected by this relaxation.\n\n' +
+      '## CSRF Protection\n\n' +
+      'All state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) that are authenticated via the ' +
+      'httpOnly session cookie must also include a CSRF token. Requests using `Authorization: Bearer` ' +
+      'or `X-API-Key` (and `GET`/`HEAD`/`OPTIONS` requests) are exempt.\n\n' +
+      '| Header | Required | Description |\n' +
+      '|--------|----------|-------------|\n' +
+      '| `X-CSRF-Token` | Yes, for cookie-authenticated mutations | Must match the `_csrf` cookie value issued at login |\n\n' +
+      '### Example request\n\n' +
+      '```http\n' +
+      'POST /wallets/connect HTTP/1.1\n' +
+      'Host: api.clipcash.example\n' +
+      'Cookie: _csrf=abc123...\n' +
+      'X-CSRF-Token: abc123...\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "walletAddress": "GC6X..." }\n' +
+      '```\n\n' +
+      '### Invalid or missing token\n\n' +
+      'Returns `403 Forbidden`:\n' +
+      '```json\n' +
+      '{\n' +
+      '  "statusCode": 403,\n' +
+      '  "message": "Invalid CSRF token",\n' +
+      '  "error": "Forbidden"\n' +
+      '}\n' +
+      '```\n\n' +
+      '## CORS Policy\n\n' +
+      'Cross-origin requests are restricted to an explicit allow-list — there is no wildcard (`*`) origin. ' +
+      'Swagger UI itself is served from and consumed on the same origin as the API, so it remains fully ' +
+      'accessible regardless of the CORS origin allow-list.\n\n' +
+      '| Environment | Allowed origins |\n' +
+      '|-------------|------------------|\n' +
+      '| Development (default) | `http://localhost:3000`, `http://127.0.0.1:3000` |\n' +
+      '| Production | Only origins listed in `ALLOWED_ORIGINS` (comma-separated); empty by default |\n\n' +
+      'Configure additional development or staging origins with the `ALLOWED_ORIGINS` environment variable, ' +
+      'e.g. `ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173`. Allowed methods and headers can ' +
+      'similarly be overridden via `ALLOWED_METHODS` and `ALLOWED_HEADERS`.',
     )
     .setVersion('1.0')
     .addBearerAuth(
@@ -307,38 +345,6 @@ async function bootstrap() {
   // Raw body parser for webhook signature verification (must be before JSON parser for specific routes)
   // This preserves the raw body for HMAC signature verification
   app.use('/webhooks/stellar', bodyParser.raw({ type: 'application/json' }));
-
-  // Security headers with Helmet
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          scriptSrc: [`'self'`, `'unsafe-inline'`],
-          imgSrc: [`'self'`, 'data:', 'https:'],
-          connectSrc: [`'self'`],
-          fontSrc: [`'self'`, 'https:', 'data:'],
-          objectSrc: [`'none'`],
-          mediaSrc: [`'self'`],
-          frameSrc: [`'none'`],
-        },
-      },
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-      referrerPolicy: { policy: 'no-referrer' },
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
-      noSniff: true,
-      hidePoweredBy: true,
-      frameguard: {
-        action: 'deny',
-      },
-    }),
-  );
 
   // API responses may contain user-specific or sensitive data — prevent
   // shared/browser caches from storing them. Swagger UI is left cacheable.

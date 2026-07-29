@@ -288,6 +288,132 @@ export class NftMintService {
     }
   }
 
+  /**
+   * Prepares (but does not sign) a Soroban transaction that burns a minted
+   * clip NFT. Only the NFT owner's wallet can sign this — burn requires the
+   * on-chain `owner.require_auth()` check in the contract — so the frontend
+   * must sign and submit the returned XDR itself.
+   */
+  async prepareBurnTx(clipId: number, walletAddress: string) {
+    const addressCheck = this.stellarService.validateAddress(walletAddress);
+    if (!addressCheck.valid) {
+      throw new BadRequestException(
+        `Invalid wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) {
+      throw new NotFoundException(`Clip with ID ${clipId} not found`);
+    }
+    if (!clip.mintAddress) {
+      throw new BadRequestException('Clip has not been minted on-chain');
+    }
+
+    const networkPassphrase = this.stellarService.networkPassphrase;
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(walletAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(
+      'burn',
+      StellarSdk.Address.fromString(walletAddress).toScVal(),
+      StellarSdk.nativeToScVal(BigInt(clipId), { type: 'u64' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      tokenId: clip.id,
+      owner: walletAddress,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  /**
+   * Prepares (but does not sign) a Soroban transaction that configures a
+   * per-token royalty split (multiple recipients). Only the NFT owner's
+   * wallet can sign this, since `set_royalties` requires owner auth
+   * on-chain.
+   */
+  async prepareSetRoyaltiesTx(
+    clipId: number,
+    walletAddress: string,
+    shares: { recipient: string; bps: number }[],
+  ) {
+    const addressCheck = this.stellarService.validateAddress(walletAddress);
+    if (!addressCheck.valid) {
+      throw new BadRequestException(
+        `Invalid wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const totalBps = shares.reduce((sum, share) => sum + share.bps, 0);
+    if (totalBps > 10_000) {
+      throw new BadRequestException(
+        `Combined royalty shares (${totalBps} bps) exceed the maximum of 10000 bps (100%).`,
+      );
+    }
+
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) {
+      throw new NotFoundException(`Clip with ID ${clipId} not found`);
+    }
+    if (!clip.mintAddress) {
+      throw new BadRequestException('Clip has not been minted on-chain');
+    }
+
+    const networkPassphrase = this.stellarService.networkPassphrase;
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(walletAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    // Map<Address, u32> entries, same encoding buildRoyaltyMap() already uses for mint royalties.
+    const royaltyMapEntries = shares.map((share) => ({
+      key: StellarSdk.Address.fromString(share.recipient).toScVal(),
+      value: StellarSdk.nativeToScVal(share.bps, { type: 'u32' }),
+    }));
+
+    const op = contract.call(
+      'set_royalties',
+      StellarSdk.nativeToScVal(BigInt(clipId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(royaltyMapEntries, { type: 'map' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      tokenId: clip.id,
+      shares,
+      totalBps,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
   private buildMetadata(clip: {
     id: number;
     title: string | null;
