@@ -185,6 +185,22 @@ impl ClipsNftContract {
         storage::get_token(&env, token_id)
     }
 
+    pub fn get_metadata(env: Env, token_id: u64) -> Option<ClipMetadata> {
+        storage::get_token_metadata(&env, token_id)
+    }
+
+    pub fn set_metadata(env: Env, token_id: u64, metadata: ClipMetadata) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+
+        storage::set_token_metadata(&env, token_id, &metadata);
+        Ok(())
+    }
+
     pub fn is_soulbound(env: Env, token_id: u64) -> bool {
         storage::get_token(&env, token_id)
             .map(|t| t.is_soulbound)

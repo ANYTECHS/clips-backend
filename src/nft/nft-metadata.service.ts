@@ -48,6 +48,9 @@ export class NftMetadataService {
         percent: royaltyBps / 100,
         ...(royaltyRecipient ? { recipient: royaltyRecipient } : {}),
       },
+      viralityScore: clip.viralityScore ?? 0,
+      originalDuration: clip.duration,
+      createdAt: clip.createdAt.toISOString(),
     };
   }
 }
