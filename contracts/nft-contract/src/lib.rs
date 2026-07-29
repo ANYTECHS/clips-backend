@@ -51,10 +51,19 @@ pub enum Error {
 
 #[contractimpl]
 impl ClipsNftContract {
+    /// Initialise the contract and set the admin address.
+    ///
+    /// # Security
+    /// `admin.require_auth()` is called **before** writing to storage so that
+    /// only the holder of `admin`'s private key can claim the admin role.
+    /// This prevents a frontrunning attack where an observer of the deploy
+    /// transaction races to call `initialize` with a malicious admin address.
     pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
         if storage::has_admin(&env) {
             return Err(Error::AlreadyInitialized);
         }
+        // AC-01 fix: require admin to authorise its own appointment.
+        admin.require_auth();
         storage::set_admin(&env, &admin);
         Ok(())
     }
@@ -222,7 +231,10 @@ impl ClipsNftContract {
             return Err(Error::InvalidRoyaltyBps);
         }
 
+        // EV-01 fix: capture old value before overwrite so the event carries both.
+        let old_bps = storage::get_default_royalty_bps(&env).unwrap_or(0);
         storage::set_default_royalty_bps(&env, bps);
+        events::emit_royalty_updated(&env, old_bps, bps);
         Ok(())
     }
 
@@ -254,5 +266,12 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    /// EV-01: emitted whenever the default royalty BPS is changed.
+    /// `old_bps` is 0 when no royalty was previously configured.
+    pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
+        let topics = (Symbol::new(env, "royalty_updated"),);
+        env.events().publish(topics, (old_bps, new_bps));
     }
 }
