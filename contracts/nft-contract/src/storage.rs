@@ -1,11 +1,9 @@
-use soroban_sdk::{Address, BytesN, Env, Map, Vec};
-use soroban_sdk::contracttype;
-use soroban_sdk::Symbol;
+use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
 
 use crate::TokenData;
 
-#[contracttype]
 pub struct TokenStorage;
+
 
 // ── Compact storage keys (issue #642) ──────────────────────────────────────
 // Short keys reduce per-entry storage footprint and RPC read latency.
@@ -123,7 +121,20 @@ pub fn get_token_metadata(env: &Env, token_id: u64) -> Option<crate::ClipMetadat
     env.storage().persistent().get(&(token_id, Symbol::new(env, "metadata")))
 }
 
+pub fn set_custom_token_uri(env: &Env, token_id: u64, uri: &soroban_sdk::String) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "custom_uri")), uri);
+}
+
+pub fn get_custom_token_uri(env: &Env, token_id: u64) -> Option<soroban_sdk::String> {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "custom_uri")))
+}
+
 // ── Issue #641: upgradeability ──────────────────────────────────────────────
+
 
 pub fn set_wasm_hash(env: &Env, hash: &BytesN<32>) {
     env.storage()
