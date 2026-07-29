@@ -10,4 +10,6 @@ pub struct ClipMetadata {
     pub royalty_percent: u32,
     pub is_soulbound: bool,
     pub created_at: u64,
+    pub virality_score: u32,
+    pub original_duration: u32,
 }

@@ -1,7 +1,5 @@
 use soroban_sdk::{Address, Env, Symbol};
-use soroban_sdk::contracttype;
 
-#[contracttype]
 pub struct Admin;
 
 pub fn has_admin(env: &Env) -> bool {

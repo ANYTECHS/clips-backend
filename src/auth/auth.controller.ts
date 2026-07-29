@@ -74,6 +74,7 @@ export class AuthController {
         error: 'Bad Request',
       },
     },
+  })
   @ApiBody({ type: SignupDto })
   @ApiResponse({
     status: 201,
@@ -614,7 +615,6 @@ export class AuthController {
       '(min 10 characters, zxcvbn score >= 3). Password validation errors return a ' +
       'JSON-encoded message, e.g. ' +
       '`{"score":1,"feedback":["Add numbers"],"suggestions":"Password is too weak. Add numbers"}`.',
-    description: 'Invalid token or password requirements not met',
     examples: {
       invalidToken: {
         summary: 'Invalid or expired token',

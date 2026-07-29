@@ -5,11 +5,14 @@ import {
   NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
   HttpCode,
   HttpStatus,
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -26,19 +29,27 @@ import {
   ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
+import { BatchMintDto, BatchMintResponseDto } from './dto/batch-mint.dto';
+import {
+  UpdateTokenUriDto,
+  UpdateTokenUriResponseDto,
+  TokenUriOwnershipErrorDto,
+} from './dto/update-token-uri.dto';
+
 import {
   NftMetadataResponseDto,
-  NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
   VerifyNftOwnershipDto,
+  NftOwnerResponseDto,
+  WalletNftsResponseDto,
+  NftMintResponseDto,
 } from './dto/nft-swagger.dto';
 import {
   RoyaltyQueryResponseDto,
@@ -50,6 +61,7 @@ import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
 import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
+import { NftOwnershipService } from './nft-ownership.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
@@ -72,6 +84,7 @@ export class NftController {
     private readonly ipfsUploadService: IpfsUploadService,
     private readonly royaltyQueryService: RoyaltyQueryService,
     private readonly ownershipVerificationService: NftOwnershipVerificationService,
+    private readonly nftOwnershipService: NftOwnershipService,
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
     private readonly mintSignatureVerification: MintSignatureVerificationService,
@@ -79,6 +92,60 @@ export class NftController {
   ) {}
 
   @UseGuards(LoginGuard, NftMintGuard)
+  @Get(':id/owner')
+  @ApiOperation({
+    summary: 'Get the current owner of an NFT',
+    description:
+      'Queries the on-chain Soroban contract to find the current owner of the given token ID. ' +
+      'Returns null if the token has not been minted.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Owner address returned successfully',
+    type: NftOwnerResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID format' })
+  async getOwner(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<NftOwnerResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    const owner = await this.nftOwnershipService.getOwner(id.toString());
+    return { owner };
+  }
+
+  @Get('/wallets/:address/nfts')
+  @ApiOperation({
+    summary: 'Get NFTs owned by a wallet',
+    description:
+      'Queries the on-chain Soroban contract to get all token IDs currently held by the specified wallet.',
+  })
+  @ApiParam({
+    name: 'address',
+    description: 'Stellar wallet address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @ApiOkResponse({
+    description: 'Owned NFTs returned successfully',
+    type: WalletNftsResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid wallet address' })
+  async getWalletNfts(
+    @Param('address') address: string,
+  ): Promise<WalletNftsResponseDto> {
+    if (!address || address.length !== 56 || !address.startsWith('G')) {
+      throw new BadRequestException('Invalid Stellar wallet address');
+    }
+    const tokenIds = await this.nftOwnershipService.getWalletTokenIds(address);
+    return {
+      address,
+      tokenIds,
+      balance: tokenIds.length,
+    };
+  }
+
+  @UseGuards(NftMintGuard)
   @Post('mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
@@ -141,6 +208,64 @@ export class NftController {
       royaltyBps: dto.royaltyBps,
     });
   }
+
+  @Post('batch-mint')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Mint multiple clip NFTs in a single transaction (Issue #671)',
+    description:
+      'Mint multiple clip NFTs in one call. Validates array lengths, enforces gas-limit safeguards (max 50 clips), ' +
+      'emits BatchMint event, and handles partial failures gracefully.',
+  })
+  @ApiBody({ type: BatchMintDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Batch minting process completed',
+    type: BatchMintResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Mismatched arrays, invalid payload, or batch size exceeded limit',
+  })
+  async batchMint(@Body() dto: BatchMintDto): Promise<BatchMintResponseDto> {
+    return this.nftService.batchMintClips(dto);
+  }
+
+  @UseGuards(LoginGuard)
+  @Patch(':id/token-uri')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update custom token URI per clip (Issue #670)',
+    description:
+      'Stores a custom metadata token URI for the specified NFT token ID. Restricts updates strictly to the NFT owner.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: UpdateTokenUriDto })
+  @ApiOkResponse({
+    description: 'Custom token URI updated successfully',
+    type: UpdateTokenUriResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Only the NFT owner can update token URI',
+    type: TokenUriOwnershipErrorDto,
+  })
+  @ApiNotFoundResponse({ description: 'NFT token not found' })
+  async updateTokenUri(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTokenUriDto,
+    @Req() req: Request,
+  ): Promise<UpdateTokenUriResponseDto> {
+    const tokenIdStr = id.toString();
+    const currentOwner = await this.nftOwnershipService.getOwner(tokenIdStr);
+
+    if (!currentOwner) {
+      throw new NotFoundException(`NFT token ${id} not found`);
+    }
+
+    return this.nftService.updateTokenUri(tokenIdStr, dto.uri);
+  }
+
 
   /**
    * POST /nfts/prepare-mint

@@ -416,4 +416,148 @@ export class NftMintService {
       error: result.error,
     };
   }
+
+  /**
+   * Prepare an unsigned Soroban `transfer_with_royalty` transaction XDR.
+   *
+   * Resolves the applicable royalty rate (per-token > contract default > 0),
+   * computes the royalty amount, and builds the XDR for the frontend to sign.
+   *
+   * @param tokenId          - NFT token ID (= clip.id) being transferred
+   * @param fromWallet       - Current owner's Stellar wallet address
+   * @param toWallet         - Recipient's Stellar wallet address
+   * @param salePrice        - Agreed sale price in stroops (pass 0 for gifts)
+   * @param royaltyBpsOverride - Optional caller-supplied royalty rate (0–10 000)
+   */
+  async prepareTransferTx(
+    tokenId: number,
+    fromWallet: string,
+    toWallet: string,
+    salePrice: number,
+    royaltyBpsOverride?: number,
+  ): Promise<{
+    xdr: string;
+    tokenId: number;
+    fromWallet: string;
+    toWallet: string;
+    salePrice: number;
+    royaltyBreakdown: {
+      royaltyBps: number;
+      royaltyAmount: number;
+      royaltyPercent: number;
+      recipient: string | null;
+    };
+    contractId: string;
+    network: string;
+  }> {
+    this.logger.log(
+      `Preparing transfer_with_royalty XDR: tokenId=${tokenId}, ` +
+      `from=${fromWallet}, to=${toWallet}, salePrice=${salePrice}`,
+    );
+
+    // Validate wallet addresses
+    const fromCheck = this.stellarService.validateAddress(fromWallet);
+    if (!fromCheck.valid) {
+      throw new BadRequestException(`Invalid fromWallet: ${fromCheck.message}`);
+    }
+    const toCheck = this.stellarService.validateAddress(toWallet);
+    if (!toCheck.valid) {
+      throw new BadRequestException(`Invalid toWallet: ${toCheck.message}`);
+    }
+
+    // Validate royalty override if provided
+    if (royaltyBpsOverride !== undefined) {
+      if (!Number.isInteger(royaltyBpsOverride) || royaltyBpsOverride < 0 || royaltyBpsOverride > 10_000) {
+        throw new BadRequestException(
+          `royaltyBpsOverride must be an integer between 0 and 10 000, got ${royaltyBpsOverride}`,
+        );
+      }
+    }
+
+    // Resolve royalty BPS: override > config default > 0
+    const royaltyBps =
+      royaltyBpsOverride ??
+      this.royaltyConfigurationService.getCreatorRoyaltyBps(undefined);
+
+    // Compute royalty amount (integer division, rounded down)
+    const royaltyAmount =
+      salePrice > 0 && royaltyBps > 0
+        ? Math.floor((salePrice * royaltyBps) / 10_000)
+        : 0;
+
+    const royaltyPercent = royaltyBps / 100;
+
+    // Resolve royalty recipient (platform wallet as fallback)
+    let royaltyRecipient: string | null = null;
+    try {
+      royaltyRecipient = this.royaltyConfigurationService.getPlatformWallet() ?? null;
+    } catch {
+      royaltyRecipient = null;
+    }
+
+    try {
+      const networkPassphrase = this.stellarService.networkPassphrase;
+      const rpcUrl = this.stellarService.rpcUrl;
+      const server = new StellarSdk.rpc.Server(rpcUrl);
+
+      const sourceAccount = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.getAccount(fromWallet),
+      );
+
+      const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+
+      const op = contract.call(
+        'transfer_with_royalty',
+        StellarSdk.Address.fromString(fromWallet).toScVal(),          // from: Address
+        StellarSdk.Address.fromString(toWallet).toScVal(),            // to: Address
+        StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),   // token_id: u64
+        StellarSdk.nativeToScVal(BigInt(salePrice), { type: 'u64' }), // sale_price: u64
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: '10000',
+        networkPassphrase,
+      })
+        .addOperation(op)
+        .setTimeout(StellarSdk.TimeoutInfinite)
+        .build();
+
+      const xdr = tx.toXDR();
+
+      this.logger.log(`Transfer XDR prepared for tokenId=${tokenId}`);
+
+      return {
+        xdr,
+        tokenId,
+        fromWallet,
+        toWallet,
+        salePrice,
+        royaltyBreakdown: {
+          royaltyBps,
+          royaltyAmount,
+          royaltyPercent,
+          recipient: royaltyRecipient,
+        },
+        contractId: this.CONTRACT_ID,
+        network: this.stellarService.network,
+      };
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      if (error?.name === 'ServiceUnavailableException') {
+        this.logger.error(`Soroban service unavailable during transfer preparation: ${error.message}`);
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : 'unknown error';
+      this.logger.error(`Failed to prepare transfer XDR: ${message}`);
+      throw new BadRequestException(
+        `Stellar transfer preparation failed: ${message}`,
+      );
+    }
+  }
 }
