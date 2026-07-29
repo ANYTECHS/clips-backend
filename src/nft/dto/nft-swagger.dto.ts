@@ -33,6 +33,36 @@ export class NftOwnershipResultDto {
   error?: string;
 }
 
+export class NftOwnerResponseDto {
+  @ApiProperty({
+    description: 'The Stellar wallet address of the owner, or null if not minted',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+    nullable: true,
+  })
+  owner: string | null;
+}
+
+export class WalletNftsResponseDto {
+  @ApiProperty({
+    description: 'The Stellar wallet address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  address: string;
+
+  @ApiProperty({
+    description: 'Array of numeric token IDs owned by the wallet',
+    type: [Number],
+    example: [42, 51],
+  })
+  tokenIds: number[];
+
+  @ApiProperty({
+    description: 'Total number of NFTs owned by the wallet',
+    example: 2,
+  })
+  balance: number;
+}
+
 export class NftRoyaltyResponseDto {
   @ApiProperty({ example: 1000, description: 'Royalty in basis points' })
   royaltyBps: number;
@@ -183,4 +213,13 @@ export class NftMetadataResponseDto {
     description: 'Explicit royalty block for marketplaces / mint clients',
   })
   royalty: NftRoyaltyInfoDto;
+
+  @ApiPropertyOptional({ example: 87, description: 'Clip virality score' })
+  viralityScore?: number;
+
+  @ApiPropertyOptional({ example: 34, description: 'Original clip duration in seconds' })
+  originalDuration?: number;
+
+  @ApiPropertyOptional({ example: '2026-07-20T09:30:00.000Z', description: 'Creation timestamp' })
+  createdAt?: string;
 }

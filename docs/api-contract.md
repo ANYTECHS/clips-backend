@@ -1029,6 +1029,65 @@ Rate limited: 10 requests / 60 s.
 
 ---
 
+### POST /nfts/batch-mint
+
+Mint multiple clip NFTs in a single transaction (Issue #671). Validates array lengths, enforces gas-limit safeguards (max 50 clips per call), emits `BatchMint` event, and handles partial failures gracefully.
+
+**Request**
+
+```json
+{
+  "creatorWallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "clips": [
+    { "clipId": "101", "metadataUri": "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", "isSoulbound": false },
+    { "clipId": "102", "metadataUri": "ipfs://QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco", "isSoulbound": true }
+  ],
+  "royaltyBps": 1000
+}
+```
+
+**Response `201`**
+
+```json
+{
+  "success": true,
+  "mintedCount": 2,
+  "tokenIds": ["101", "102"],
+  "partialFailures": []
+}
+```
+
+**Errors:** `400` mismatched array lengths, empty batch, or batch size > 50
+
+---
+
+### PATCH /nfts/:id/token-uri _(requires JWT)_
+
+Update custom per-token metadata URI for an NFT (Issue #670). Restricts updates strictly to the NFT owner.
+
+**Request**
+
+```json
+{
+  "uri": "ipfs://QmUpdatedMetadataHash12345"
+}
+```
+
+**Response `200`**
+
+```json
+{
+  "tokenId": "42",
+  "uri": "ipfs://QmUpdatedMetadataHash12345",
+  "updated": true
+}
+```
+
+**Errors:** `403` caller is not the NFT owner · `404` NFT token not found
+
+
+---
+
 ### POST /nfts/verify-ownership
 
 Verify on-chain NFT ownership via the Soroban `owner_of` contract method. Does not require authentication.

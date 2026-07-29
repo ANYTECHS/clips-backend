@@ -1,15 +1,15 @@
-use soroban_sdk::{Address, Env, Map, Vec};
-use soroban_sdk::contracttype;
-use soroban_sdk::Symbol;
+use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
 
 use crate::TokenData;
 
-#[contracttype]
 pub struct TokenStorage;
 
-const TOTAL_SUPPLY_KEY: &str = "total_supply";
-const ADMIN_KEY: &str = "admin";
-const DEFAULT_ROYALTY_BPS_KEY: &str = "def_royalty_bps";
+
+// ── Compact storage keys (issue #642) ──────────────────────────────────────
+// Short keys reduce per-entry storage footprint and RPC read latency.
+const TOTAL_SUPPLY_KEY: &str = "ts";
+const ADMIN_KEY: &str = "adm";
+const DEFAULT_ROYALTY_BPS_KEY: &str = "drb";
 
 /// Maximum allowed royalty value in basis points (100% = 10 000 BPS).
 pub const ROYALTY_BPS_MAX: u32 = 10_000;
@@ -98,6 +98,21 @@ pub fn get_default_royalty_bps(env: &Env) -> Option<u32> {
         .get(&Symbol::new(env, DEFAULT_ROYALTY_BPS_KEY))
 }
 
+/// Store a per-token royalty override in basis points.
+/// This takes precedence over the contract-level default in `transfer_with_royalty`.
+pub fn set_token_royalty_bps(env: &Env, token_id: u64, bps: u32) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "royalty_bps")), &bps);
+}
+
+/// Retrieve the per-token royalty BPS override, or `None` when not set.
+pub fn get_token_royalty_bps(env: &Env, token_id: u64) -> Option<u32> {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "royalty_bps")))
+}
+
 pub fn set_token_metadata(env: &Env, token_id: u64, metadata: &crate::ClipMetadata) {
     env.storage().persistent().set(&(token_id, Symbol::new(env, "metadata")), metadata);
 }
@@ -159,4 +174,65 @@ pub fn get_royalty_shares(env: &Env, token_id: u64) -> Option<Map<Address, u32>>
     env.storage()
         .persistent()
         .get(&(token_id, Symbol::new(env, "royalties")))
+pub fn set_custom_token_uri(env: &Env, token_id: u64, uri: &soroban_sdk::String) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "custom_uri")), uri);
+}
+
+pub fn get_custom_token_uri(env: &Env, token_id: u64) -> Option<soroban_sdk::String> {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "custom_uri")))
+}
+
+// ── Issue #641: upgradeability ──────────────────────────────────────────────
+
+
+pub fn set_wasm_hash(env: &Env, hash: &BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, "wasm"), hash);
+}
+
+pub fn get_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&Symbol::new(env, "wasm"))
+}
+
+pub fn set_contract_version(env: &Env, version: &soroban_sdk::String) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, "ver"), version);
+}
+
+pub fn get_contract_version(env: &Env) -> Option<soroban_sdk::String> {
+    env.storage().instance().get(&Symbol::new(env, "ver"))
+}
+
+// ── Issue #643: clip verification / nonce ───────────────────────────────────
+
+pub fn set_nonce(env: &Env, caller: &Address, nonce: u64) {
+    env.storage()
+        .persistent()
+        .set(&(Symbol::new(env, "nonce"), caller.clone()), &nonce);
+}
+
+pub fn get_nonce(env: &Env, caller: &Address) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&(Symbol::new(env, "nonce"), caller.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_verified_clip(env: &Env, clip_hash: &BytesN<32>) {
+    env.storage()
+        .persistent()
+        .set(&(Symbol::new(env, "vclip"), clip_hash.clone()), &true);
+}
+
+pub fn is_verified_clip(env: &Env, clip_hash: &BytesN<32>) -> bool {
+    env.storage()
+        .persistent()
+        .get(&(Symbol::new(env, "vclip"), clip_hash.clone()))
+        .unwrap_or(false)
 }

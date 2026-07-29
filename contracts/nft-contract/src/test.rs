@@ -1,7 +1,8 @@
 #![cfg(test)]
 
 use crate::{ClipsNftContract, ClipsNftContractClient, Error, TokenData};
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String, Vec};
+
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -29,13 +30,29 @@ fn s(env: &Env, v: &str) -> String {
 fn test_initialize_succeeds_once() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    // AC-01 fix: admin must authorise its own appointment.
+    env.mock_all_auths();
     client.initialize(&admin);
+}
+
+#[test]
+fn test_initialize_requires_admin_auth() {
+    // AC-01 regression test: initialize without admin auth must fail.
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    // Intentionally do NOT call env.mock_all_auths().
+    let result = client.try_initialize(&admin);
+    assert!(
+        result.is_err(),
+        "initialize without admin auth must fail (AC-01 frontrunning prevention)"
+    );
 }
 
 #[test]
 fn test_initialize_rejects_double_init() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths();
     client.initialize(&admin);
 
     let result = client.try_initialize(&admin);
@@ -56,8 +73,8 @@ fn test_mint_regular_token() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &1, &s(&env, "clip_001"), &s(&env, "https://clips.cash/1"), &false);
 
@@ -73,8 +90,8 @@ fn test_mint_soulbound_token() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &2, &s(&env, "clip_002"), &s(&env, "https://clips.cash/2"), &true);
 
@@ -92,8 +109,8 @@ fn test_mint_multiple_tokens_increments_supply() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let ids: [(u64, &str, &str); 5] = [
         (1, "clip_001", "https://clips.cash/1"),
@@ -120,8 +137,8 @@ fn test_mint_duplicate_token_id_is_rejected() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     // First mint succeeds.
     client.mint(&owner, &99, &s(&env, "dup"), &s(&env, "uri://dup"), &false);
@@ -154,7 +171,11 @@ fn test_mint_requires_admin_authorization() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
+    // admin.require_auth() is now enforced by initialize (AC-01 fix).
+    env.mock_all_auths();
     client.initialize(&admin);
+    // Clear recorded auths so subsequent calls have no auth — as intended by this test.
+    env.mock_auths(&[]);
     // Intentionally do NOT call env.mock_all_auths() — no auth will be provided.
 
     let result = client.try_mint(
@@ -202,6 +223,7 @@ fn test_mint_not_initialized_is_rejected() {
 fn test_royalty_bps_unset_returns_none() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
 
     assert_eq!(
@@ -215,8 +237,8 @@ fn test_royalty_bps_unset_returns_none() {
 fn test_set_and_get_royalty_bps() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.set_default_royalty_bps(&1000);
     assert_eq!(client.get_default_royalty_bps(), Some(1000));
@@ -226,8 +248,8 @@ fn test_set_and_get_royalty_bps() {
 fn test_royalty_bps_zero_is_valid() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.set_default_royalty_bps(&0);
     assert_eq!(client.get_default_royalty_bps(), Some(0));
@@ -237,8 +259,8 @@ fn test_royalty_bps_zero_is_valid() {
 fn test_royalty_bps_max_boundary_is_valid() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     // 10 000 BPS == 100% — must be accepted.
     client.set_default_royalty_bps(&10_000);
@@ -249,8 +271,8 @@ fn test_royalty_bps_max_boundary_is_valid() {
 fn test_royalty_bps_above_max_is_rejected() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let result = client.try_set_default_royalty_bps(&10_001);
     assert_eq!(
@@ -264,8 +286,8 @@ fn test_royalty_bps_above_max_is_rejected() {
 fn test_royalty_bps_update_overwrites_previous_value() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.set_default_royalty_bps(&500);
     assert_eq!(client.get_default_royalty_bps(), Some(500));
@@ -278,8 +300,9 @@ fn test_royalty_bps_update_overwrites_previous_value() {
 fn test_royalty_bps_requires_admin_auth() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
-    // No mock_all_auths — auth check must fail.
+    env.mock_auths(&[]); // clear — No mock_all_auths for the subsequent call: auth check must fail.
 
     let result = client.try_set_default_royalty_bps(&500);
     assert!(
@@ -364,8 +387,8 @@ fn test_transfer_regular_token() {
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &3, &s(&env, "clip_003"), &s(&env, "uri://3"), &false);
     client.transfer(&owner, &recipient, &3);
@@ -382,8 +405,8 @@ fn test_transfer_soulbound_token_is_rejected() {
     let owner = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &4, &s(&env, "soul"), &s(&env, "uri://soul"), &true);
 
@@ -401,8 +424,8 @@ fn test_transfer_nonexistent_token_is_rejected() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     let result = client.try_transfer(&a, &b, &9999);
     assert_eq!(result.unwrap_err().unwrap(), Error::TokenNotFound);
@@ -416,8 +439,8 @@ fn test_transfer_by_non_owner_is_rejected() {
     let intruder = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &5, &s(&env, "clip_005"), &s(&env, "uri://5"), &false);
 
@@ -438,8 +461,8 @@ fn test_approve_and_transfer_from() {
     let spender = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &7, &s(&env, "clip_007"), &s(&env, "uri://7"), &false);
     client.approve(&owner, &spender, &7);
@@ -459,8 +482,8 @@ fn test_approve_soulbound_token_is_rejected() {
     let owner = Address::generate(&env);
     let spender = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &6, &s(&env, "soul_006"), &s(&env, "uri://6"), &true);
 
@@ -479,8 +502,8 @@ fn test_transfer_from_unapproved_spender_is_rejected() {
     let stranger = Address::generate(&env);
     let recipient = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&owner, &20, &s(&env, "clip_020"), &s(&env, "uri://20"), &false);
 
@@ -497,6 +520,7 @@ fn test_transfer_from_unapproved_spender_is_rejected() {
 fn test_owner_of_unknown_token_returns_none() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
 
     assert_eq!(client.owner_of(&42), None);
@@ -508,8 +532,9 @@ fn test_get_token_data_fields() {
     let admin = Address::generate(&env);
     let owner = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    env.ledger().set_timestamp(1700000000);
+    client.initialize(&admin);
 
     let clip_id = s(&env, "clip_009");
     let content_uri = s(&env, "https://clips.cash/9");
@@ -530,8 +555,8 @@ fn test_get_creator_returns_original_minter() {
     let admin = Address::generate(&env);
     let creator = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&creator, &10, &s(&env, "clip_010"), &s(&env, "uri://10"), &false);
     assert_eq!(client.get_creator(&10), Some(creator));
@@ -544,8 +569,8 @@ fn test_creator_is_preserved_after_transfer() {
     let creator = Address::generate(&env);
     let buyer = Address::generate(&env);
 
-    client.initialize(&admin);
     env.mock_all_auths();
+    client.initialize(&admin);
 
     client.mint(&creator, &15, &s(&env, "clip_015"), &s(&env, "uri://15"), &false);
     client.transfer(&creator, &buyer, &15);
@@ -559,8 +584,576 @@ fn test_creator_is_preserved_after_transfer() {
 fn test_balance_of_unknown_address_returns_zero() {
     let (env, _cid, client) = setup_env();
     let admin = Address::generate(&env);
+    env.mock_all_auths(); // needed for initialize (AC-01 fix)
     client.initialize(&admin);
 
     let stranger = Address::generate(&env);
     assert_eq!(client.balance_of(&stranger), 0);
 }
+
+// ─────────────────────────────────────────────────────────────
+// View functions — owner_of, balance_of, token_uri
+// ─────────────────────────────────────────────────────────────
+
+/// token_uri must return the content_uri supplied at mint time.
+#[test]
+fn test_token_uri_returns_content_uri() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let uri = s(&env, "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG");
+    client.mint(&owner, &50, &s(&env, "clip_050"), &uri, &false);
+
+    assert_eq!(
+        client.token_uri(&50),
+        Some(uri),
+        "token_uri must equal the content_uri passed to mint"
+    );
+}
+
+// Events — assert published topics and data
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_mint_emits_mint_event() {
+    use soroban_sdk::testutils::Events as _;
+    use soroban_sdk::{symbol_short, vec as svec, IntoVal};
+
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &50, &s(&env, "clip_050"), &s(&env, "uri://50"), &false);
+}
+
+
+/// token_uri for a token that was never minted must return None.
+#[test]
+fn test_token_uri_unknown_token_returns_none() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    assert_eq!(client.token_uri(&9999), None);
+}
+
+/// owner_of must return the correct owner immediately after mint.
+#[test]
+fn test_owner_of_returns_minted_owner() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&owner, &51, &s(&env, "clip_051"), &s(&env, "uri://51"), &false);
+
+    assert_eq!(client.owner_of(&51), Some(owner));
+}
+
+/// balance_of must increment by 1 for each token minted to the same address.
+#[test]
+fn test_balance_of_increments_on_each_mint() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    assert_eq!(client.balance_of(&owner), 0);
+
+    client.mint(&owner, &52, &s(&env, "clip_052"), &s(&env, "uri://52"), &false);
+    assert_eq!(client.balance_of(&owner), 1);
+
+    client.mint(&owner, &53, &s(&env, "clip_053"), &s(&env, "uri://53"), &false);
+    assert_eq!(client.balance_of(&owner), 2);
+}
+
+/// After a transfer, sender balance decrements and recipient balance increments.
+#[test]
+fn test_balance_of_updates_correctly_on_transfer() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let sender = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&sender, &55, &s(&env, "clip_055"), &s(&env, "uri://55"), &false);
+    client.mint(&sender, &56, &s(&env, "clip_056"), &s(&env, "uri://56"), &false);
+
+    assert_eq!(client.balance_of(&sender), 2);
+    assert_eq!(client.balance_of(&recipient), 0);
+
+    client.transfer(&sender, &recipient, &55);
+
+    assert_eq!(client.balance_of(&sender), 1);
+    assert_eq!(client.balance_of(&recipient), 1);
+    assert_eq!(client.owner_of(&55), Some(recipient.clone()));
+    assert_eq!(client.owner_of(&56), Some(sender.clone()));
+}
+
+#[test]
+fn test_pay_royalty_unknown_token_is_rejected() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let payer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let result = client.try_pay_royalty(&9999, &payer, &1_000_000);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::TokenNotFound,
+    );
+}
+
+
+// ── Issue #641: Upgradeability ──────────────────────────────────────────────
+
+
+
+#[test]
+fn test_upgrade_sets_wasm_hash() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let hash = BytesN::from_array(&env, &[1u8; 32]);
+    client.upgrade(&hash);
+    assert_eq!(client.get_wasm_hash(), Some(hash));
+}
+
+#[test]
+fn test_upgrade_zero_hash_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let result = client.try_upgrade(&zero_hash);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_upgrade_requires_admin() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+    env.mock_auths(&[]); // clear auths so upgrade call fails auth
+
+    let hash = BytesN::from_array(&env, &[1u8; 32]);
+    let result = client.try_upgrade(&hash);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_and_get_contract_version() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let version = String::from_str(&env, "2.0.0");
+    client.set_contract_version(&version);
+    assert_eq!(client.get_contract_version(), Some(version));
+}
+
+// ── Issue #643: Clip Verification ───────────────────────────────────────────
+
+#[test]
+fn test_mint_verified_happy_path() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let clip_hash = BytesN::from_array(&env, &[2u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let content_uri = String::from_str(&env, "https://clips.cash/verified_001");
+    client.mint_verified(&caller, &100, &clip_hash, &content_uri, &false, &1);
+
+    assert_eq!(client.owner_of(&100), Some(caller.clone()));
+    assert_eq!(client.get_nonce(&caller), 1);
+}
+
+#[test]
+fn test_mint_verified_unverified_clip_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let unverified_hash = BytesN::from_array(&env, &[3u8; 32]);
+    let content_uri = String::from_str(&env, "https://clips.cash/bad");
+    let result = client.try_mint_verified(&caller, &101, &unverified_hash, &content_uri, &false, &1);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mint_verified_replay_attack_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let clip_hash = BytesN::from_array(&env, &[4u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let content_uri = String::from_str(&env, "https://clips.cash/replay");
+    client.mint_verified(&caller, &102, &clip_hash, &content_uri, &false, &1);
+
+    // Replay same nonce — must fail.
+    let result = client.try_mint_verified(&caller, &103, &clip_hash, &content_uri, &false, &1);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mint_verified_wrong_nonce_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let clip_hash = BytesN::from_array(&env, &[5u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let content_uri = String::from_str(&env, "https://clips.cash/nonce");
+    // Nonce starts at 0, so first call must use nonce=1.
+    let result = client.try_mint_verified(&caller, &104, &clip_hash, &content_uri, &false, &5);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mint_verified_sequential_nonces() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let caller = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let clip_hash = BytesN::from_array(&env, &[6u8; 32]);
+    client.verify_clip(&clip_hash);
+
+    let uri = String::from_str(&env, "https://clips.cash/seq");
+    client.mint_verified(&caller, &105, &clip_hash, &uri, &false, &1);
+    client.mint_verified(&caller, &106, &clip_hash, &uri, &false, &2);
+    client.mint_verified(&caller, &107, &clip_hash, &uri, &false, &3);
+
+    assert_eq!(client.get_nonce(&caller), 3);
+    assert_eq!(client.balance_of(&caller), 3);
+}
+
+
+// ── Issue #644: End-to-end integration tests ────────────────────────────────
+
+#[test]
+fn test_full_mint_flow() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    // 1. Initialize
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // 2. Set royalty
+    client.set_default_royalty_bps(&500);
+
+    // 3. Mint
+    let clip_id = String::from_str(&env, "e2e_clip_001");
+    let content_uri = String::from_str(&env, "https://clips.cash/e2e_001");
+    client.mint(&creator, &200, &clip_id, &content_uri, &false);
+
+    // 4. Verify ownership and data
+    assert_eq!(client.owner_of(&200), Some(creator.clone()));
+    let data = client.get_token_data(&200).unwrap();
+    assert_eq!(data.creator, creator);
+    assert_eq!(data.clip_id, clip_id);
+    assert_eq!(client.total_supply(), 1);
+    assert_eq!(client.get_default_royalty_bps(), Some(500));
+}
+
+#[test]
+fn test_full_royalty_flow() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // Set, update, read back.
+    client.set_default_royalty_bps(&250);
+    assert_eq!(client.get_default_royalty_bps(), Some(250));
+
+    client.set_default_royalty_bps(&750);
+    assert_eq!(client.get_default_royalty_bps(), Some(750));
+
+    // Set to zero (no royalty).
+    client.set_default_royalty_bps(&0);
+    assert_eq!(client.get_default_royalty_bps(), Some(0));
+}
+
+#[test]
+fn test_failure_mint_duplicate_token_id() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let clip_id = String::from_str(&env, "dup_clip");
+    let content_uri = String::from_str(&env, "https://clips.cash/dup");
+    client.mint(&owner, &300, &clip_id, &content_uri, &false);
+
+    // Same token_id again — must fail.
+    let result = client.try_mint(&owner, &300, &clip_id, &content_uri, &false);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_failure_transfer_not_owner() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let thief = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let clip_id = String::from_str(&env, "theft_clip");
+    let content_uri = String::from_str(&env, "https://clips.cash/theft");
+    client.mint(&owner, &301, &clip_id, &content_uri, &false);
+
+    // Thief tries to transfer — must fail.
+    let result = client.try_transfer(&thief, &recipient, &301);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_failure_uninitialized_contract() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, ClipsNftContract);
+    let client = ClipsNftContractClient::new(&env, &contract_id);
+    env.mock_all_auths();
+
+    let owner = Address::generate(&env);
+    let clip_id = String::from_str(&env, "no_init");
+    let content_uri = String::from_str(&env, "https://clips.cash/no_init");
+
+    // Mint without initialize — must fail.
+    let result = client.try_mint(&owner, &400, &clip_id, &content_uri, &false);
+    assert!(result.is_err());
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #671: Batch Minting tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_batch_mint_success() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let mut token_ids = Vec::new(&env);
+    token_ids.push_back(1001);
+    token_ids.push_back(1002);
+    token_ids.push_back(1003);
+
+    let mut clip_ids = Vec::new(&env);
+    clip_ids.push_back(String::from_str(&env, "clip_1001"));
+    clip_ids.push_back(String::from_str(&env, "clip_1002"));
+    clip_ids.push_back(String::from_str(&env, "clip_1003"));
+
+    let mut content_uris = Vec::new(&env);
+    content_uris.push_back(String::from_str(&env, "ipfs://uri_1001"));
+    content_uris.push_back(String::from_str(&env, "ipfs://uri_1002"));
+    content_uris.push_back(String::from_str(&env, "ipfs://uri_1003"));
+
+    let mut soulbound_flags = Vec::new(&env);
+    soulbound_flags.push_back(false);
+    soulbound_flags.push_back(false);
+    soulbound_flags.push_back(true);
+
+    client.batch_mint(
+        &recipient,
+        &token_ids,
+        &clip_ids,
+        &content_uris,
+        &soulbound_flags,
+    );
+
+    assert_eq!(client.balance_of(&recipient), 3);
+    assert_eq!(client.owner_of(&1001), Some(recipient.clone()));
+    assert_eq!(client.owner_of(&1002), Some(recipient.clone()));
+    assert_eq!(client.owner_of(&1003), Some(recipient.clone()));
+    assert_eq!(client.is_soulbound(&1003), true);
+    assert_eq!(client.total_supply(), 3);
+}
+
+#[test]
+fn test_batch_mint_mismatched_lengths_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let mut token_ids = Vec::new(&env);
+    token_ids.push_back(2001);
+    token_ids.push_back(2002);
+
+    let mut clip_ids = Vec::new(&env);
+    clip_ids.push_back(String::from_str(&env, "clip_2001"));
+
+    let mut content_uris = Vec::new(&env);
+    content_uris.push_back(String::from_str(&env, "ipfs://uri_2001"));
+    content_uris.push_back(String::from_str(&env, "ipfs://uri_2002"));
+
+    let mut soulbound_flags = Vec::new(&env);
+    soulbound_flags.push_back(false);
+    soulbound_flags.push_back(false);
+
+    let result = client.try_batch_mint(
+        &recipient,
+        &token_ids,
+        &clip_ids,
+        &content_uris,
+        &soulbound_flags,
+    );
+
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::ArrayLengthMismatch
+    );
+}
+
+#[test]
+fn test_batch_mint_empty_or_oversized_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let empty_token_ids = Vec::new(&env);
+    let empty_clip_ids = Vec::new(&env);
+    let empty_uris = Vec::new(&env);
+    let empty_sb = Vec::new(&env);
+
+    let result = client.try_batch_mint(
+        &recipient,
+        &empty_token_ids,
+        &empty_clip_ids,
+        &empty_uris,
+        &empty_sb,
+    );
+
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        Error::InvalidBatchSize
+    );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #670: Custom Token URI tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_token_uri_by_owner() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let initial_uri = String::from_str(&env, "https://clips.cash/initial");
+    client.mint(&owner, &3001, &String::from_str(&env, "clip_3001"), &initial_uri, &false);
+
+    assert_eq!(client.token_uri(&3001), Some(initial_uri));
+
+    let updated_uri = String::from_str(&env, "ipfs://QmUpdatedMetadataHash123");
+    client.set_token_uri(&3001, &updated_uri);
+
+    assert_eq!(client.token_uri(&3001), Some(updated_uri));
+}
+
+#[test]
+fn test_set_token_uri_unauthorized_non_owner_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let stranger = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let initial_uri = String::from_str(&env, "https://clips.cash/initial");
+    client.mint(&owner, &3002, &String::from_str(&env, "clip_3002"), &initial_uri, &false);
+
+    env.mock_auths(&[]); // clear auths
+
+    let new_uri = String::from_str(&env, "ipfs://QmHackerUri");
+    let result = client.try_set_token_uri(&3002, &new_uri);
+    assert!(result.is_err(), "Non-owner setting token URI must fail authorization");
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Issue #685: Fractional Royalty Payments for Assets tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_fractional_royalty_calculation_seven_decimals() {
+    let (env, _contract_id, client) = setup_env();
+
+    // 10 XLM = 100_000_000 stroops (7 decimals)
+    // 500 BPS = 5.0% royalty
+    // Expected royalty = 5_000_000 stroops (0.5 XLM)
+    let sale_price_stroops: u128 = 100_000_000;
+    let royalty_bps: u32 = 500;
+    let decimals: u32 = 7;
+
+    let royalty = client.calculate_fractional_royalty(&sale_price_stroops, &royalty_bps, &decimals);
+    assert_eq!(royalty, 5_000_000);
+}
+
+#[test]
+fn test_fractional_royalty_precision_and_rounding() {
+    let (env, _contract_id, client) = setup_env();
+
+    // 1.5 XLM = 15_000_000 stroops (7 decimals)
+    // 250 BPS = 2.5% royalty
+    // Expected royalty = 15_000_000 * 250 / 10_000 = 375_000 stroops (0.0375 XLM)
+    let sale_price_stroops: u128 = 15_000_000;
+    let royalty_bps: u32 = 250;
+    let decimals: u32 = 7;
+
+    let royalty = client.calculate_fractional_royalty(&sale_price_stroops, &royalty_bps, &decimals);
+    assert_eq!(royalty, 375_000);
+}
+
