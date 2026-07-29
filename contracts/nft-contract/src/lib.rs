@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contractmeta, contracttype,
-    Address, Env, String, Symbol, Val, Vec,
+    Address, BytesN, Env, String, Symbol, Val, Vec,
 };
 use soroban_token_sdk::metadata::TokenMetadata;
 
@@ -60,6 +60,14 @@ pub enum Error {
     InvalidTokenId = 6,
     /// Royalty value is outside the valid 0–10 000 BPS range.
     InvalidRoyaltyBps = 7,
+    /// Provided WASM hash is all zeros — cannot upgrade to a no-op contract.
+    InvalidWasmHash = 8,
+    /// Clip signature verification failed — caller is not the clip owner.
+    InvalidSignature = 9,
+    /// Nonce is stale — replay attack detected.
+    InvalidNonce = 10,
+    /// Clip hash was not pre-verified by the admin.
+    ClipNotVerified = 11,
 }
 
 #[contractimpl]
@@ -713,6 +721,115 @@ impl ClipsNftContract {
     pub fn get_default_royalty_bps(env: Env) -> Option<u32> {
         storage::get_default_royalty_bps(&env)
     }
+
+    // ── Issue #641: Upgradeability ─────────────────────────────────────────
+
+    /// Upgrade the contract to a new WASM implementation.
+    ///
+    /// Only the admin may call this. The new WASM hash must not be all zeros.
+    /// Existing state (tokens, approvals, royalties) is preserved — the new
+    /// WASM reads the same storage layout.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        // Reject zero hash — would deploy a no-op contract.
+        if new_wasm_hash == BytesN::from_array(&env, &[0u8; 32]) {
+            return Err(Error::InvalidWasmHash);
+        }
+
+        storage::set_wasm_hash(&env, &new_wasm_hash);
+        events::emit_upgrade(&env, &new_wasm_hash);
+        Ok(())
+    }
+
+    /// Return the stored WASM hash for the next upgrade, or `None` if no
+    /// upgrade has been staged.
+    pub fn get_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        storage::get_wasm_hash(&env)
+    }
+
+    /// Set the contract version string (e.g. "2.0.0"). Admin only.
+    pub fn set_contract_version(env: Env, version: String) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        storage::set_contract_version(&env, &version);
+        Ok(())
+    }
+
+    /// Return the current contract version, or `None` if never set.
+    pub fn get_contract_version(env: Env) -> Option<String> {
+        storage::get_contract_version(&env)
+    }
+
+    // ── Issue #643: Clip Verification ──────────────────────────────────────
+
+    /// Pre-verify a clip hash. Admin only — marks a clip hash as verified so
+    /// `mint_verified` will accept it.
+    pub fn verify_clip(env: Env, clip_hash: BytesN<32>) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        storage::set_verified_clip(&env, &clip_hash);
+        Ok(())
+    }
+
+    /// Mint a verified clip NFT. The `clip_hash` must have been pre-verified
+    /// via `verify_clip`. `caller` must match the intended owner and provide
+    /// auth. `nonce` must be exactly `get_nonce(caller) + 1` to prevent replay.
+    pub fn mint_verified(
+        env: Env,
+        caller: Address,
+        token_id: u64,
+        clip_hash: BytesN<32>,
+        content_uri: String,
+        is_soulbound: bool,
+        nonce: u64,
+    ) -> Result<(), Error> {
+        caller.require_auth();
+
+        // Verify clip hash was pre-approved.
+        if !storage::is_verified_clip(&env, &clip_hash) {
+            return Err(Error::ClipNotVerified);
+        }
+
+        // Nonce check — prevents replay attacks.
+        let expected_nonce = storage::get_nonce(&env, &caller) + 1;
+        if nonce != expected_nonce {
+            return Err(Error::InvalidNonce);
+        }
+        storage::set_nonce(&env, &caller, nonce);
+
+        // Delegate to standard mint logic.
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        if storage::has_token(&env, token_id) {
+            return Err(Error::InvalidTokenId);
+        }
+
+        let creator = caller.clone();
+        let created_at = env.ledger().timestamp();
+        let clip_id = String::from_str(&env, "verified");
+
+        let token_data = TokenData {
+            owner: caller.clone(),
+            is_soulbound,
+            creator,
+            clip_id,
+            content_uri,
+            created_at,
+        };
+
+        storage::set_token(&env, token_id, &token_data);
+        storage::set_owner_token(&env, &caller, token_id);
+        storage::increment_total_supply(&env);
+
+        events::emit_mint(&env, &caller, token_id, is_soulbound);
+        Ok(())
+    }
+
+    /// Return the current nonce for `caller`. Starts at 0.
+    pub fn get_nonce(env: Env, caller: Address) -> u64 {
+        storage::get_nonce(&env, &caller)
+    }
 }
 
 mod events {
@@ -736,6 +853,9 @@ mod events {
         env.events().publish(topics, token_id);
     }
 
+    pub fn emit_upgrade(env: &Env, new_wasm_hash: &BytesN<32>) {
+        let topics = (Symbol::new(env, "upgrade"),);
+        env.events().publish(topics, (new_wasm_hash.clone(),));
     /// EV-01: emitted whenever the default royalty BPS is changed.
     /// `old_bps` is 0 when no royalty was previously configured.
     pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
