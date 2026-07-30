@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { NftMintService } from './nft-mint.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { ConfigService } from '../config/config.service';
@@ -379,19 +379,19 @@ describe('NftMintService.prepareMintTx', () => {
     await expect(service.prepareMintTx(99, VALID_WALLET)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('throws BadRequestException when clip is already minted', async () => {
+  it('throws ConflictException when clip is already minted', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, nftStatus: 'minted' });
-    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('throws BadRequestException when clip already has a mintAddress', async () => {
+  it('throws ConflictException when clip already has a mintAddress', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, mintAddress: 'CONTRACT_ID' });
     await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toThrow('already been minted on-chain');
   });
 
-  it('throws BadRequestException when clip is in minting state', async () => {
+  it('throws ConflictException when clip is in minting state', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({ ...baseClip, nftStatus: 'minting' });
-    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.prepareMintTx(5, VALID_WALLET)).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('throws BadRequestException when clipUrl is missing', async () => {
