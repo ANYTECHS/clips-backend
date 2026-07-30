@@ -119,6 +119,27 @@ describe('NFT mint preparation (e2e)', () => {
     expect(nftMintService.prepareMintTx).not.toHaveBeenCalled();
   });
 
+  it('uploads clip metadata to IPFS and returns cid + metadataUri', async () => {
+    nftMintService.uploadMetadataToIPFS.mockResolvedValue({
+      clipId: 42,
+      cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+    });
+
+    const response = await request(app.getHttpServer())
+      .post('/nfts/upload-metadata')
+      .send({ clipId: 42 })
+      .expect(201);
+
+    expect(nftMintService.validateClipOwner).toHaveBeenCalledWith(42, 7);
+    expect(nftMintService.uploadMetadataToIPFS).toHaveBeenCalledWith(42);
+    expect(response.body).toEqual({
+      clipId: 42,
+      cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+    });
+  });
+
   it('publishes the mint preparation contract in OpenAPI', () => {
     const document = SwaggerModule.createDocument(
       app,
@@ -151,5 +172,39 @@ describe('NFT mint preparation (e2e)', () => {
     const created =
       operation?.responses?.['201']?.content?.['application/json']?.schema;
     expect(created).toBeDefined();
+  });
+
+  it('publishes upload-metadata OpenAPI with metadataUri and IPFS CID', () => {
+    const document = SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder()
+        .setTitle('Clips API')
+        .addBearerAuth(
+          { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+          'access-token',
+        )
+        .build(),
+    );
+    const operation = document.paths['/nfts/upload-metadata']?.post;
+    expect(operation?.summary).toBe(
+      'Upload clip NFT metadata to IPFS before minting',
+    );
+
+    const schemaName = 'NftUploadMetadataResponseDto';
+    const schema = document.components?.schemas?.[schemaName] as
+      | { properties?: Record<string, unknown>; example?: unknown }
+      | undefined;
+    expect(schema?.properties).toEqual(
+      expect.objectContaining({
+        metadataUri: expect.any(Object),
+        cid: expect.any(Object),
+        clipId: expect.any(Object),
+      }),
+    );
+
+    const created =
+      operation?.responses?.['201']?.content?.['application/json'];
+    expect(created?.schema).toBeDefined();
+    expect(created?.example ?? schema).toBeDefined();
   });
 });

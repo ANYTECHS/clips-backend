@@ -229,6 +229,30 @@ export class NftPrepareMintBadRequestDto {
   error: string;
 }
 
+/**
+ * Response after uploading clip NFT metadata to IPFS (before minting).
+ * Swagger documents metadataUri, IPFS CID, and a full example response.
+ */
+export class NftUploadMetadataResponseDto {
+  @ApiProperty({
+    description: 'Clip ID whose metadata was uploaded',
+    example: 42,
+  })
+  clipId: number;
+
+  @ApiProperty({
+    description: 'IPFS content identifier (CID) for the pinned metadata JSON',
+    example: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
+  cid: string;
+
+  @ApiProperty({
+    description: 'IPFS metadata URI persisted on the clip (ipfs://<cid>)',
+    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
+  metadataUri: string;
+}
+
 export class NftMetadataAttributeDto {
   @ApiProperty({ example: 'Virality Score' })
   trait_type: string;

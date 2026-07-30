@@ -38,6 +38,7 @@ import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
+import { UploadClipMetadataDto } from './dto/upload-metadata.dto';
 import { BatchMintDto, BatchMintResponseDto } from './dto/batch-mint.dto';
 import {
   UpdateTokenUriDto,
@@ -49,6 +50,7 @@ import {
   NftMetadataResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
+  NftUploadMetadataResponseDto,
   NftMintConflictDto,
   NftMintNotFoundDto,
   NftPrepareMintBadRequestDto,
@@ -168,6 +170,51 @@ export class NftController {
       tokenIds,
       balance: tokenIds.length,
     };
+  }
+
+  /**
+   * POST /nfts/upload-metadata
+   * Builds OpenSea-compatible metadata, uploads to IPFS, and persists metadataUri on the clip.
+   */
+  @UseGuards(LoginGuard)
+  @Post('upload-metadata')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Upload clip NFT metadata to IPFS before minting',
+    description:
+      'Builds metadata from the clip, uploads it to IPFS (Pinata or nft.storage), ' +
+      'persists the metadata URI on the clip, and returns the IPFS CID and URI.',
+  })
+  @ApiBody({ type: UploadClipMetadataDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Metadata uploaded to IPFS and saved on the clip',
+    type: NftUploadMetadataResponseDto,
+    schema: {
+      example: {
+        clipId: 42,
+        cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Clip is not ready for metadata upload (e.g. missing clipUrl)',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async uploadMetadata(
+    @Body() dto: UploadClipMetadataDto,
+    @Req() req: Request,
+  ): Promise<NftUploadMetadataResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    return this.nftMintService.uploadMetadataToIPFS(dto.clipId);
   }
 
   @UseGuards(NftMintGuard)
