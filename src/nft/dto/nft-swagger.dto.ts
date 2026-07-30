@@ -103,9 +103,7 @@ export class NftMintResponseDto {
   clipId: string;
 
   @ApiProperty({
-    description: 'Masked Stellar wallet address of the creator',
-    example: 'GC6X********UTZF3',
-    description: 'Creator wallet address',
+    description: 'Creator wallet address (may be masked in API responses)',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   creatorWallet: string;
@@ -139,13 +137,117 @@ export class NftMintResponseDto {
 }
 
 export class NftPrepareMintResponseDto {
-  @ApiProperty({ example: 'AAAAAgAAA...', description: 'Unsigned Soroban XDR' })
+  @ApiProperty({
+    description: 'Unsigned Soroban transaction XDR for the client wallet to sign',
+    example:
+      'AAAAAgAAAABjc+6XXsdHPixc8hbEdqMxK3+GpP9M7FLQ8kG2fH3+AAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABjc+6XXsdHPixc8hbEdqMxK3+GpP9M7FLQ8kG2fH3+',
+  })
   xdr: string;
 
-  @ApiProperty({ example: 42 })
+  @ApiProperty({
+    description: 'Clip ID being minted',
+    example: 42,
+  })
   clipId: number;
 
   @ApiProperty({
+    description: 'On-chain token ID (equals clip ID)',
+    example: 42,
+  })
+  tokenId: number;
+
+  @ApiProperty({
+    description: 'IPFS metadata URI embedded in the mint call',
+    example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
+  metadataUri: string;
+
+  @ApiProperty({
+    description: 'Creator royalty in basis points applied to the mint',
+    example: 1000,
+    minimum: 0,
+    maximum: 1500,
+  })
+  royaltyBps: number;
+
+  @ApiProperty({
+    description: 'Stellar wallet that will receive the NFT',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  to: string;
+
+  @ApiProperty({
+    description: 'Soroban NFT contract ID',
+    example: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+  })
+  contractId: string;
+
+  @ApiProperty({
+    description: 'Stellar network the XDR was built for',
+    example: 'testnet',
+  })
+  network: string;
+}
+
+/** 409 body when the clip is already minting or minted. */
+export class NftMintConflictDto {
+  @ApiProperty({ example: 409 })
+  statusCode: number;
+
+  @ApiProperty({
+    example: 'Clip is already being minted or has been minted',
+  })
+  message: string;
+
+  @ApiProperty({ example: 'Conflict' })
+  error: string;
+}
+
+/** 404 body when the clip cannot be found for mint preparation. */
+export class NftMintNotFoundDto {
+  @ApiProperty({ example: 404 })
+  statusCode: number;
+
+  @ApiProperty({ example: 'Clip with ID 42 not found' })
+  message: string;
+
+  @ApiProperty({ example: 'Not Found' })
+  error: string;
+}
+
+/** 400 body for invalid prepare-mint payloads or non-conflict mint rejections. */
+export class NftPrepareMintBadRequestDto {
+  @ApiProperty({ example: 400 })
+  statusCode: number;
+
+  @ApiProperty({
+    example: 'Invalid wallet address: Invalid Stellar address checksum',
+  })
+  message: string;
+
+  @ApiProperty({ example: 'Bad Request' })
+  error: string;
+}
+
+/**
+ * Response after uploading clip NFT metadata to IPFS (before minting).
+ * Swagger documents metadataUri, IPFS CID, and a full example response.
+ */
+export class NftUploadMetadataResponseDto {
+  @ApiProperty({
+    description: 'Clip ID whose metadata was uploaded',
+    example: 42,
+  })
+  clipId: number;
+
+  @ApiProperty({
+    description: 'IPFS content identifier (CID) for the pinned metadata JSON',
+    example: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+  })
+  cid: string;
+
+  @ApiProperty({
+    description: 'IPFS metadata URI persisted on the clip (ipfs://<cid>)',
     example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   })
   metadataUri: string;

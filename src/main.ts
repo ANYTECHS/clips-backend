@@ -118,13 +118,14 @@ async function bootstrap() {
         },
       },
       crossOriginEmbedderPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      referrerPolicy: { policy: 'no-referrer' },
       hsts: {
         maxAge: 31536000,
         includeSubDomains: true,
         preload: true,
       },
       noSniff: true,
-      xssFilter: true,
       hidePoweredBy: true,
       frameguard: {
         action: 'deny',
@@ -232,43 +233,44 @@ async function bootstrap() {
       'The `Content-Security-Policy` directives (`scriptSrc`, `styleSrc`, ...) only relax to allow ' +
       '`\'unsafe-inline\'` scripts when the Swagger UI is enabled (non-production, or ' +
       '`ENABLE_SWAGGER_UI=true`), since the docs page needs an inline script to boot. ' +
-      'API JSON responses are never affected by this relaxation.'
-        '## Rate Limits\n\n' +
-        'All API endpoints are protected by rate limiting to ensure fair usage and system stability.\n\n' +
-        '### Rate Limit Tiers\n\n' +
-        '| Tier | Limit | Window | Applies To |\n' +
-        '|------|-------|--------|------------|\n' +
-        '| **Default** | 100 requests | 60 seconds | Most endpoints |\n' +
-        '| **Auth** | 10 requests | 60 seconds | Login, registration, password reset |\n' +
-        '| **Sensitive** | 3 requests | 15 minutes | MFA setup, account deletion |\n' +
-        '| **Email Verify** | 3 requests | 60 minutes | Email verification resend |\n' +
-        '| **Clip Generate** | 10 requests | 60 seconds | Clip generation endpoints |\n' +
-        '| **NFT Mint** | 5 requests | 60 seconds | NFT minting endpoints |\n' +
-        '| **Wallet Connect** | 10 requests | 60 seconds | Wallet connection |\n' +
-        '| **Wallet Disconnect** | 10 requests | 60 seconds | Wallet disconnection |\n' +
-        '| **Transaction Send** | 5 requests | 60 seconds | Blockchain transactions |\n\n' +
-        '### Rate Limit Headers\n\n' +
-        'All responses include rate limit information in headers:\n' +
-        '- `X-RateLimit-Limit` — Maximum requests allowed in the window\n' +
-        '- `X-RateLimit-Remaining` — Requests remaining in current window\n' +
-        '- `X-RateLimit-Reset` — Unix timestamp when the limit resets\n\n' +
-        '### Rate Limit Exceeded\n\n' +
-        'When you exceed the rate limit, you will receive a `429 Too Many Requests` response:\n' +
-        '```json\n' +
-        '{\n' +
-        '  "statusCode": 429,\n' +
-        '  "message": "ThrottlerException: Too Many Requests",\n' +
-        '  "error": "Too Many Requests"\n' +
-        '}\n' +
-        '```\n\n' +
-        '### Best Practices\n\n' +
-        '- Implement exponential backoff when receiving 429 responses\n' +
-        '- Monitor rate limit headers to avoid hitting limits\n' +
-        '- Cache responses when possible to reduce API calls\n' +
-        '- Use webhooks instead of polling for real-time updates\n' +
-        '- Contact support for higher limits if needed for production use\n\n' +
-        '### IP Whitelisting\n\n' +
-        'Trusted IPs can be whitelisted by setting `THROTTLER_WHITELIST` environment variable (comma-separated list).',
+      'API JSON responses are never affected by this relaxation.',
+      'API JSON responses are never affected by this relaxation.\n\n' +
+      '## CSRF Protection\n\n' +
+      'All state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) that are authenticated via the ' +
+      'httpOnly session cookie must also include a CSRF token. Requests using `Authorization: Bearer` ' +
+      'or `X-API-Key` (and `GET`/`HEAD`/`OPTIONS` requests) are exempt.\n\n' +
+      '| Header | Required | Description |\n' +
+      '|--------|----------|-------------|\n' +
+      '| `X-CSRF-Token` | Yes, for cookie-authenticated mutations | Must match the `_csrf` cookie value issued at login |\n\n' +
+      '### Example request\n\n' +
+      '```http\n' +
+      'POST /wallets/connect HTTP/1.1\n' +
+      'Host: api.clipcash.example\n' +
+      'Cookie: _csrf=abc123...\n' +
+      'X-CSRF-Token: abc123...\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "walletAddress": "GC6X..." }\n' +
+      '```\n\n' +
+      '### Invalid or missing token\n\n' +
+      'Returns `403 Forbidden`:\n' +
+      '```json\n' +
+      '{\n' +
+      '  "statusCode": 403,\n' +
+      '  "message": "Invalid CSRF token",\n' +
+      '  "error": "Forbidden"\n' +
+      '}\n' +
+      '```\n\n' +
+      '## CORS Policy\n\n' +
+      'Cross-origin requests are restricted to an explicit allow-list — there is no wildcard (`*`) origin. ' +
+      'Swagger UI itself is served from and consumed on the same origin as the API, so it remains fully ' +
+      'accessible regardless of the CORS origin allow-list.\n\n' +
+      '| Environment | Allowed origins |\n' +
+      '|-------------|------------------|\n' +
+      '| Development (default) | `http://localhost:3000`, `http://127.0.0.1:3000` |\n' +
+      '| Production | Only origins listed in `ALLOWED_ORIGINS` (comma-separated); empty by default |\n\n' +
+      'Configure additional development or staging origins with the `ALLOWED_ORIGINS` environment variable, ' +
+      'e.g. `ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173`. Allowed methods and headers can ' +
+      'similarly be overridden via `ALLOWED_METHODS` and `ALLOWED_HEADERS`.',
     )
     .setVersion('1.0')
     .addBearerAuth(
@@ -314,8 +316,6 @@ async function bootstrap() {
   logger.log(`OpenAPI spec exported to ${openapiPath}`);
 
   // Setup Swagger UI (only in non-production or if explicitly enabled)
-  const enableSwaggerUI =
-    !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
   if (enableSwaggerUI) {
     SwaggerModule.setup('api/docs', app, document, {
       swaggerOptions: {
@@ -345,38 +345,6 @@ async function bootstrap() {
   // Raw body parser for webhook signature verification (must be before JSON parser for specific routes)
   // This preserves the raw body for HMAC signature verification
   app.use('/webhooks/stellar', bodyParser.raw({ type: 'application/json' }));
-
-  // Security headers with Helmet
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          scriptSrc: [`'self'`, `'unsafe-inline'`],
-          imgSrc: [`'self'`, 'data:', 'https:'],
-          connectSrc: [`'self'`],
-          fontSrc: [`'self'`, 'https:', 'data:'],
-          objectSrc: [`'none'`],
-          mediaSrc: [`'self'`],
-          frameSrc: [`'none'`],
-        },
-      },
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-      referrerPolicy: { policy: 'no-referrer' },
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
-      noSniff: true,
-      hidePoweredBy: true,
-      frameguard: {
-        action: 'deny',
-      },
-    }),
-  );
 
   // API responses may contain user-specific or sensitive data — prevent
   // shared/browser caches from storing them. Swagger UI is left cacheable.

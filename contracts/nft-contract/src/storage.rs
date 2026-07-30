@@ -190,6 +190,59 @@ pub fn get_supported_assets(env: &Env) -> Vec<Address> {
 
 pub fn is_supported_asset(env: &Env, asset: &Address) -> bool {
     get_supported_assets(env).contains(asset)
+pub fn remove_token(env: &Env, token_id: u64) {
+    env.storage().persistent().remove(&token_id);
+}
+
+pub fn remove_token_metadata(env: &Env, token_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&(token_id, Symbol::new(env, "metadata")));
+}
+
+pub fn decrement_total_supply(env: &Env) {
+    let current = get_total_supply(env);
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, TOTAL_SUPPLY_KEY), &current.saturating_sub(1));
+}
+
+const PLATFORM_FEE_ADDRESS_KEY: &str = "plat_fee_addr";
+const PLATFORM_FEE_BPS_KEY: &str = "plat_fee_bps";
+
+/// Store the default platform recipient + fee (in BPS) applied as one of the
+/// royalty shares whenever a token has no per-token override configured.
+pub fn set_platform_fee(env: &Env, recipient: &Address, bps: u32) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, PLATFORM_FEE_ADDRESS_KEY), recipient);
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, PLATFORM_FEE_BPS_KEY), &bps);
+}
+
+pub fn get_platform_fee(env: &Env) -> Option<(Address, u32)> {
+    let recipient: Option<Address> = env
+        .storage()
+        .instance()
+        .get(&Symbol::new(env, PLATFORM_FEE_ADDRESS_KEY));
+    let bps: Option<u32> = env
+        .storage()
+        .instance()
+        .get(&Symbol::new(env, PLATFORM_FEE_BPS_KEY));
+    recipient.zip(bps)
+}
+
+pub fn set_royalty_shares(env: &Env, token_id: u64, royalties: &Map<Address, u32>) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "royalties")), royalties);
+}
+
+pub fn get_royalty_shares(env: &Env, token_id: u64) -> Option<Map<Address, u32>> {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "royalties")))
 pub fn set_custom_token_uri(env: &Env, token_id: u64, uri: &soroban_sdk::String) {
     env.storage()
         .persistent()

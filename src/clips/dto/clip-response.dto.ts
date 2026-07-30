@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DEFAULT_CLIP_ROYALTY_BPS } from './create-clip.dto';
 
 export class ClipResponseDto {
   @ApiProperty({ example: 42, description: 'Clip ID' })
@@ -32,8 +33,12 @@ export class ClipResponseDto {
   selected: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'NFT royalty in BPS (0–1500). 1000 = 10%. Defaults to 1000 when omitted at create time.',
     example: 1000,
-    description: 'NFT royalty in basis points',
+    minimum: 0,
+    maximum: 1500,
+    default: DEFAULT_CLIP_ROYALTY_BPS,
   })
   royaltyBps?: number | null;
 

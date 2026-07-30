@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   CanActivate,
+  ConflictException,
   ExecutionContext,
   Injectable,
   NotFoundException,
@@ -67,13 +68,13 @@ export class NftMintGuard implements CanActivate {
     clipPosts: { status: string }[];
   }): Promise<void> {
     if (clip.nftStatus === 'minting' || clip.nftStatus === 'minted') {
-      throw new BadRequestException(
+      throw new ConflictException(
         'Clip is already being minted or has been minted',
       );
     }
 
     if (clip.mintAddress) {
-      throw new BadRequestException('Clip has already been minted on-chain');
+      throw new ConflictException('Clip has already been minted on-chain');
     }
 
     // Check if clip is posted (either via postStatus or any published clipPost)
