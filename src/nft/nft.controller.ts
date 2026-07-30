@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -26,7 +27,9 @@ import {
   ApiBadRequestResponse,
   ApiNotFoundResponse,
   ApiForbiddenResponse,
+  ApiConflictResponse,
   ApiOkResponse,
+  ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
@@ -48,6 +51,9 @@ import {
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
   NftUploadMetadataResponseDto,
+  NftMintConflictDto,
+  NftMintNotFoundDto,
+  NftPrepareMintBadRequestDto,
   VerifyNftOwnershipDto,
   NftOwnerResponseDto,
   WalletNftsResponseDto,
@@ -324,7 +330,7 @@ export class NftController {
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
     description:
       'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
-      '(testnet or public/mainnet, per STELLAR_NETWORK).',
+      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress.',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
@@ -332,44 +338,27 @@ export class NftController {
     description: 'Mint transaction XDR returned',
     type: NftPrepareMintResponseDto,
   })
-  @ApiUnauthorizedResponse({
-    description: 'Unauthorized — Bearer JWT required',
-  })
   @ApiBadRequestResponse({
     description:
-      'Invalid clip or wallet, or the clip cannot be minted because it is already minting/minted ' +
-      'or has already been posted to a social platform (business rule: posted clips cannot be minted).',
-    schema: {
-      example: {
-        statusCode: 400,
-        message: 'Posted clips cannot be minted.',
-        error: 'Bad Request',
-      },
-    },
+      'Invalid clipId/walletAddress, clip not ready, or posted clips cannot be minted.',
+    type: NftPrepareMintBadRequestDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required, or wallet signature invalid',
   })
   @ApiForbiddenResponse({
     description: 'Caller does not own the clip',
-    schema: {
-      example: {
-        statusCode: 403,
-        message: 'You do not own this clip',
-        error: 'Forbidden',
-      },
-    },
   })
-  @ApiUnauthorizedResponse({
-    description:
-      'Wallet signature is invalid or does not match the provided walletAddress. ' +
-      'Required signature fields: walletAddress (Stellar G... key), ' +
-      'walletSignature (Ed25519 signature over the canonical challenge message: ' +
-      '"ClipCash mint authorization for clip <clipId> by <walletAddress>").',
-    schema: {
-      example: {
-        statusCode: 401,
-        message: 'Mint signature is invalid — wallet authorization failed',
-        error: 'Unauthorized',
-      },
-    },
+  @ApiNotFoundResponse({
+    description: 'Clip not found',
+    type: NftMintNotFoundDto,
+  })
+  @ApiConflictResponse({
+    description: 'Clip is already minting or has already been minted',
+    type: NftMintConflictDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
   })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,

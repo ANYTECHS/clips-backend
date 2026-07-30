@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { NftMintGuard } from './nft-mint.guard';
 
 describe('NftMintGuard', () => {
@@ -52,29 +52,29 @@ describe('NftMintGuard', () => {
     );
   });
 
-  it('rejects already minted clips', async () => {
+  it('rejects already minted clips with ConflictException', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({
       ...mintableClip,
       nftStatus: 'minted',
     });
 
-    await expect(runGuard({ body: { clipId: 1 } })).rejects.toThrow(
-      'already being minted or has been minted',
+    await expect(runGuard({ body: { clipId: 1 } })).rejects.toBeInstanceOf(
+      ConflictException,
     );
   });
 
-  it('rejects clips currently minting', async () => {
+  it('rejects clips currently minting with ConflictException', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({
       ...mintableClip,
       nftStatus: 'minting',
     });
 
     await expect(runGuard({ body: { clipId: 1 } })).rejects.toBeInstanceOf(
-      BadRequestException,
+      ConflictException,
     );
   });
 
-  it('rejects clips with mintAddress set', async () => {
+  it('rejects clips with mintAddress set with ConflictException', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({
       ...mintableClip,
       mintAddress: 'CABC123',

@@ -157,8 +157,21 @@ describe('NFT mint preparation (e2e)', () => {
       'Prepare a Soroban mint transaction (returns XDR for signing)',
     );
     expect(Object.keys(operation?.responses ?? {})).toEqual(
-      expect.arrayContaining(['201', '401']),
+      expect.arrayContaining(['201', '400', '401', '404', '409', '503']),
     );
+    const requestProps =
+      (operation?.requestBody as any)?.content?.['application/json']?.schema
+        ?.properties ??
+      document.components?.schemas?.CreateMintPreparationDto?.['properties'];
+    expect(requestProps).toEqual(
+      expect.objectContaining({
+        clipId: expect.any(Object),
+        walletAddress: expect.any(Object),
+      }),
+    );
+    const created =
+      operation?.responses?.['201']?.content?.['application/json']?.schema;
+    expect(created).toBeDefined();
   });
 
   it('publishes upload-metadata OpenAPI with metadataUri and IPFS CID', () => {
