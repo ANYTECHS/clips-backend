@@ -414,7 +414,169 @@ export class NftMintService {
     };
   }
 
-  private buildMetadata(clip: {
+  /**
+   * Prepares (but does not sign) a Soroban `claim_royalties` transaction XDR.
+   *
+   * Calls the contract's `get_claimable_royalties` read to verify there is
+   * a non-zero balance before building the transaction, so callers get a
+   * clear error instead of a failed on-chain tx.
+   *
+   * @param tokenId       - NFT token ID (= clip.id)
+   * @param walletAddress - Royalty recipient's Stellar wallet address
+   * @param assetContractId - SAC address royalties are paid in (optional, falls back to native)
+   */
+  async prepareClaimRoyaltiesTx(
+    tokenId: number,
+    walletAddress: string,
+    assetContractId?: string,
+  ): Promise<{
+    xdr: string;
+    tokenId: number;
+    recipient: string;
+    claimableBalance: number;
+    contractId: string;
+    network: string;
+  }> {
+    this.logger.log(
+      `Preparing claim_royalties XDR: tokenId=${tokenId}, wallet=${walletAddress}`,
+    );
+
+    const addressCheck = this.stellarService.validateAddress(walletAddress);
+    if (!addressCheck.valid) {
+      throw new BadRequestException(
+        `Invalid wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const clip = await this.prisma.clip.findUnique({ where: { id: tokenId } });
+    if (!clip) {
+      throw new NotFoundException(`Clip with ID ${tokenId} not found`);
+    }
+    if (!clip.mintAddress) {
+      throw new BadRequestException('Clip has not been minted on-chain');
+    }
+
+    // Resolve asset: use provided SAC address or fall back to native XLM SAC
+    const resolvedAsset = assetContractId ?? this.resolveNativeAssetContractId();
+
+    try {
+      const networkPassphrase = this.stellarService.networkPassphrase;
+      const rpcUrl = this.stellarService.rpcUrl;
+      const server = new StellarSdk.rpc.Server(rpcUrl);
+
+      // Read claimable balance via read-only simulate
+      const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+
+      const sourceAccount = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.getAccount(walletAddress),
+      );
+
+      // Simulate get_claimable_royalties to check balance before building claim tx
+      const readOp = contract.call(
+        'get_claimable_royalties',
+        StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      );
+
+      const readTx = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: '10000',
+        networkPassphrase,
+      })
+        .addOperation(readOp)
+        .setTimeout(StellarSdk.TimeoutInfinite)
+        .build();
+
+      let claimableBalance = 0;
+      try {
+        const simulation = await this.circuitBreakerService.execute(
+          this.sorobanCircuitBreakerConfig,
+          async () => server.simulateTransaction(readTx),
+        );
+
+        if (
+          simulation &&
+          'result' in simulation &&
+          simulation.result?.retval
+        ) {
+          const scVal = simulation.result.retval;
+          claimableBalance = Number(StellarSdk.scValToNative(scVal) ?? 0);
+        }
+      } catch {
+        // If simulation fails (e.g. no balance stored yet), treat as zero
+        claimableBalance = 0;
+      }
+
+      if (claimableBalance <= 0) {
+        throw new BadRequestException(
+          `No claimable royalties for token ${tokenId}`,
+        );
+      }
+
+      // Re-fetch account for fresh sequence number before building claim tx
+      const claimSourceAccount = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.getAccount(walletAddress),
+      );
+
+      const op = contract.call(
+        'claim_royalties',
+        StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),  // token_id: u64
+        StellarSdk.Address.fromString(resolvedAsset).toScVal(),       // asset: Address
+      );
+
+      const tx = new StellarSdk.TransactionBuilder(claimSourceAccount, {
+        fee: '10000',
+        networkPassphrase,
+      })
+        .addOperation(op)
+        .setTimeout(StellarSdk.TimeoutInfinite)
+        .build();
+
+      const xdr = tx.toXDR();
+
+      this.logger.log(
+        `claim_royalties XDR prepared for tokenId=${tokenId}, claimable=${claimableBalance}`,
+      );
+
+      return {
+        xdr,
+        tokenId,
+        recipient: walletAddress,
+        claimableBalance,
+        contractId: this.CONTRACT_ID,
+        network: this.stellarService.network,
+      };
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+      if (error?.name === 'ServiceUnavailableException') {
+        this.logger.error(
+          `Soroban service unavailable during claim_royalties preparation: ${error.message}`,
+        );
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : 'unknown error';
+      this.logger.error(`Failed to prepare claim_royalties XDR: ${message}`);
+      throw new BadRequestException(
+        `Stellar claim royalties preparation failed: ${message}`,
+      );
+    }
+  }
+
+  /**
+   * Returns the native XLM SAC contract ID for the configured network.
+   * This is the standard Stellar Asset Contract for native XLM.
+   */
+  private resolveNativeAssetContractId(): string {
+    // Standard native XLM SAC addresses per network
+    return this.stellarService.isMainnet()
+      ? 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
+      : 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
+  }
     id: number;
     title: string | null;
     caption: string | null;

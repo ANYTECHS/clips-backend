@@ -330,3 +330,28 @@ pub fn is_verified_clip(env: &Env, clip_hash: &BytesN<32>) -> bool {
         .get(&(Symbol::new(env, "vclip"), clip_hash.clone()))
         .unwrap_or(false)
 }
+
+// ── Royalty accumulation and claiming ───────────────────────────────────────
+
+/// Store accumulated royalties for a token (amount owed to creator).
+pub fn add_accumulated_royalty(env: &Env, token_id: u64, amount: i128) {
+    let current = get_accumulated_royalty(env, token_id);
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "accum_royal")), &(current + amount));
+}
+
+/// Get accumulated royalties for a token.
+pub fn get_accumulated_royalty(env: &Env, token_id: u64) -> i128 {
+    env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "accum_royal")))
+        .unwrap_or(0)
+}
+
+/// Reset accumulated royalties after claim.
+pub fn reset_accumulated_royalty(env: &Env, token_id: u64) {
+    env.storage()
+        .persistent()
+        .set(&(token_id, Symbol::new(env, "accum_royal")), &0i128);
+}

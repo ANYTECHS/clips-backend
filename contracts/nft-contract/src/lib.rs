@@ -82,6 +82,8 @@ pub enum Error {
     InvalidBatchSize = 13,
     /// One-time metadata update limit reached for token ID.
     MetadataAlreadyUpdated = 14,
+    /// No royalties have accrued yet — nothing to claim.
+    InsufficientBalance = 15,
 }
 
 #[contractimpl]
@@ -835,6 +837,78 @@ impl ClipsNftContract {
     pub fn get_nonce(env: Env, caller: Address) -> u64 {
         storage::get_nonce(&env, &caller)
     }
+
+    /// Accumulate royalties for a token.  Called after each royalty payment so
+    /// that the owed balance grows until the creator calls `claim_royalties`.
+    ///
+    /// Only the contract admin may call this — it is invoked internally by
+    /// off-chain infra that tracks on-chain `royalty_paid` events and credits
+    /// the per-token ledger.
+    pub fn accrue_royalties(
+        env: Env,
+        token_id: u64,
+        amount: i128,
+    ) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+
+        storage::add_accumulated_royalty(&env, token_id, amount);
+        Ok(())
+    }
+
+    /// Return the claimable royalty balance for a token.
+    pub fn get_claimable_royalties(env: Env, token_id: u64) -> Result<i128, Error> {
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+        Ok(storage::get_accumulated_royalty(&env, token_id))
+    }
+
+    /// Claim all accumulated royalties for `token_id`.
+    ///
+    /// Only the token's royalty recipient (creator by default) may call this.
+    /// Transfers the full claimable balance via the SAC `asset`, resets the
+    /// on-chain balance to zero, and emits `RoyaltyClaimed`.
+    ///
+    /// Returns `Error::InsufficientBalance` when there is nothing to claim.
+    pub fn claim_royalties(
+        env: Env,
+        token_id: u64,
+        asset: Address,
+    ) -> Result<i128, Error> {
+        if !storage::is_supported_asset(&env, &asset) {
+            return Err(Error::UnsupportedAsset);
+        }
+
+        let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+
+        // Only the current royalty recipient (or creator as fallback) may claim.
+        let recipient = Self::get_royalty_recipient(env.clone(), token_id)
+            .unwrap_or_else(|| token_data.creator.clone());
+
+        recipient.require_auth();
+
+        let claimable = storage::get_accumulated_royalty(&env, token_id);
+        if claimable <= 0 {
+            return Err(Error::InsufficientBalance);
+        }
+
+        // Transfer accumulated amount to recipient via SAC.
+        let contract_address = env.current_contract_address();
+        let asset_client = token::Client::new(&env, &asset);
+        asset_client.transfer(&contract_address, &recipient, &claimable);
+
+        // Reset balance — prevents double claims.
+        storage::reset_accumulated_royalty(&env, token_id);
+
+        events::emit_royalty_claimed(&env, &recipient, token_id, claimable, &asset);
+
+        Ok(claimable)
+    }
 }
 
 mod events {
@@ -932,5 +1006,20 @@ mod events {
     ) {
         let topics = (Symbol::new(env, "metadata_updated"), token_id, owner.clone());
         env.events().publish(topics, metadata.clone());
+    }
+
+    /// Emitted when a creator successfully claims their accumulated royalties.
+    ///
+    /// Topics:  `["royalty_claimed", recipient: Address]`
+    /// Data:    `(token_id: u64, amount: i128, asset: Address)`
+    pub fn emit_royalty_claimed(
+        env: &Env,
+        recipient: &Address,
+        token_id: u64,
+        amount: i128,
+        asset: &Address,
+    ) {
+        let topics = (Symbol::new(env, "royalty_claimed"), recipient.clone());
+        env.events().publish(topics, (token_id, amount, asset.clone()));
     }
 }
