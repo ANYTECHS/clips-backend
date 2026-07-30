@@ -233,6 +233,7 @@ async function bootstrap() {
       'The `Content-Security-Policy` directives (`scriptSrc`, `styleSrc`, ...) only relax to allow ' +
       '`\'unsafe-inline\'` scripts when the Swagger UI is enabled (non-production, or ' +
       '`ENABLE_SWAGGER_UI=true`), since the docs page needs an inline script to boot. ' +
+      'API JSON responses are never affected by this relaxation.',
       'API JSON responses are never affected by this relaxation.\n\n' +
       '## CSRF Protection\n\n' +
       'All state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) that are authenticated via the ' +

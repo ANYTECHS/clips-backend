@@ -16,6 +16,8 @@ import { NftMintService } from '../src/clips/nft-mint.service';
 import { LoginGuard } from '../src/auth/guards/login.guard';
 import { NftMintGuard } from '../src/nft/guards/nft-mint.guard';
 import { NftOwnershipVerificationService } from '../src/nft/nft-ownership-verification.service';
+import { NftOwnershipService } from '../src/nft/nft-ownership.service';
+import { MintSignatureVerificationService } from '../src/nft/mint-signature-verification.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RoyaltyConfigurationService } from '../src/nft/royalty-configuration.service';
 
@@ -41,6 +43,8 @@ describe('NFT mint preparation (e2e)', () => {
         { provide: IpfsUploadService, useValue: {} },
         { provide: RoyaltyQueryService, useValue: { getRoyaltyInfo: jest.fn() } },
         { provide: NftOwnershipVerificationService, useValue: {} },
+        { provide: NftOwnershipService, useValue: {} },
+        { provide: MintSignatureVerificationService, useValue: { verify: jest.fn() } },
         { provide: PrismaService, useValue: {} },
         { provide: RoyaltyConfigurationService, useValue: {} },
       ],
@@ -132,7 +136,20 @@ describe('NFT mint preparation (e2e)', () => {
       'Prepare a Soroban mint transaction (returns XDR for signing)',
     );
     expect(Object.keys(operation?.responses ?? {})).toEqual(
-      expect.arrayContaining(['201', '401']),
+      expect.arrayContaining(['201', '400', '401', '404', '409', '503']),
     );
+    const requestProps =
+      (operation?.requestBody as any)?.content?.['application/json']?.schema
+        ?.properties ??
+      document.components?.schemas?.CreateMintPreparationDto?.['properties'];
+    expect(requestProps).toEqual(
+      expect.objectContaining({
+        clipId: expect.any(Object),
+        walletAddress: expect.any(Object),
+      }),
+    );
+    const created =
+      operation?.responses?.['201']?.content?.['application/json']?.schema;
+    expect(created).toBeDefined();
   });
 });
