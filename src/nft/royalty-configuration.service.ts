@@ -43,6 +43,17 @@ export class RoyaltyConfigurationService {
     return wallet;
   }
 
+  /**
+   * The Stellar asset royalties are paid in: `"native"` (XLM) or a Stellar
+   * Asset Contract (SAC) address (e.g. USDC) configured via
+   * `ROYALTY_ASSET_CODE` / `ROYALTY_ASSET_CONTRACT_ID`.
+   */
+  getRoyaltyAsset(): { code: string; contractId?: string } {
+    const code = this.config.royaltyAssetCode;
+    const contractId = this.config.royaltyAssetContractId || undefined;
+    return code === 'native' ? { code } : { code, contractId };
+  }
+
   validateRoyaltyBps(bps: number): void {
     if (!Number.isInteger(bps) || bps < 0 || bps > CLIP_ROYALTY_BPS_MAX) {
       throw new BadRequestException(

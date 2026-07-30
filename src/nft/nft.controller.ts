@@ -87,6 +87,9 @@ import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
+import { AdminGuard } from '../common/guards/admin.guard';
+import { AdminContractService } from './admin-contract.service';
+import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
 import { maskAddress } from '../wallets/wallet.utils';
 import {
   UpdateRoyaltyRecipientDto,
@@ -116,9 +119,11 @@ export class NftController {
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
     private readonly mintSignatureVerification: MintSignatureVerificationService,
+    private readonly adminContractService: AdminContractService,
     private readonly gasMetricsService: GasMetricsService,
   ) {}
 
+  @UseGuards(LoginGuard, NftMintGuard)
   @Get(':id/owner')
   @ApiOperation({
     summary: 'Get the current owner of an NFT',
@@ -221,10 +226,12 @@ export class NftController {
   @Post('mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Mint a clip as an NFT',
     description:
-      'Builds metadata, uploads to IPFS when needed, then mints with split royalties.',
+      'Builds metadata, uploads to IPFS when needed, then mints with split royalties. ' +
+      'The authenticated caller must own the clip being minted.',
   })
   @ApiBody({ type: MintNftDto })
   @ApiResponse({
@@ -244,8 +251,29 @@ export class NftController {
       },
     },
   })
-  @ApiForbiddenResponse({ description: 'Mint guard rejected the request' })
-  async mint(@Body() dto: MintNftDto): Promise<MintResult> {
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip, or the mint guard rejected the request',
+    schema: {
+      example: {
+        statusCode: 403,
+        message: 'You do not own this clip',
+        error: 'Forbidden',
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async mint(
+    @Body() dto: MintNftDto,
+    @Req() req: Request,
+  ): Promise<MintResult> {
+    const userId = Number((req as any).user?.id ?? 0);
+
+    // Reject mint requests for clips that don't exist or don't belong to the caller.
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+
     const metadataUri =
       dto.metadataUri ??
       (await this.nftMintService.uploadMetadataToIPFS(dto.clipId)).metadataUri;
@@ -727,6 +755,63 @@ export class NftController {
     };
   }
 
+  /**
+   * GET /nfts/admin/pause-status
+   * Reads the contract's current pause state via Soroban `is_paused`.
+   */
+  @Get('admin/pause-status')
+  @ApiOperation({
+    summary: 'Get the Soroban NFT contract pause status',
+    description:
+      'Reads the current pause state from the contract via the read-only is_paused call.',
+  })
+  @ApiOkResponse({
+    description: 'Pause status returned successfully',
+    schema: { example: { paused: false } },
+  })
+  async getPauseStatus(): Promise<{ paused: boolean }> {
+    return this.adminContractService.getPauseStatus();
+  }
+
+  /**
+   * POST /nfts/admin/pause
+   * Builds (but does not sign) a Soroban `pause` transaction. The admin
+   * wallet signs the returned XDR and submits it, mirroring prepare-mint.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/pause')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare a Soroban pause() transaction (returns XDR for signing)',
+    description:
+      'Emergency control: pauses minting and transfers on the NFT contract. ' +
+      'Requires the x-admin-secret header. The admin wallet must then sign and submit the returned XDR.',
+  })
+  @ApiBody({ type: PrepareContractPauseDto })
+  @ApiOkResponse({ description: 'Pause transaction XDR returned' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
+  async preparePause(@Body() dto: PrepareContractPauseDto) {
+    return this.adminContractService.preparePauseTx(dto.adminAddress, true);
+  }
+
+  /**
+   * POST /nfts/admin/unpause
+   * Builds (but does not sign) a Soroban `unpause` transaction.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/unpause')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare a Soroban unpause() transaction (returns XDR for signing)',
+    description:
+      'Restores minting and transfers on the NFT contract. Requires the x-admin-secret header. ' +
+      'The admin wallet must then sign and submit the returned XDR.',
+  })
+  @ApiBody({ type: PrepareContractPauseDto })
+  @ApiOkResponse({ description: 'Unpause transaction XDR returned' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
+  async prepareUnpause(@Body() dto: PrepareContractPauseDto) {
+    return this.adminContractService.preparePauseTx(dto.adminAddress, false);
   @UseGuards(LoginGuard)
   @Patch(':id/royalty-recipient')
   @HttpCode(HttpStatus.OK)
