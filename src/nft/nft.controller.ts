@@ -338,6 +338,9 @@ export class NftController {
     description: 'Mint transaction XDR returned',
     type: NftPrepareMintResponseDto,
   })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized - Bearer JWT required',
+  })
   @ApiBadRequestResponse({
     description:
       'Invalid clipId/walletAddress, clip not ready, or posted clips cannot be minted.',

@@ -233,7 +233,13 @@ export class ClipsController {
       'Configure creator royalty (0–1500 BPS) for a clip before minting. Defaults to 1000 (10%) when omitted.',
   })
   @ApiParam({ name: 'id', description: 'Clip ID' })
-  @ApiResponse({ status: 200, description: 'Royalty updated' })
+  @ApiResponse({
+    status: 200,
+    description: 'Royalty updated',
+    schema: {
+      example: { id: 42, royaltyBps: 1000 },
+    },
+  })
   @ApiResponse({
     status: 400,
     description: 'Invalid royaltyBps (must be 0–1500)',
