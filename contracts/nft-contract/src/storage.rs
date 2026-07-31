@@ -1,21 +1,17 @@
-use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{Address, BytesN, Env, Map, Symbol, Vec};
 
 use crate::TokenData;
 
 pub struct TokenStorage;
-
-const TOTAL_SUPPLY_KEY: &str = "total_supply";
-const ADMIN_KEY: &str = "admin";
-const DEFAULT_ROYALTY_BPS_KEY: &str = "def_royalty_bps";
-const PAUSED_KEY: &str = "paused";
-const DEFAULT_ROYALTY_ASSET_KEY: &str = "def_royalty_asset";
-const SUPPORTED_ASSETS_KEY: &str = "supported_assets";
 
 // ── Compact storage keys (issue #642) ──────────────────────────────────────
 // Short keys reduce per-entry storage footprint and RPC read latency.
 const TOTAL_SUPPLY_KEY: &str = "ts";
 const ADMIN_KEY: &str = "adm";
 const DEFAULT_ROYALTY_BPS_KEY: &str = "drb";
+const PAUSED_KEY: &str = "paused";
+const DEFAULT_ROYALTY_ASSET_KEY: &str = "def_royalty_asset";
+const SUPPORTED_ASSETS_KEY: &str = "supported_assets";
 
 /// Maximum allowed royalty value in basis points (100% = 10 000 BPS).
 pub const ROYALTY_BPS_MAX: u32 = 10_000;
@@ -190,6 +186,8 @@ pub fn get_supported_assets(env: &Env) -> Vec<Address> {
 
 pub fn is_supported_asset(env: &Env, asset: &Address) -> bool {
     get_supported_assets(env).contains(asset)
+}
+
 pub fn remove_token(env: &Env, token_id: u64) {
     env.storage().persistent().remove(&token_id);
 }
@@ -243,6 +241,8 @@ pub fn get_royalty_shares(env: &Env, token_id: u64) -> Option<Map<Address, u32>>
     env.storage()
         .persistent()
         .get(&(token_id, Symbol::new(env, "royalties")))
+}
+
 pub fn set_custom_token_uri(env: &Env, token_id: u64, uri: &soroban_sdk::String) {
     env.storage()
         .persistent()
