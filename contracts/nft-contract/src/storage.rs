@@ -330,3 +330,47 @@ pub fn is_verified_clip(env: &Env, clip_hash: &BytesN<32>) -> bool {
         .get(&(Symbol::new(env, "vclip"), clip_hash.clone()))
         .unwrap_or(false)
 }
+
+// ── Issue #676: Emergency withdraw timelock ─────────────────────────────────
+
+/// 24 hours expressed in seconds.
+pub const WITHDRAW_TIMELOCK_SECS: u64 = 86_400;
+
+const WITHDRAW_UNLOCK_KEY: &str = "wdraw_unlock";
+const XLM_TOKEN_KEY: &str = "xlm_token";
+
+/// Persist the timestamp after which `withdraw_xlm` may execute.
+pub fn set_withdraw_unlock_time(env: &Env, unlock_time: u64) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, WITHDRAW_UNLOCK_KEY), &unlock_time);
+}
+
+/// Retrieve the pending unlock timestamp, or `None` when not initiated.
+pub fn get_withdraw_unlock_time(env: &Env) -> Option<u64> {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, WITHDRAW_UNLOCK_KEY))
+}
+
+/// Clear the timelock after a successful withdrawal so it cannot be
+/// re-used without a fresh `initiate_withdraw` call.
+pub fn clear_withdraw_unlock_time(env: &Env) {
+    env.storage()
+        .instance()
+        .remove(&Symbol::new(env, WITHDRAW_UNLOCK_KEY));
+}
+
+/// Persist the XLM Stellar Asset Contract (SAC) address.
+pub fn set_xlm_token_address(env: &Env, address: &Address) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, XLM_TOKEN_KEY), address);
+}
+
+/// Retrieve the configured XLM SAC address.
+pub fn get_xlm_token_address(env: &Env) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, XLM_TOKEN_KEY))
+}
