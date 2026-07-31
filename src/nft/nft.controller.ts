@@ -844,6 +844,272 @@ export class NftController {
     );
   }
 
+  /**
+   * POST /nfts/tokens/:tokenId/approve
+   *
+   * Prepares an unsigned Soroban `approve(owner, spender, token_id)` XDR
+   * for the owner to sign. Grants `spender` the right to transfer one
+   * specific token (Issue #675).
+   */
+  @UseGuards(LoginGuard)
+  @Post('tokens/:tokenId/approve')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Approve a spender for a specific NFT token (Issue #675)',
+    description:
+      'Calls the Soroban `approve(owner, spender, token_id)` function. ' +
+      'Grants `spenderAddress` the right to call `transfer_from` for this ' +
+      'single token. Pass `spenderAddress` as null / empty string to revoke.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'On-chain token ID', example: 42 })
+  @ApiBody({
+    schema: {
+      example: {
+        ownerAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        spenderAddress: 'GDEST...ABC',
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned approve XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        tokenId: 42,
+        owner: 'GC6X...',
+        spender: 'GDEST...',
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid address or token not owned by caller' })
+  async prepareApprove(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+    @Body() body: { ownerAddress: string; spenderAddress: string },
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(tokenId, userId);
+
+    const { ownerAddress, spenderAddress } = body;
+    [ownerAddress, spenderAddress].forEach((addr) => {
+      const check = (this as any).stellarService?.validateAddress(addr) ??
+        { valid: addr?.length > 0 };
+      if (!check.valid) {
+        throw new BadRequestException(`Invalid Stellar address: ${addr}`);
+      }
+    });
+
+    const server = new (await import('@stellar/stellar-sdk')).default.rpc.Server(
+      (this as any).stellarService?.rpcUrl ?? process.env.SOROBAN_RPC_URL ?? '',
+    );
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(ownerAddress);
+
+    const op = contract.call(
+      'approve',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+      StellarSdk.Address.fromString(spenderAddress).toScVal(),
+      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: (this as any).stellarService?.networkPassphrase ?? '',
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      tokenId,
+      owner: ownerAddress,
+      spender: spenderAddress,
+      contractId,
+      network: (this as any).stellarService?.network ?? process.env.STELLAR_NETWORK ?? 'testnet',
+    };
+  }
+
+  /**
+   * POST /nfts/approvals/operator
+   *
+   * Grant or revoke operator-level approval for ALL tokens owned by the
+   * caller. Prepares an unsigned Soroban `set_approval_for_all` XDR
+   * (Issue #675).
+   */
+  @UseGuards(LoginGuard)
+  @Post('approvals/operator')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Grant or revoke operator approval for all tokens (Issue #675)',
+    description:
+      'Calls the Soroban `set_approval_for_all(owner, operator, approved)` ' +
+      'function. When `approved` is true, `operatorAddress` may call ' +
+      '`transfer_from` on any of the owner\'s tokens. ' +
+      'Set `approved` to false to revoke. Returns an unsigned XDR for signing.',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        ownerAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        operatorAddress: 'GDEST...ABC',
+        approved: true,
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned set_approval_for_all XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        owner: 'GC6X...',
+        operator: 'GDEST...',
+        approved: true,
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid Stellar address' })
+  async prepareSetApprovalForAll(
+    @Body() body: { ownerAddress: string; operatorAddress: string; approved: boolean },
+  ) {
+    const { ownerAddress, operatorAddress, approved } = body;
+
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      process.env.SOROBAN_RPC_URL ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(ownerAddress);
+
+    const op = contract.call(
+      'set_approval_for_all',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+      StellarSdk.Address.fromString(operatorAddress).toScVal(),
+      StellarSdk.nativeToScVal(approved, { type: 'bool' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      owner: ownerAddress,
+      operator: operatorAddress,
+      approved,
+      contractId,
+      network: (this as any).stellarService?.network ?? process.env.STELLAR_NETWORK ?? 'testnet',
+    };
+  }
+
+  /**
+   * GET /nfts/approvals/operator
+   *
+   * Query whether `operatorAddress` is approved to manage all tokens of
+   * `ownerAddress` (Issue #675 — `is_approved_for_all`).
+   */
+  @Get('approvals/operator')
+  @ApiOperation({
+    summary: 'Check operator approval for all tokens (Issue #675)',
+    description:
+      'Calls the Soroban `is_approved_for_all(owner, operator)` view function. ' +
+      'Returns whether `operatorAddress` is currently approved to transfer all ' +
+      'tokens owned by `ownerAddress`.',
+  })
+  @ApiOkResponse({
+    description: 'Operator approval status returned',
+    schema: {
+      example: {
+        owner: 'GC6X...',
+        operator: 'GDEST...',
+        approved: true,
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Missing required query parameters' })
+  async isApprovedForAll(
+    @Req() req: Request,
+  ): Promise<{ owner: string; operator: string; approved: boolean }> {
+    const { ownerAddress, operatorAddress } = req.query as {
+      ownerAddress: string;
+      operatorAddress: string;
+    };
+
+    if (!ownerAddress || !operatorAddress) {
+      throw new BadRequestException(
+        'Query params ownerAddress and operatorAddress are required',
+      );
+    }
+
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      process.env.SOROBAN_RPC_URL ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const op = contract.call(
+      'is_approved_for_all',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+      StellarSdk.Address.fromString(operatorAddress).toScVal(),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    const results = (simulation as { results?: Array<{ xdr: string }> }).results;
+    let approved = false;
+    if (results?.[0]?.xdr) {
+      const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+      approved = Boolean(StellarSdk.scValToNative(returnValue));
+    }
+
+    return { owner: ownerAddress, operator: operatorAddress, approved };
+  }
+
   @Get('deployment-status')
   @ApiOperation({
     summary: 'Verify contract deployment status (Issue #686)',

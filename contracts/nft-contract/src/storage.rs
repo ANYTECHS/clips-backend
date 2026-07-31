@@ -92,6 +92,25 @@ pub fn remove_approval(env: &Env, token_id: u64) {
     env.storage().persistent().remove(&(token_id, Symbol::new(env, "approval")));
 }
 
+// ── Issue #675: Operator approvals ─────────────────────────────────────────
+
+/// Set operator approval for all tokens owned by `owner`.
+/// Allows `operator` to transfer any of owner's NFTs via `transfer_from`.
+pub fn set_approval_for_all(env: &Env, owner: &Address, operator: &Address, approved: bool) {
+    let key = (Symbol::new(env, "op_appr"), owner.clone(), operator.clone());
+    if approved {
+        env.storage().persistent().set(&key, &true);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Check whether `operator` is approved to manage all of `owner`'s NFTs.
+pub fn is_approved_for_all(env: &Env, owner: &Address, operator: &Address) -> bool {
+    let key = (Symbol::new(env, "op_appr"), owner.clone(), operator.clone());
+    env.storage().persistent().get(&key).unwrap_or(false)
+}
+
 pub fn set_default_royalty_bps(env: &Env, bps: u32) {
     env.storage()
         .instance()
