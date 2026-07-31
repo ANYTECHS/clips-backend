@@ -466,6 +466,18 @@ impl ClipsNftContract {
         storage::get_token(&env, token_id).map(|t| t.creator)
     }
 
+    /// Return the original ClipCash backend clip ID stored at mint time (Issue #674).
+    ///
+    /// Every NFT records the database Clip ID that was passed to `mint()` or
+    /// `batch_mint()`. This creates a verifiable on-chain link between the NFT
+    /// and the ClipCash database record, enabling ownership and royalty checks
+    /// that cross the Web2/Web3 boundary.
+    ///
+    /// Returns `None` when the token does not exist.
+    pub fn get_clip_id(env: Env, token_id: u64) -> Option<String> {
+        storage::get_token(&env, token_id).map(|t| t.clip_id)
+    }
+
     pub fn balance_of(env: Env, owner: Address) -> u64 {
         storage::get_owner_tokens(&env, &owner).len() as u64
     }

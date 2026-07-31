@@ -870,6 +870,36 @@ export class NftController {
     };
   }
 
+  /**
+   * GET /nfts/tokens/:tokenId/clip-id
+   *
+   * Queries the on-chain `get_clip_id(token_id)` view function (Issue #674).
+   * Returns the original ClipCash database Clip ID stored inside the NFT at
+   * mint time, providing a verifiable on-chain ↔ database link.
+   */
+  @Get('tokens/:tokenId/clip-id')
+  @ApiOperation({
+    summary: 'Get the original ClipCash Clip ID stored on-chain for an NFT (Issue #674)',
+    description:
+      'Calls the Soroban `get_clip_id(token_id)` view function. Every NFT stores ' +
+      'the ClipCash database Clip ID passed at mint time inside `TokenData.clip_id`, ' +
+      'so ownership and royalty checks can cross the Web2/Web3 boundary without ' +
+      'trusting off-chain metadata. Returns `null` when the token does not exist.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'On-chain token ID (equals Clip ID)', example: 42 })
+  @ApiOkResponse({
+    description: 'Clip ID returned successfully',
+    schema: {
+      example: { tokenId: 42, clipId: '42' },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Token does not exist on-chain' })
+  async getClipId(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+  ): Promise<{ tokenId: number; clipId: string | null }> {
+    return this.adminContractService.getClipId(tokenId);
+  }
+
   @Get('gas-stats')
   @ApiOperation({
     summary: 'Get gas usage monitoring metrics and benchmarks (Issue #684)',

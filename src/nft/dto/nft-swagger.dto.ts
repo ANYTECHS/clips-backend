@@ -145,7 +145,11 @@ export class NftPrepareMintResponseDto {
   xdr: string;
 
   @ApiProperty({
-    description: 'Clip ID being minted',
+    description:
+      'ClipCash database Clip ID — stored on-chain inside `TokenData.clip_id` ' +
+      'so every NFT carries a verifiable link back to the backend record. ' +
+      'Query the on-chain value at any time via the `get_clip_id(token_id)` ' +
+      'contract view function (Issue #674).',
     example: 42,
   })
   clipId: number;
