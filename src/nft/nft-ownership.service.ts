@@ -128,6 +128,26 @@ export class NftOwnershipService {
       return [];
     }
   }
+
+  /**
+   * Lightweight check: returns true when the token has been minted on-chain,
+   * false when it has not (Issue #688). Uses an efficient storage lookup via
+   * owner_of — no ownership transfer is involved.
+   */
+  async tokenExists(
+    tokenId: string,
+    contractId?: string,
+  ): Promise<boolean> {
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        () => this.strategy.tokenExists(contractId ?? this.contractId, tokenId),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to check token existence for token ${tokenId}`, error);
+      return false;
+    }
+  }
 }
 
 export { NFT_OWNERSHIP_STRATEGY };
