@@ -111,4 +111,54 @@ export class AdminContractService {
     const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
     return { paused: Boolean(StellarSdk.scValToNative(returnValue)) };
   }
+
+  /**
+   * Read the deployed contract's semantic version via the read-only
+   * `version()` call (Issue #692).
+   */
+  async getContractVersion(): Promise<{ contractId: string; version: string }> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call('version');
+
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
+    try {
+      simulation = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.simulateTransaction(tx),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to query contract version: ${msg}`);
+      throw new InternalServerErrorException(
+        `Failed to query contract version: ${msg}`,
+      );
+    }
+
+    const results = (simulation as { results?: Array<{ xdr: string }> }).results;
+    if (!results?.[0]?.xdr) {
+      throw new InternalServerErrorException(
+        'No return value from version contract call',
+      );
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+    return {
+      contractId: this.CONTRACT_ID,
+      version: String(StellarSdk.scValToNative(returnValue)),
+    };
+  }
 }

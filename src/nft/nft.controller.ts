@@ -755,6 +755,35 @@ export class NftController {
   }
 
   /**
+   * GET /nfts/contract/version
+   *
+   * Reads the deployed contract's semantic version via the on-chain,
+   * read-only `version()` call (Issue #692). Unlike `contract/info`
+   * (which is derived from env vars), this reflects what's actually
+   * running in the deployed WASM.
+   */
+  @Get('contract/version')
+  @ApiOperation({
+    summary: 'Get the deployed Soroban NFT contract version',
+    description:
+      'Calls the read-only version() function on the currently deployed ' +
+      'ClipCash NFT Soroban contract and returns its semantic version ' +
+      "alongside the contract ID it was read from.",
+  })
+  @ApiOkResponse({
+    description: 'Contract version returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.1.0',
+      },
+    },
+  })
+  async getContractVersion(): Promise<{ contractId: string; version: string }> {
+    return this.adminContractService.getContractVersion();
+  }
+
+  /**
    * GET /nfts/admin/pause-status
    * Reads the contract's current pause state via Soroban `is_paused`.
    */

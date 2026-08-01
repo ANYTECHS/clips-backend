@@ -125,6 +125,17 @@ fi
 echo "   ✅  Contract deployed!"
 echo ""
 
+# ── Step 3b: Query deployed contract version ─────────────────
+DEPLOYED_VERSION=$(stellar contract invoke \
+  --id "$CONTRACT_ID" \
+  --source-account "$DEPLOYER_SECRET" \
+  --network "$NETWORK" \
+  --rpc-url "$RPC_URL" \
+  --network-passphrase "$NETWORK_PASSPHRASE" \
+  -- version 2>/dev/null | tr -d '"' || echo "unknown")
+echo "   Contract version: $DEPLOYED_VERSION"
+echo ""
+
 # ── Step 4: Initialize contract ──────────────────────────────
 INIT_ADMIN="${ADMIN_ADDRESS:-$DEPLOYER_PUBLIC}"
 if [[ -n "$INIT_ADMIN" ]]; then
@@ -144,6 +155,7 @@ fi
 # ── Step 5: Output ────────────────────────────────────────────
 echo "════════════════════════════════════════════════════════"
 echo "  CONTRACT_ID : $CONTRACT_ID"
+echo "  VERSION     : $DEPLOYED_VERSION"
 echo "  NETWORK     : Stellar Mainnet (public)"
 echo "════════════════════════════════════════════════════════"
 echo ""
