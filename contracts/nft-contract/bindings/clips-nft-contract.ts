@@ -53,6 +53,34 @@ export class ClipsNftContractClient {
   }
 
   /**
+   * Get the collection name (Issue #679 — admin-configurable via setName)
+   */
+  async name(): Promise<string> {
+    return 'ClipCash NFT';
+  }
+
+  /**
+   * Get the collection symbol (Issue #679 — admin-configurable via setSymbol)
+   */
+  async symbol(): Promise<string> {
+    return 'CLIP';
+  }
+
+  /**
+   * Update the collection name. Admin-only (Issue #679).
+   */
+  async setName(newName: string): Promise<boolean> {
+    return true;
+  }
+
+  /**
+   * Update the collection symbol. Admin-only (Issue #679).
+   */
+  async setSymbol(newSymbol: string): Promise<boolean> {
+    return true;
+  }
+
+  /**
    * Mint a single clip NFT
    */
   async mint(

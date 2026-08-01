@@ -102,6 +102,7 @@ import {
   UpdateRoyaltyRecipientResponseDto,
 } from './dto/update-royalty-recipient.dto';
 import { DeploymentStatusResponseDto } from './dto/deployment-status.dto';
+import { CollectionInfoResponseDto } from './dto/collection-info.dto';
 import { GasStatsResponseDto } from './dto/gas-stats.dto';
 import { GasMetricsService } from './gas-metrics.service';
 import {
@@ -1437,6 +1438,28 @@ export class NftController {
     }
 
     return { owner: ownerAddress, operator: operatorAddress, approved };
+  }
+
+  /**
+   * GET /nfts/collection
+   * Returns the collection's current name and symbol, which are
+   * admin-configurable via `set_name`/`set_symbol` on the Soroban contract
+   * (Issue #679) rather than fixed at deploy time.
+   */
+  @Get('collection')
+  @ApiOperation({
+    summary: 'Get collection name and symbol (Issue #679)',
+    description:
+      'Queries the on-chain `name()` and `symbol()` view functions. Both are ' +
+      'admin-configurable via `set_name`/`set_symbol`, so this reflects the current ' +
+      'collection branding rather than a hardcoded value.',
+  })
+  @ApiOkResponse({
+    description: 'Collection info returned successfully',
+    type: CollectionInfoResponseDto,
+  })
+  async getCollectionInfo(): Promise<CollectionInfoResponseDto> {
+    return this.adminContractService.getCollectionInfo();
   }
 
   @Get('deployment-status')
