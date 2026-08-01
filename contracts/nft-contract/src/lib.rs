@@ -82,6 +82,9 @@ pub enum Error {
     /// The asset contract address is not on the admin-approved allow-list.
     UnsupportedAsset = 9,
     /// Provided WASM hash is all zeros — cannot upgrade to a no-op contract.
+    InvalidWasmHash = 19,
+    /// Clip signature verification failed — caller is not the clip owner.
+    InvalidSignature = 20,
     InvalidWasmHash = 10,
     /// Clip signature verification failed — caller is not the clip owner.
     InvalidSignature = 11,
@@ -109,7 +112,7 @@ pub enum Error {
     /// XLM token SAC address has not been configured (Issue #676).
     XlmTokenNotConfigured = 18,
     /// No royalties have accrued yet — nothing to claim.
-    InsufficientBalance = 15,
+    InsufficientBalance = 21,
 }
 
 #[contractimpl]
@@ -757,10 +760,16 @@ impl ClipsNftContract {
         let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
+        if bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
         storage::set_platform_fee(&env, &recipient, bps);
         Ok(())
     }
 
+    /// Record a royalty payment made off-chain (in stroops) for `token_id`,
+    /// emitting a `royalty_paid` event for indexers.
     /// Record the royalty payment owed on `token_id`. Emits `royalty_paid`
     /// with the amount in stroops. `payer` must authorize the call.
     pub fn pay_royalty(
@@ -784,6 +793,22 @@ impl ClipsNftContract {
             0,
             amount_stroops,
         );
+        Ok(())
+    }
+
+    pub fn set_token_royalty_bps(env: Env, token_id: u64, bps: u32) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+
+        if bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        storage::set_token_royalty_bps(&env, token_id, bps);
         Ok(())
     }
 
@@ -1038,6 +1063,8 @@ impl ClipsNftContract {
         admin.require_auth();
         storage::set_xlm_token_address(&env, &xlm_token);
         Ok(())
+    }
+
     /// Return a paginated slice of token IDs owned by `owner`.
     ///
     /// `limit`  – maximum number of token IDs to return (capped at 100).
@@ -1057,6 +1084,8 @@ impl ClipsNftContract {
             i += 1;
         }
         result
+    }
+
     /// Accumulate royalties for a token.  Called after each royalty payment so
     /// that the owed balance grows until the creator calls `claim_royalties`.
     ///

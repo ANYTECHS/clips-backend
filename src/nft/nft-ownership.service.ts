@@ -147,6 +147,9 @@ export class NftOwnershipService {
       this.logger.error(`Failed to check token existence for token ${tokenId}`, error);
       return false;
     }
+  }
+
+  /**
    * Get a paginated slice of token IDs owned by a wallet address.
    *
    * Uses offset-based pagination: `cursor` is the 0-based index into the

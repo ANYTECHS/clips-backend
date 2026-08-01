@@ -25,6 +25,28 @@ fn s(env: &Env, v: &str) -> String {
     String::from_str(env, v)
 }
 
+/// Batch-mint `count` tokens (IDs `1..=count`) to `owner` and return the
+/// minted token IDs, for tests exercising pagination over a large collection.
+fn batch_mint_n(
+    env: &Env,
+    client: &ClipsNftContractClient<'static>,
+    owner: &Address,
+    count: u64,
+) -> Vec<u64> {
+    let mut token_ids = Vec::new(env);
+    let mut clip_ids = Vec::new(env);
+    let mut uris = Vec::new(env);
+    let mut soulbound = Vec::new(env);
+    for i in 1..=count {
+        token_ids.push_back(i);
+        clip_ids.push_back(s(env, "clip"));
+        uris.push_back(s(env, "uri"));
+        soulbound.push_back(false);
+    }
+    client.batch_mint(owner, &token_ids, &clip_ids, &uris, &soulbound);
+    token_ids
+}
+
 // ─────────────────────────────────────────────────────────────
 // Initialization
 // ─────────────────────────────────────────────────────────────
@@ -1440,9 +1462,7 @@ fn test_get_user_tokens_pagination_first_page() {
 
     for i in 1..=5 {
         let token_id = i;
-        let clip_id = format!("clip_{}", i);
-        let uri = format!("uri_{}", i);
-        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+        client.mint(&owner, &token_id, &s(&env, "clip"), &s(&env, "uri"), &false);
     }
 
     let page1 = client.get_user_tokens(&owner, &2, &0);
@@ -1462,9 +1482,7 @@ fn test_get_user_tokens_pagination_second_page() {
 
     for i in 1..=5 {
         let token_id = i;
-        let clip_id = format!("clip_{}", i);
-        let uri = format!("uri_{}", i);
-        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+        client.mint(&owner, &token_id, &s(&env, "clip"), &s(&env, "uri"), &false);
     }
 
     let page2 = client.get_user_tokens(&owner, &2, &2);
@@ -1484,9 +1502,7 @@ fn test_get_user_tokens_pagination_last_page_partial() {
 
     for i in 1..=5 {
         let token_id = i;
-        let clip_id = format!("clip_{}", i);
-        let uri = format!("uri_{}", i);
-        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+        client.mint(&owner, &token_id, &s(&env, "clip"), &s(&env, "uri"), &false);
     }
 
     let last_page = client.get_user_tokens(&owner, &2, &4);
@@ -1520,9 +1536,7 @@ fn test_get_user_tokens_limit_exceeds_total() {
 
     for i in 1..=3 {
         let token_id = i;
-        let clip_id = format!("clip_{}", i);
-        let uri = format!("uri_{}", i);
-        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+        client.mint(&owner, &token_id, &s(&env, "clip"), &s(&env, "uri"), &false);
     }
 
     let result = client.get_user_tokens(&owner, &100, &0);
@@ -1554,11 +1568,7 @@ fn test_get_user_tokens_limit_capped_at_100() {
     client.initialize(&admin);
 
     // Mint 50 tokens (batch limit is 50)
-    let token_ids: Vec<u64> = (1..=50).collect();
-    let clip_ids: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("clip_{}", i))).collect();
-    let uris: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("uri_{}", i))).collect();
-    let soulbound: Vec<bool> = (1..=50).map(|_| false).collect();
-    client.batch_mint(&owner, &token_ids, &clip_ids, &uris, &soulbound);
+    batch_mint_n(&env, &client, &owner, 50);
 
     // Request 200 (should be capped to 100, but only 50 exist)
     let result = client.get_user_tokens(&owner, &200, &0);
@@ -1575,11 +1585,7 @@ fn test_get_user_tokens_large_collection_multi_page() {
     client.initialize(&admin);
 
     // Mint 50 tokens via batch
-    let token_ids: Vec<u64> = (1..=50).collect();
-    let clip_ids: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("clip_{}", i))).collect();
-    let uris: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("uri_{}", i))).collect();
-    let soulbound: Vec<bool> = (1..=50).map(|_| false).collect();
-    client.batch_mint(&owner, &token_ids, &clip_ids, &uris, &soulbound);
+    batch_mint_n(&env, &client, &owner, 50);
 
     // Page 1
     let page1 = client.get_user_tokens(&owner, &20, &0);
