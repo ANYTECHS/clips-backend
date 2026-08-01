@@ -12,7 +12,6 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
 import {
@@ -812,6 +811,8 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
   async prepareUnpause(@Body() dto: PrepareContractPauseDto) {
     return this.adminContractService.preparePauseTx(dto.adminAddress, false);
+  }
+
   @UseGuards(LoginGuard)
   @Patch(':id/royalty-recipient')
   @HttpCode(HttpStatus.OK)
