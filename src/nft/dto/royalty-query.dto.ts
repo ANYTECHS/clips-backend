@@ -1,4 +1,57 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsInt, IsOptional, Min } from 'class-validator';
+import {
+  IsValidRoyaltyBps,
+  CLIP_ROYALTY_BPS_MAX,
+} from '../../common/validators/decorators';
+
+/** Query params for GET /nfts/royalty/estimate (Issue #680). */
+export class RoyaltyEstimateQueryDto {
+  @ApiProperty({
+    description: 'Sale price in stroops (1 XLM = 10,000,000 stroops) to estimate the royalty on',
+    example: 100_000_000,
+    minimum: 0,
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  salePrice!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Royalty rate in basis points (100 = 1%) to apply. Defaults to the configured creator royalty rate when omitted.',
+    example: 1000,
+    minimum: 0,
+    maximum: CLIP_ROYALTY_BPS_MAX,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsValidRoyaltyBps({ max: CLIP_ROYALTY_BPS_MAX })
+  royaltyBps?: number;
+}
+
+/** Response for GET /nfts/royalty/estimate (Issue #680). */
+export class RoyaltyEstimateResponseDto {
+  @ApiProperty({
+    description: 'Sale price in stroops the estimate was computed from',
+    example: 100_000_000,
+  })
+  salePrice!: number;
+
+  @ApiProperty({
+    description: 'Royalty rate applied, in basis points (100 = 1%)',
+    example: 1000,
+  })
+  royaltyBps!: number;
+
+  @ApiProperty({
+    description:
+      'Royalty amount owed in stroops, rounded down to the nearest stroop (salePrice * royaltyBps / 10_000)',
+    example: 10_000_000,
+  })
+  royaltyAmount!: number;
+}
 
 /** Successful on-chain royalty query response. */
 export class RoyaltyQueryResponseDto {

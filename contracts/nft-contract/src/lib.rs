@@ -273,6 +273,25 @@ impl ClipsNftContract {
         Ok(())
     }
 
+    /// Calculate the royalty amount owed on `sale_price` at `royalty_bps`
+    /// basis points (Issue #680). Reusable helper shared by
+    /// `transfer_with_royalty` and callers estimating a royalty ahead of a
+    /// sale, so the math is defined in exactly one place instead of being
+    /// duplicated across transfer and payout flows.
+    ///
+    /// Rounding: truncates toward zero (integer division) — any fractional
+    /// stroop is rounded down. The multiplication is done in `u128` so it
+    /// cannot overflow even at `sale_price == u64::MAX`.
+    ///
+    /// Returns `0` when `sale_price` is `0`, `royalty_bps` is `0`, or
+    /// `royalty_bps` exceeds `storage::ROYALTY_BPS_MAX` (10 000 = 100%).
+    pub fn calculate_royalty(_env: Env, sale_price: u64, royalty_bps: u32) -> u64 {
+        if sale_price == 0 || royalty_bps == 0 || royalty_bps > storage::ROYALTY_BPS_MAX {
+            return 0;
+        }
+        ((sale_price as u128) * (royalty_bps as u128) / (storage::ROYALTY_BPS_MAX as u128)) as u64
+    }
+
     /// Calculate fractional royalty for assets with custom decimal precision (Issue #685).
     pub fn calculate_fractional_royalty(
         _env: Env,
@@ -342,11 +361,7 @@ impl ClipsNftContract {
             .or_else(|| storage::get_default_royalty_bps(&env))
             .unwrap_or(0);
 
-        let royalty_amount: u64 = if royalty_bps == 0 || sale_price == 0 {
-            0
-        } else {
-            sale_price * (royalty_bps as u64) / (storage::ROYALTY_BPS_MAX as u64)
-        };
+        let royalty_amount: u64 = Self::calculate_royalty(env.clone(), sale_price, royalty_bps);
 
         let recipient = Self::get_royalty_recipient(env.clone(), token_id)
             .unwrap_or_else(|| token_data.creator.clone());

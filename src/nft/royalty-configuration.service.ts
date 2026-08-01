@@ -54,6 +54,28 @@ export class RoyaltyConfigurationService {
     return code === 'native' ? { code } : { code, contractId };
   }
 
+  /**
+   * Calculate the royalty amount owed on `salePrice` at `royaltyBps` basis
+   * points (Issue #680). Mirrors the Soroban contract's `calculate_royalty`
+   * helper so estimates returned by the API match what the chain will
+   * actually pay out.
+   *
+   * Rounding: truncates toward zero (`Math.floor`), matching the contract's
+   * integer-division semantics — any fractional stroop is rounded down.
+   */
+  calculateRoyalty(salePrice: number, royaltyBps: number): number {
+    this.validateRoyaltyBps(royaltyBps);
+    if (!Number.isInteger(salePrice) || salePrice < 0) {
+      throw new BadRequestException(
+        `Invalid salePrice: ${salePrice}. Must be a non-negative integer.`,
+      );
+    }
+    if (salePrice === 0 || royaltyBps === 0) {
+      return 0;
+    }
+    return Math.floor((salePrice * royaltyBps) / ROYALTY_PROTOCOL_MAX_BPS);
+  }
+
   validateRoyaltyBps(bps: number): void {
     if (!Number.isInteger(bps) || bps < 0 || bps > CLIP_ROYALTY_BPS_MAX) {
       throw new BadRequestException(

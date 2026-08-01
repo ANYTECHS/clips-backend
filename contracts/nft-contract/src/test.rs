@@ -399,6 +399,83 @@ fn test_royalty_calculation_one_bps_precision() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// calculate_royalty — reusable helper (Issue #680)
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_calculate_royalty_ten_percent() {
+    let (_env, _cid, client) = setup_env();
+    assert_eq!(client.calculate_royalty(&500, &1000), 50);
+}
+
+#[test]
+fn test_calculate_royalty_zero_sale_price_is_zero() {
+    let (_env, _cid, client) = setup_env();
+    assert_eq!(client.calculate_royalty(&0, &1000), 0);
+}
+
+#[test]
+fn test_calculate_royalty_zero_bps_is_zero() {
+    let (_env, _cid, client) = setup_env();
+    assert_eq!(client.calculate_royalty(&1_000_000, &0), 0);
+}
+
+#[test]
+fn test_calculate_royalty_max_bps_returns_full_sale_price() {
+    let (_env, _cid, client) = setup_env();
+    assert_eq!(client.calculate_royalty(&300, &10_000), 300);
+}
+
+#[test]
+fn test_calculate_royalty_above_max_bps_returns_zero() {
+    // BPS above ROYALTY_BPS_MAX (10 000) is invalid — treated the same as
+    // `calculate_fractional_royalty`, returning 0 rather than panicking.
+    let (_env, _cid, client) = setup_env();
+    assert_eq!(client.calculate_royalty(&1_000, &10_001), 0);
+}
+
+#[test]
+fn test_calculate_royalty_rounds_down() {
+    // 101 * 250 / 10_000 = 2.525 -> truncates to 2 (rounding documented as
+    // "toward zero" on the helper itself).
+    let (_env, _cid, client) = setup_env();
+    assert_eq!(client.calculate_royalty(&101, &250), 2);
+}
+
+#[test]
+fn test_calculate_royalty_does_not_overflow_near_u64_max() {
+    // sale_price near u64::MAX would overflow a plain u64 multiplication
+    // before dividing; the helper promotes to u128 internally to stay safe.
+    let (_env, _cid, client) = setup_env();
+    let sale_price = u64::MAX - 1;
+    let royalty = client.calculate_royalty(&sale_price, &1);
+    // 1 BPS of (u64::MAX - 1), floor-divided by 10_000.
+    let expected = (((sale_price as u128) * 1u128) / 10_000u128) as u64;
+    assert_eq!(royalty, expected);
+}
+
+#[test]
+fn test_calculate_royalty_matches_transfer_with_royalty() {
+    // The helper must produce the same amount that transfer_with_royalty
+    // actually pays out, since transfer_with_royalty now delegates to it.
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &1, &s(&env, "clip"), &s(&env, "uri"), &false);
+    client.set_default_royalty_bps(&750);
+
+    let sale_price: u64 = 4_000;
+    let expected = client.calculate_royalty(&sale_price, &750);
+
+    let info = client.transfer_with_royalty(&creator, &buyer, &1, &sale_price);
+    assert_eq!(info.royalty_amount, expected);
+}
+
+// ─────────────────────────────────────────────────────────────
 // Transfer
 // ─────────────────────────────────────────────────────────────
 
