@@ -22,6 +22,15 @@ export interface NftOwnershipVerificationStrategy {
     contractId: string,
     walletAddress: string,
   ): Promise<number[]>;
+
+  /**
+   * Check whether a token with the given ID has been minted.
+   * Returns true when the token exists on-chain, false otherwise (Issue #688).
+   */
+  tokenExists(
+    contractId: string,
+    tokenId: string,
+  ): Promise<boolean>;
 }
 
 /**
@@ -134,8 +143,7 @@ export class SorobanOwnerOfVerificationStrategy implements NftOwnershipVerificat
   async getWalletTokenIds(
     contractId: string,
     walletAddress: string,
-  ): Promise<number[]> {
-    const server = new StellarSdk.rpc.Server(this.rpcUrl);
+  ): Promise<number[]> {    const server = new StellarSdk.rpc.Server(this.rpcUrl);
     const ownerScVal = new StellarSdk.Address(walletAddress).toScVal();
 
     const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
@@ -171,5 +179,18 @@ export class SorobanOwnerOfVerificationStrategy implements NftOwnershipVerificat
     } catch (e) {
       return [];
     }
+  }
+
+  /**
+   * Lightweight token existence check (Issue #688).
+   * Calls `owner_of` on the contract — if we get a non-null owner back,
+   * the token exists. If the simulation errors or returns void, it doesn't.
+   */
+  async tokenExists(
+    contractId: string,
+    tokenId: string,
+  ): Promise<boolean> {
+    const owner = await this.getOwner(contractId, tokenId);
+    return owner !== null;
   }
 }
