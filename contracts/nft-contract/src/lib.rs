@@ -391,7 +391,15 @@ impl ClipsNftContract {
             return Err(Error::Unauthorized);
         }
 
-        if !storage::is_approved(&env, token_id, &spender) && token_data.owner != spender {
+        // Allow the transfer if spender is:
+        //   1. the token owner itself,
+        //   2. approved for this specific token, or
+        //   3. an approved-for-all operator for `from` (Issue #675)
+        let is_authorised = token_data.owner == spender
+            || storage::is_approved(&env, token_id, &spender)
+            || storage::is_approved_for_all(&env, &from, &spender);
+
+        if !is_authorised {
             return Err(Error::Unauthorized);
         }
 
@@ -432,6 +440,37 @@ impl ClipsNftContract {
         storage::set_approval(&env, token_id, &spender);
         events::emit_approve(&env, &owner, &spender, token_id);
         Ok(())
+    }
+
+    /// Grant or revoke operator approval for all tokens (Issue #675).
+    ///
+    /// When `approved` is `true`, `operator` is allowed to call
+    /// `transfer_from` on any token owned by `owner`, matching ERC-721's
+    /// `setApprovalForAll` semantics.  Set `approved` to `false` to revoke.
+    ///
+    /// `owner.require_auth()` is enforced — only the owner may change their
+    /// own operator list.
+    pub fn set_approval_for_all(
+        env: Env,
+        owner: Address,
+        operator: Address,
+        approved: bool,
+    ) -> Result<(), Error> {
+        owner.require_auth();
+
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+
+        storage::set_approval_for_all(&env, &owner, &operator, approved);
+        events::emit_approval_for_all(&env, &owner, &operator, approved);
+        Ok(())
+    }
+
+    /// Return whether `operator` is approved to manage all tokens owned by
+    /// `owner` (Issue #675).
+    pub fn is_approved_for_all(env: Env, owner: Address, operator: Address) -> bool {
+        storage::is_approved_for_all(&env, &owner, &operator)
     }
 
     pub fn owner_of(env: Env, token_id: u64) -> Option<Address> {
@@ -968,6 +1007,22 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    /// Emitted when an owner grants or revokes operator-level approval for
+    /// all their tokens (Issue #675 — `set_approval_for_all`).
+    pub fn emit_approval_for_all(
+        env: &Env,
+        owner: &Address,
+        operator: &Address,
+        approved: bool,
+    ) {
+        let topics = (
+            Symbol::new(env, "approval_all"),
+            owner.clone(),
+            operator.clone(),
+        );
+        env.events().publish(topics, approved);
     }
 
     pub fn emit_paused(env: &Env, admin: &Address) {
