@@ -90,6 +90,8 @@ pub enum Error {
     InvalidWithdrawAmount = 17,
     /// XLM token SAC address has not been configured (Issue #676).
     XlmTokenNotConfigured = 18,
+    /// No royalties have accrued yet — nothing to claim.
+    InsufficientBalance = 15,
 }
 
 #[contractimpl]
@@ -397,7 +399,15 @@ impl ClipsNftContract {
             return Err(Error::Unauthorized);
         }
 
-        if !storage::is_approved(&env, token_id, &spender) && token_data.owner != spender {
+        // Allow the transfer if spender is:
+        //   1. the token owner itself,
+        //   2. approved for this specific token, or
+        //   3. an approved-for-all operator for `from` (Issue #675)
+        let is_authorised = token_data.owner == spender
+            || storage::is_approved(&env, token_id, &spender)
+            || storage::is_approved_for_all(&env, &from, &spender);
+
+        if !is_authorised {
             return Err(Error::Unauthorized);
         }
 
@@ -440,6 +450,37 @@ impl ClipsNftContract {
         Ok(())
     }
 
+    /// Grant or revoke operator approval for all tokens (Issue #675).
+    ///
+    /// When `approved` is `true`, `operator` is allowed to call
+    /// `transfer_from` on any token owned by `owner`, matching ERC-721's
+    /// `setApprovalForAll` semantics.  Set `approved` to `false` to revoke.
+    ///
+    /// `owner.require_auth()` is enforced — only the owner may change their
+    /// own operator list.
+    pub fn set_approval_for_all(
+        env: Env,
+        owner: Address,
+        operator: Address,
+        approved: bool,
+    ) -> Result<(), Error> {
+        owner.require_auth();
+
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+
+        storage::set_approval_for_all(&env, &owner, &operator, approved);
+        events::emit_approval_for_all(&env, &owner, &operator, approved);
+        Ok(())
+    }
+
+    /// Return whether `operator` is approved to manage all tokens owned by
+    /// `owner` (Issue #675).
+    pub fn is_approved_for_all(env: Env, owner: Address, operator: Address) -> bool {
+        storage::is_approved_for_all(&env, &owner, &operator)
+    }
+
     pub fn owner_of(env: Env, token_id: u64) -> Option<Address> {
         storage::get_token(&env, token_id).map(|t| t.owner)
     }
@@ -472,6 +513,18 @@ impl ClipsNftContract {
 
     pub fn get_creator(env: Env, token_id: u64) -> Option<Address> {
         storage::get_token(&env, token_id).map(|t| t.creator)
+    }
+
+    /// Return the original ClipCash backend clip ID stored at mint time (Issue #674).
+    ///
+    /// Every NFT records the database Clip ID that was passed to `mint()` or
+    /// `batch_mint()`. This creates a verifiable on-chain link between the NFT
+    /// and the ClipCash database record, enabling ownership and royalty checks
+    /// that cross the Web2/Web3 boundary.
+    ///
+    /// Returns `None` when the token does not exist.
+    pub fn get_clip_id(env: Env, token_id: u64) -> Option<String> {
+        storage::get_token(&env, token_id).map(|t| t.clip_id)
     }
 
     pub fn balance_of(env: Env, owner: Address) -> u64 {
@@ -922,6 +975,95 @@ impl ClipsNftContract {
         admin.require_auth();
         storage::set_xlm_token_address(&env, &xlm_token);
         Ok(())
+    /// Return a paginated slice of token IDs owned by `owner`.
+    ///
+    /// `limit`  – maximum number of token IDs to return (capped at 100).
+    /// `cursor` – offset into the owner's token list (0-based index).
+    ///
+    /// Returns an empty Vec when `cursor` >= total tokens or `limit` is 0.
+    pub fn get_user_tokens(env: Env, owner: Address, limit: u32, cursor: u32) -> Vec<u64> {
+        let tokens = storage::get_owner_tokens(&env, &owner);
+        let total = tokens.len();
+        let start = cursor.min(total);
+        let effective_limit = limit.min(100);
+        let end = (start + effective_limit).min(total);
+        let mut result = Vec::new(&env);
+        let mut i = start;
+        while i < end {
+            result.push_back(tokens.get(i).unwrap());
+            i += 1;
+        }
+        result
+    /// Accumulate royalties for a token.  Called after each royalty payment so
+    /// that the owed balance grows until the creator calls `claim_royalties`.
+    ///
+    /// Only the contract admin may call this — it is invoked internally by
+    /// off-chain infra that tracks on-chain `royalty_paid` events and credits
+    /// the per-token ledger.
+    pub fn accrue_royalties(
+        env: Env,
+        token_id: u64,
+        amount: i128,
+    ) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+
+        storage::add_accumulated_royalty(&env, token_id, amount);
+        Ok(())
+    }
+
+    /// Return the claimable royalty balance for a token.
+    pub fn get_claimable_royalties(env: Env, token_id: u64) -> Result<i128, Error> {
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+        Ok(storage::get_accumulated_royalty(&env, token_id))
+    }
+
+    /// Claim all accumulated royalties for `token_id`.
+    ///
+    /// Only the token's royalty recipient (creator by default) may call this.
+    /// Transfers the full claimable balance via the SAC `asset`, resets the
+    /// on-chain balance to zero, and emits `RoyaltyClaimed`.
+    ///
+    /// Returns `Error::InsufficientBalance` when there is nothing to claim.
+    pub fn claim_royalties(
+        env: Env,
+        token_id: u64,
+        asset: Address,
+    ) -> Result<i128, Error> {
+        if !storage::is_supported_asset(&env, &asset) {
+            return Err(Error::UnsupportedAsset);
+        }
+
+        let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+
+        // Only the current royalty recipient (or creator as fallback) may claim.
+        let recipient = Self::get_royalty_recipient(env.clone(), token_id)
+            .unwrap_or_else(|| token_data.creator.clone());
+
+        recipient.require_auth();
+
+        let claimable = storage::get_accumulated_royalty(&env, token_id);
+        if claimable <= 0 {
+            return Err(Error::InsufficientBalance);
+        }
+
+        // Transfer accumulated amount to recipient via SAC.
+        let contract_address = env.current_contract_address();
+        let asset_client = token::Client::new(&env, &asset);
+        asset_client.transfer(&contract_address, &recipient, &claimable);
+
+        // Reset balance — prevents double claims.
+        storage::reset_accumulated_royalty(&env, token_id);
+
+        events::emit_royalty_claimed(&env, &recipient, token_id, claimable, &asset);
+
+        Ok(claimable)
     }
 }
 
@@ -951,6 +1093,22 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    /// Emitted when an owner grants or revokes operator-level approval for
+    /// all their tokens (Issue #675 — `set_approval_for_all`).
+    pub fn emit_approval_for_all(
+        env: &Env,
+        owner: &Address,
+        operator: &Address,
+        approved: bool,
+    ) {
+        let topics = (
+            Symbol::new(env, "approval_all"),
+            owner.clone(),
+            operator.clone(),
+        );
+        env.events().publish(topics, approved);
     }
 
     pub fn emit_paused(env: &Env, admin: &Address) {
@@ -1042,5 +1200,20 @@ mod events {
     ) {
         let topics = (Symbol::new(env, "metadata_updated"), token_id, owner.clone());
         env.events().publish(topics, metadata.clone());
+    }
+
+    /// Emitted when a creator successfully claims their accumulated royalties.
+    ///
+    /// Topics:  `["royalty_claimed", recipient: Address]`
+    /// Data:    `(token_id: u64, amount: i128, asset: Address)`
+    pub fn emit_royalty_claimed(
+        env: &Env,
+        recipient: &Address,
+        token_id: u64,
+        amount: i128,
+        asset: &Address,
+    ) {
+        let topics = (Symbol::new(env, "royalty_claimed"), recipient.clone());
+        env.events().publish(topics, (token_id, amount, asset.clone()));
     }
 }
