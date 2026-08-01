@@ -1,7 +1,10 @@
 #![cfg(test)]
 
 use crate::{ClipMetadata, ClipsNftContract, ClipsNftContractClient, Error};
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env,
+    String, Symbol, TryIntoVal, Vec,
+};
 
 
 // ─────────────────────────────────────────────────────────────
@@ -1256,6 +1259,58 @@ fn test_fractional_royalty_precision_and_rounding() {
     assert_eq!(royalty, 375_000);
 }
 
+#[test]
+fn test_fractional_royalty_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+
+    let sale_price_stroops: u128 = u128::MAX;
+    let royalty_bps: u32 = 10_000;
+    let decimals: u32 = 7;
+
+    let result = client.try_calculate_fractional_royalty(&sale_price_stroops, &royalty_bps, &decimals);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #689: Prevent Integer Overflow in Royalty Logic tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_with_royalty_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5101, &String::from_str(&env, "c5101"), &String::from_str(&env, "uri5101"), &false);
+    client.set_default_royalty_bps(&10_000); // 100%, maximises the product
+
+    let result = client.try_transfer_with_royalty(&creator, &buyer, &5101, &u64::MAX);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
+#[test]
+fn test_pay_royalty_with_asset_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5102, &String::from_str(&env, "c5102"), &String::from_str(&env, "uri5102"), &false);
+    client.add_supported_asset(&asset);
+    client.set_default_royalty_bps(&10_000); // 100%, maximises the product
+
+    // checked_mul overflows before the asset transfer is attempted, so no
+    // real Stellar Asset Contract needs to be registered for this case.
+    let result = client.try_pay_royalty_with_asset(&payer, &5102, &asset, &i128::MAX);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Issues #672, #686, #683 tests
 // ─────────────────────────────────────────────────────────────
@@ -1265,6 +1320,24 @@ fn test_name_and_symbol() {
     let (env, _contract_id, client) = setup_env();
     assert_eq!(client.name(), String::from_str(&env, "ClipCash NFT"));
     assert_eq!(client.symbol(), String::from_str(&env, "CLIP"));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #692: Contract Version Constant tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_version_is_queryable_without_initialization() {
+    let (env, _contract_id, client) = setup_env();
+    // No initialize() call — version() must work on a fresh, uninitialized
+    // contract since it's a compile-time constant, not stored state.
+    assert_eq!(client.version(), String::from_str(&env, crate::VERSION));
+}
+
+#[test]
+fn test_version_matches_contract_metadata() {
+    let (env, _contract_id, client) = setup_env();
+    assert_eq!(client.version(), String::from_str(&env, "1.1.0"));
 }
 
 #[test]
@@ -1309,6 +1382,72 @@ fn test_update_royalty_recipient_unauthorized_rejected() {
 
     let result = client.try_update_royalty_recipient(&5002, &stranger);
     assert!(result.is_err(), "Unauthorized update of royalty recipient must fail");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #695: Emit Events for Royalty Recipient Changes tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_update_royalty_recipient_emits_event_with_required_fields() {
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let new_recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5003, &String::from_str(&env, "c5003"), &String::from_str(&env, "uri5003"), &false);
+
+    client.update_royalty_recipient(&5003, &new_recipient);
+
+    // RoyaltyRecipientUpdated must be emitted with token_id, old address,
+    // and new address (Issue #695 acceptance criteria).
+    let events = env.events().all();
+    let (event_contract_id, topics, data) = events.last().unwrap();
+    assert_eq!(event_contract_id, contract_id, "event must come from this contract");
+
+    let event_name: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(event_name, Symbol::new(&env, "royalty_recipient_updated"));
+
+    let token_id: u64 = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(token_id, 5003, "event must include the token ID");
+
+    let (old_recipient, emitted_new_recipient): (Address, Address) =
+        data.try_into_val(&env).unwrap();
+    assert_eq!(old_recipient, creator, "event must include the old address");
+    assert_eq!(emitted_new_recipient, new_recipient, "event must include the new address");
+}
+
+#[test]
+fn test_update_royalty_recipient_emits_event_on_every_update() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let second_recipient = Address::generate(&env);
+    let third_recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5004, &String::from_str(&env, "c5004"), &String::from_str(&env, "uri5004"), &false);
+
+    // First update: creator -> second_recipient.
+    client.update_royalty_recipient(&5004, &second_recipient);
+    let (_, _, data) = env.events().all().last().unwrap();
+    let (old_recipient, new_recipient): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(old_recipient, creator);
+    assert_eq!(new_recipient, second_recipient);
+
+    // Second update: second_recipient -> third_recipient. A fresh event
+    // must be emitted reflecting the new transition, not a stale/missing one.
+    client.update_royalty_recipient(&5004, &third_recipient);
+    let (_, _, data) = env.events().all().last().unwrap();
+    let (old_recipient, new_recipient): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        old_recipient, second_recipient,
+        "second update's event must reflect the recipient set by the first update"
+    );
+    assert_eq!(new_recipient, third_recipient);
 }
 
 #[test]

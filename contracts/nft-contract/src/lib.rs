@@ -1,6 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contractmeta, contracttype,
+    token, Address, BytesN, Env, Map, String, Symbol, Val, Vec,
     token, Address, BytesN, Env, Map, String, Symbol, Vec,
 };
 use soroban_token_sdk::metadata::TokenMetadata;
@@ -20,8 +21,22 @@ const CLIP_NAME: &[u8] = b"ClipCash NFT";
 const CLIP_SYMBOL: &[u8] = b"CLIP";
 pub const MAX_BATCH_SIZE: u32 = 50;
 
+/// Semantic version of this contract build (Issue #692).
+///
+/// Follows semver (`MAJOR.MINOR.PATCH`):
+/// - `PATCH` — bug fixes with no interface changes (e.g. this overflow fix).
+/// - `MINOR` — new functions or fields added in a backwards-compatible way.
+/// - `MAJOR` — a breaking change to an existing function's signature,
+///   behavior, or storage layout.
+///
+/// Bump this constant (and the `contractmeta!` value below, which must stay
+/// in sync) in the same PR that introduces the change it describes. Query it
+/// on-chain via the `version()` view function, or off-chain by reading the
+/// `version` contract metadata entry without invoking the contract.
+pub const VERSION: &str = "1.1.0";
+
 contractmeta!(key = "name", val = "ClipCash NFT Contract");
-contractmeta!(key = "version", val = "1.0.0");
+contractmeta!(key = "version", val = "1.1.0");
 
 #[contract]
 pub struct ClipsNftContract;
@@ -70,15 +85,23 @@ pub enum Error {
     InvalidWasmHash = 19,
     /// Clip signature verification failed — caller is not the clip owner.
     InvalidSignature = 20,
+    InvalidWasmHash = 10,
+    /// Clip signature verification failed — caller is not the clip owner.
+    InvalidSignature = 11,
     /// Nonce is stale — replay attack detected.
-    InvalidNonce = 10,
+    InvalidNonce = 12,
     /// Clip hash was not pre-verified by the admin.
-    ClipNotVerified = 11,
+    ClipNotVerified = 13,
     /// Array lengths do not match for batch operation.
-    ArrayLengthMismatch = 12,
+    ArrayLengthMismatch = 14,
     /// Batch size is 0 or exceeds maximum allowable limit.
-    InvalidBatchSize = 13,
+    InvalidBatchSize = 15,
     /// One-time metadata update limit reached for token ID.
+    MetadataAlreadyUpdated = 16,
+    /// `sale_price * royalty_bps` would overflow the arithmetic type used
+    /// for the calculation. See the safe-limits table on each royalty
+    /// function for the maximum `sale_price` that avoids this.
+    RoyaltyOverflow = 17,
     MetadataAlreadyUpdated = 14,
     /// withdraw_xlm called before initiate_withdraw (Issue #676).
     WithdrawNotInitiated = 15,
@@ -102,6 +125,17 @@ impl ClipsNftContract {
     /// Return collection symbol (Issue #686).
     pub fn symbol(env: Env) -> String {
         String::from_str(&env, "CLIP")
+    }
+
+    /// Return the semantic version of the deployed contract (Issue #692).
+    ///
+    /// Public read-only call, no auth required. Reflects the `VERSION`
+    /// constant baked into this WASM build — distinct from
+    /// `get_contract_version`/`set_contract_version`, which is an
+    /// admin-settable runtime value used for external deployment tracking
+    /// and can drift from what's actually running.
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, VERSION)
     }
 
     /// Initialise the contract and set the admin address.
@@ -293,16 +327,30 @@ impl ClipsNftContract {
     }
 
     /// Calculate fractional royalty for assets with custom decimal precision (Issue #685).
+    ///
+    /// Uses checked arithmetic (Issue #689): `sale_price * royalty_bps` is
+    /// computed with `checked_mul` and returns `Error::RoyaltyOverflow`
+    /// instead of panicking if the product would overflow `u128`. Since
+    /// `royalty_bps` is capped at `ROYALTY_BPS_MAX` (10 000), overflow can
+    /// only occur for `sale_price > u128::MAX / 10_000`
+    /// (~3.4 * 10^34), a value with no realistic on-chain meaning.
     pub fn calculate_fractional_royalty(
         _env: Env,
         sale_price: u128,
         royalty_bps: u32,
         _asset_decimals: u32,
-    ) -> u128 {
-        if royalty_bps == 0 || sale_price == 0 || royalty_bps > storage::ROYALTY_BPS_MAX {
-            return 0;
+    ) -> Result<u128, Error> {
+        if royalty_bps == 0 || sale_price == 0 {
+            return Ok(0);
         }
-        (sale_price * (royalty_bps as u128)) / (storage::ROYALTY_BPS_MAX as u128)
+        if royalty_bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        let product = sale_price
+            .checked_mul(royalty_bps as u128)
+            .ok_or(Error::RoyaltyOverflow)?;
+        Ok(product / (storage::ROYALTY_BPS_MAX as u128))
     }
 
     pub fn transfer(
@@ -362,6 +410,18 @@ impl ClipsNftContract {
             .unwrap_or(0);
 
         let royalty_amount: u64 = Self::calculate_royalty(env.clone(), sale_price, royalty_bps);
+        // Checked arithmetic (Issue #689): `royalty_bps` is capped at
+        // ROYALTY_BPS_MAX (10 000), so `sale_price * royalty_bps` only
+        // overflows `u64` for `sale_price > u64::MAX / 10_000`
+        // (~1.84 * 10^15 stroops, i.e. ~184 million XLM at 7 decimals).
+        let royalty_amount: u64 = if royalty_bps == 0 || sale_price == 0 {
+            0
+        } else {
+            sale_price
+                .checked_mul(royalty_bps as u64)
+                .ok_or(Error::RoyaltyOverflow)?
+                / (storage::ROYALTY_BPS_MAX as u64)
+        };
 
         let recipient = Self::get_royalty_recipient(env.clone(), token_id)
             .unwrap_or_else(|| token_data.creator.clone());
@@ -672,7 +732,14 @@ impl ClipsNftContract {
 
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
         let bps = storage::get_default_royalty_bps(&env).unwrap_or(0);
-        let royalty_amount = amount.saturating_mul(bps as i128) / (ROYALTY_BPS_MAX as i128);
+        // Checked arithmetic (Issue #689): previously used `saturating_mul`,
+        // which silently clamps to `i128::MAX` on overflow and would pay out
+        // a nonsensical royalty amount instead of failing. `checked_mul`
+        // rejects the call outright via `Error::RoyaltyOverflow`.
+        let royalty_amount = amount
+            .checked_mul(bps as i128)
+            .ok_or(Error::RoyaltyOverflow)?
+            / (ROYALTY_BPS_MAX as i128);
 
         if royalty_amount > 0 {
             let asset_client = token::Client::new(&env, &asset);
@@ -723,6 +790,8 @@ impl ClipsNftContract {
 
     /// Record a royalty payment made off-chain (in stroops) for `token_id`,
     /// emitting a `royalty_paid` event for indexers.
+    /// Record the royalty payment owed on `token_id`. Emits `royalty_paid`
+    /// with the amount in stroops. `payer` must authorize the call.
     pub fn pay_royalty(
         env: Env,
         token_id: u64,
@@ -829,6 +898,22 @@ impl ClipsNftContract {
         }
 
         royalties
+    }
+
+    pub fn set_token_royalty_bps(env: Env, token_id: u64, bps: u32) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+
+        if bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        storage::set_token_royalty_bps(&env, token_id, bps);
+        Ok(())
     }
 
     pub fn get_token_royalty_bps(env: Env, token_id: u64) -> Option<u32> {
@@ -1163,6 +1248,8 @@ mod events {
         env.events().publish(topics, (old_bps, new_bps));
     }
 
+    /// Emitted by `pay_royalty_with_asset` when a royalty is paid out in a
+    /// specific Stellar asset contract (SAC).
     pub fn emit_royalty_paid_asset(
         env: &Env,
         payer: &Address,
@@ -1175,6 +1262,8 @@ mod events {
         env.events().publish(topics, (asset.clone(), token_id, amount));
     }
 
+    /// Emitted by `transfer_with_royalty` and `pay_royalty` when a royalty
+    /// amount (in stroops) is computed/paid for a token sale.
     pub fn emit_royalty_paid(
         env: &Env,
         recipient: &Address,
