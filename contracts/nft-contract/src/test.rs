@@ -1,7 +1,10 @@
 #![cfg(test)]
 
 use crate::{ClipMetadata, ClipsNftContract, ClipsNftContractClient, Error};
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env,
+    String, Symbol, TryIntoVal, Vec,
+};
 
 
 // ─────────────────────────────────────────────────────────────
@@ -1280,6 +1283,72 @@ fn test_update_royalty_recipient_unauthorized_rejected() {
 
     let result = client.try_update_royalty_recipient(&5002, &stranger);
     assert!(result.is_err(), "Unauthorized update of royalty recipient must fail");
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #695: Emit Events for Royalty Recipient Changes tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_update_royalty_recipient_emits_event_with_required_fields() {
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let new_recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5003, &String::from_str(&env, "c5003"), &String::from_str(&env, "uri5003"), &false);
+
+    client.update_royalty_recipient(&5003, &new_recipient);
+
+    // RoyaltyRecipientUpdated must be emitted with token_id, old address,
+    // and new address (Issue #695 acceptance criteria).
+    let events = env.events().all();
+    let (event_contract_id, topics, data) = events.last().unwrap();
+    assert_eq!(event_contract_id, contract_id, "event must come from this contract");
+
+    let event_name: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(event_name, Symbol::new(&env, "royalty_recipient_updated"));
+
+    let token_id: u64 = topics.get(1).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(token_id, 5003, "event must include the token ID");
+
+    let (old_recipient, emitted_new_recipient): (Address, Address) =
+        data.try_into_val(&env).unwrap();
+    assert_eq!(old_recipient, creator, "event must include the old address");
+    assert_eq!(emitted_new_recipient, new_recipient, "event must include the new address");
+}
+
+#[test]
+fn test_update_royalty_recipient_emits_event_on_every_update() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let second_recipient = Address::generate(&env);
+    let third_recipient = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5004, &String::from_str(&env, "c5004"), &String::from_str(&env, "uri5004"), &false);
+
+    // First update: creator -> second_recipient.
+    client.update_royalty_recipient(&5004, &second_recipient);
+    let (_, _, data) = env.events().all().last().unwrap();
+    let (old_recipient, new_recipient): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(old_recipient, creator);
+    assert_eq!(new_recipient, second_recipient);
+
+    // Second update: second_recipient -> third_recipient. A fresh event
+    // must be emitted reflecting the new transition, not a stale/missing one.
+    client.update_royalty_recipient(&5004, &third_recipient);
+    let (_, _, data) = env.events().all().last().unwrap();
+    let (old_recipient, new_recipient): (Address, Address) = data.try_into_val(&env).unwrap();
+    assert_eq!(
+        old_recipient, second_recipient,
+        "second update's event must reflect the recipient set by the first update"
+    );
+    assert_eq!(new_recipient, third_recipient);
 }
 
 #[test]
