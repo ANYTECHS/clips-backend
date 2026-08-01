@@ -357,7 +357,10 @@ export class NftController {
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
     description:
       'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
-      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress.',
+      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress. ' +
+      'For a standalone Node.js reference implementation of this same XDR-building flow (useful when ' +
+      'integrating outside this API, e.g. from an ops script or another backend service), see ' +
+      'contracts/nft-contract/examples/mint-from-backend.ts.',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
