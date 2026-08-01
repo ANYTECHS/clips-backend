@@ -82,6 +82,14 @@ pub enum Error {
     InvalidBatchSize = 13,
     /// One-time metadata update limit reached for token ID.
     MetadataAlreadyUpdated = 14,
+    /// withdraw_xlm called before initiate_withdraw (Issue #676).
+    WithdrawNotInitiated = 15,
+    /// withdraw_xlm called before the 24-hour timelock has elapsed (Issue #676).
+    WithdrawTimelockActive = 16,
+    /// withdraw_xlm amount must be greater than zero (Issue #676).
+    InvalidWithdrawAmount = 17,
+    /// XLM token SAC address has not been configured (Issue #676).
+    XlmTokenNotConfigured = 18,
     /// No royalties have accrued yet — nothing to claim.
     InsufficientBalance = 15,
 }
@@ -889,6 +897,84 @@ impl ClipsNftContract {
         storage::get_nonce(&env, &caller)
     }
 
+    // ── Issue #676: Emergency withdraw for stuck XLM ────────────────────────
+
+    /// Initiate a 24-hour timelock before XLM can be withdrawn (Issue #676).
+    ///
+    /// The admin calls this first to start the clock. After 24 hours have
+    /// passed, `withdraw_xlm` can be executed. This two-step design prevents
+    /// accidental or malicious instant drains.
+    ///
+    /// Only the contract admin may call this function.
+    pub fn initiate_withdraw(env: Env) -> Result<u64, Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        let unlock_time = env.ledger().timestamp() + storage::WITHDRAW_TIMELOCK_SECS;
+        storage::set_withdraw_unlock_time(&env, unlock_time);
+
+        events::emit_withdraw_initiated(&env, &admin, unlock_time);
+        Ok(unlock_time)
+    }
+
+    /// Return the timestamp (Unix seconds) when a pending withdraw becomes
+    /// executable, or `None` when no initiation is pending (Issue #676).
+    pub fn get_withdraw_unlock_time(env: Env) -> Option<u64> {
+        storage::get_withdraw_unlock_time(&env)
+    }
+
+    /// Withdraw accidentally-stuck XLM to `recipient` (Issue #676).
+    ///
+    /// Requirements:
+    ///   - Caller must be the contract admin.
+    ///   - `initiate_withdraw()` must have been called at least 24 hours ago.
+    ///   - `amount_stroops` must be > 0.
+    ///
+    /// On success the timelock is cleared and a `withdraw_xlm` event is
+    /// emitted so the transaction is auditable on-chain.
+    pub fn withdraw_xlm(
+        env: Env,
+        recipient: Address,
+        amount_stroops: i128,
+    ) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if amount_stroops <= 0 {
+            return Err(Error::InvalidWithdrawAmount);
+        }
+
+        let unlock_time = storage::get_withdraw_unlock_time(&env)
+            .ok_or(Error::WithdrawNotInitiated)?;
+
+        if env.ledger().timestamp() < unlock_time {
+            return Err(Error::WithdrawTimelockActive);
+        }
+
+        // Clear timelock before transferring (checks-effects-interactions).
+        storage::clear_withdraw_unlock_time(&env);
+
+        // Transfer native XLM from the contract's own balance to recipient.
+        let xlm_token_address = storage::get_xlm_token_address(&env)
+            .ok_or(Error::XlmTokenNotConfigured)?;
+        let token_client = token::Client::new(&env, &xlm_token_address);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &amount_stroops,
+        );
+
+        events::emit_withdraw_xlm(&env, &admin, &recipient, amount_stroops);
+        Ok(())
+    }
+
+    /// Set the XLM Stellar Asset Contract (SAC) address used by
+    /// `withdraw_xlm`. Only the admin may call this (Issue #676).
+    pub fn set_xlm_token_address(env: Env, xlm_token: Address) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        storage::set_xlm_token_address(&env, &xlm_token);
+        Ok(())
     /// Return a paginated slice of token IDs owned by `owner`.
     ///
     /// `limit`  – maximum number of token IDs to return (capped at 100).
@@ -1072,6 +1158,28 @@ mod events {
     pub fn emit_upgrade(env: &Env, new_wasm_hash: &BytesN<32>) {
         let topics = (Symbol::new(env, "upgrade"),);
         env.events().publish(topics, (new_wasm_hash.clone(),));
+    }
+
+    /// Emitted when the admin calls `initiate_withdraw()` (Issue #676).
+    /// `unlock_time` is the Unix timestamp after which `withdraw_xlm` may run.
+    pub fn emit_withdraw_initiated(env: &Env, admin: &Address, unlock_time: u64) {
+        let topics = (Symbol::new(env, "withdraw_init"), admin.clone());
+        env.events().publish(topics, unlock_time);
+    }
+
+    /// Emitted on a successful `withdraw_xlm()` execution (Issue #676).
+    pub fn emit_withdraw_xlm(
+        env: &Env,
+        admin: &Address,
+        recipient: &Address,
+        amount_stroops: i128,
+    ) {
+        let topics = (
+            Symbol::new(env, "withdraw_xlm"),
+            admin.clone(),
+            recipient.clone(),
+        );
+        env.events().publish(topics, amount_stroops);
     }
 
     pub fn emit_royalty_recipient_updated(

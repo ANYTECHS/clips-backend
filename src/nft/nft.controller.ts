@@ -891,6 +891,34 @@ export class NftController {
     );
   }
 
+  // ── Issue #676: Emergency withdraw for stuck XLM ────────────────────────
+
+  /**
+   * POST /nfts/admin/withdraw/initiate
+   *
+   * Starts the 24-hour timelock before XLM can be withdrawn. Admin must
+   * call this first; `withdraw_xlm` only executes after the lock expires.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/withdraw/initiate')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Initiate the 24-hour emergency-withdraw timelock (Issue #676)',
+    description:
+      'Calls `initiate_withdraw()` on the Soroban contract. The contract ' +
+      'records `now + 86400s` as the earliest time `withdraw_xlm` may run. ' +
+      'Requires the x-admin-secret header. Returns an unsigned XDR for signing.',
+  })
+  @ApiBody({
+    schema: { example: { adminAddress: 'GC6X...UTZF3' } },
+  })
+  @ApiOkResponse({
+    description: 'Timelock initiation XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        action: 'initiate_withdraw',
+        unlockAfterSeconds: 86400,
   /**
    * POST /nfts/tokens/:tokenId/approve
    *
@@ -931,6 +959,8 @@ export class NftController {
       },
     },
   })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret' })
+  async prepareInitiateWithdraw(@Body() body: { adminAddress: string }) {
   @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
   @ApiBadRequestResponse({ description: 'Invalid address or token not owned by caller' })
   async prepareApprove(
@@ -957,6 +987,23 @@ export class NftController {
     const contractId =
       process.env.SOROBAN_NFT_CONTRACT_ID ??
       'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      process.env.SOROBAN_RPC_URL ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(body.adminAddress);
+
+    const op = contract.call('initiate_withdraw');
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
     const contract = new StellarSdk.Contract(contractId);
     const sourceAccount = await server.getAccount(ownerAddress);
 
@@ -977,6 +1024,8 @@ export class NftController {
 
     return {
       xdr: tx.toXDR(),
+      action: 'initiate_withdraw',
+      unlockAfterSeconds: 86400,
       tokenId,
       owner: ownerAddress,
       spender: spenderAddress,
@@ -986,6 +1035,38 @@ export class NftController {
   }
 
   /**
+   * GET /nfts/admin/withdraw/timelock-status
+   *
+   * Queries the on-chain unlock timestamp so admins can see how long
+   * remains before the withdraw is executable (Issue #676).
+   */
+  @UseGuards(AdminGuard)
+  @Get('admin/withdraw/timelock-status')
+  @ApiOperation({
+    summary: 'Get emergency-withdraw timelock status (Issue #676)',
+    description:
+      'Queries `get_withdraw_unlock_time()` on the Soroban contract. ' +
+      'Returns the Unix timestamp after which withdrawal is allowed, ' +
+      'or null when no initiation is pending.',
+  })
+  @ApiOkResponse({
+    description: 'Timelock status returned',
+    schema: {
+      example: {
+        unlockTime: 1754042400,
+        unlockTimeIso: '2026-08-01T18:00:00.000Z',
+        secondsRemaining: 82345,
+        ready: false,
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret' })
+  async getWithdrawTimelockStatus(): Promise<{
+    unlockTime: number | null;
+    unlockTimeIso: string | null;
+    secondsRemaining: number;
+    ready: boolean;
+  }> {
    * POST /nfts/approvals/operator
    *
    * Grant or revoke operator-level approval for ALL tokens owned by the
@@ -1047,6 +1128,14 @@ export class NftController {
 
     const server = new StellarSdk.rpc.Server(rpcUrl);
     const contract = new StellarSdk.Contract(contractId);
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const op = contract.call('get_withdraw_unlock_time');
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
     const sourceAccount = await server.getAccount(ownerAddress);
 
     const op = contract.call(
@@ -1064,6 +1153,77 @@ export class NftController {
       .setTimeout(StellarSdk.TimeoutInfinite)
       .build();
 
+    const simulation = await server.simulateTransaction(tx);
+    const results = (simulation as { results?: Array<{ xdr: string }> }).results;
+
+    if (!results?.[0]?.xdr) {
+      return { unlockTime: null, unlockTimeIso: null, secondsRemaining: 0, ready: false };
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+    const native = StellarSdk.scValToNative(returnValue);
+    // Option<u64> returns null or a bigint/number
+    if (native == null) {
+      return { unlockTime: null, unlockTimeIso: null, secondsRemaining: 0, ready: false };
+    }
+
+    const unlockTime = Number(native);
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const secondsRemaining = Math.max(0, unlockTime - nowSecs);
+
+    return {
+      unlockTime,
+      unlockTimeIso: new Date(unlockTime * 1000).toISOString(),
+      secondsRemaining,
+      ready: secondsRemaining === 0,
+    };
+  }
+
+  /**
+   * POST /nfts/admin/withdraw/execute
+   *
+   * Executes the emergency XLM withdrawal after the 24h timelock has passed.
+   * Prepares an unsigned Soroban `withdraw_xlm` XDR (Issue #676).
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/withdraw/execute')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare emergency withdraw_xlm XDR (admin-only, Issue #676)',
+    description:
+      'Builds an unsigned Soroban `withdraw_xlm(recipient, amount_stroops)` ' +
+      'transaction. Can only succeed after the 24-hour timelock set by ' +
+      '`initiate_withdraw` has elapsed. Returns XDR for the admin wallet to sign.',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        adminAddress: 'GC6X...UTZF3',
+        recipientAddress: 'GDEST...ABC',
+        amountStroops: '10000000',
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned withdraw_xlm XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        recipient: 'GDEST...',
+        amountStroops: '10000000',
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret' })
+  @ApiBadRequestResponse({ description: 'Amount must be > 0' })
+  async prepareWithdrawXlm(
+    @Body() body: { adminAddress: string; recipientAddress: string; amountStroops: string },
+  ) {
+    const amountStroops = BigInt(body.amountStroops ?? '0');
+    if (amountStroops <= 0n) {
+      throw new BadRequestException('amountStroops must be greater than 0');
     return {
       xdr: tx.toXDR(),
       owner: ownerAddress,
@@ -1127,6 +1287,16 @@ export class NftController {
 
     const server = new StellarSdk.rpc.Server(rpcUrl);
     const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(body.adminAddress);
+
+    const op = contract.call(
+      'withdraw_xlm',
+      StellarSdk.Address.fromString(body.recipientAddress).toScVal(),
+      StellarSdk.nativeToScVal(amountStroops, { type: 'i128' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
     const dummyAccount = new StellarSdk.Account(
       'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
       '0',
@@ -1146,6 +1316,13 @@ export class NftController {
       .setTimeout(StellarSdk.TimeoutInfinite)
       .build();
 
+    return {
+      xdr: tx.toXDR(),
+      recipient: body.recipientAddress,
+      amountStroops: body.amountStroops,
+      contractId,
+      network: (this as any).stellarService?.network ?? process.env.STELLAR_NETWORK ?? 'testnet',
+    };
     const simulation = await server.simulateTransaction(tx);
     const results = (simulation as { results?: Array<{ xdr: string }> }).results;
     let approved = false;
