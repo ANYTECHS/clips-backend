@@ -102,6 +102,48 @@ describe('RoyaltyConfigurationService', () => {
     expect(map[0].description).toBe(description);
   });
 
+  describe('calculateRoyalty', () => {
+    it('computes 10% royalty on a sale price', () => {
+      expect(service.calculateRoyalty(100_000_000, 1000)).toBe(10_000_000);
+    });
+
+    it('returns 0 for a zero sale price', () => {
+      expect(service.calculateRoyalty(0, 1000)).toBe(0);
+    });
+
+    it('returns 0 for zero royalty bps', () => {
+      expect(service.calculateRoyalty(1_000_000, 0)).toBe(0);
+    });
+
+    it('rounds down fractional stroops', () => {
+      // 101 * 250 / 10_000 = 2.525 -> floors to 2
+      expect(service.calculateRoyalty(101, 250)).toBe(2);
+    });
+
+    it('matches the on-chain calculate_royalty helper for the same inputs', () => {
+      // Mirrors contracts/nft-contract/src/test.rs::test_calculate_royalty_ten_percent
+      expect(service.calculateRoyalty(500, 1000)).toBe(50);
+    });
+
+    it('rejects royaltyBps above the allowed maximum', () => {
+      expect(() => service.calculateRoyalty(1000, 1501)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rejects a negative sale price', () => {
+      expect(() => service.calculateRoyalty(-1, 1000)).toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('rejects a non-integer sale price', () => {
+      expect(() => service.calculateRoyalty(1.5, 1000)).toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
   it('throws when platform wallet is missing', () => {
     const missingWalletConfig = {
       ...config,

@@ -134,6 +134,20 @@ export class ClipsNftContractClient {
   }
 
   /**
+   * Calculate the royalty amount owed on `salePriceStroops` at
+   * `royaltyBps` basis points (Issue #680). Reusable helper shared by
+   * `transferWithRoyalty` and off-chain royalty estimates. Rounds down
+   * (truncates toward zero) and returns `0n` for a zero sale price, zero
+   * BPS, or BPS above the 10 000 (100%) maximum.
+   */
+  calculateRoyalty(salePriceStroops: bigint, royaltyBps: number): bigint {
+    if (royaltyBps === 0 || salePriceStroops === 0n || royaltyBps > 10000) {
+      return 0n;
+    }
+    return (salePriceStroops * BigInt(royaltyBps)) / 10000n;
+  }
+
+  /**
    * Calculate fractional royalty for decimal assets (Issue #685)
    */
   calculateFractionalRoyalty(
