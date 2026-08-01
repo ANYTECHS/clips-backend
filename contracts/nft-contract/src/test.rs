@@ -1157,6 +1157,58 @@ fn test_fractional_royalty_precision_and_rounding() {
     assert_eq!(royalty, 375_000);
 }
 
+#[test]
+fn test_fractional_royalty_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+
+    let sale_price_stroops: u128 = u128::MAX;
+    let royalty_bps: u32 = 10_000;
+    let decimals: u32 = 7;
+
+    let result = client.try_calculate_fractional_royalty(&sale_price_stroops, &royalty_bps, &decimals);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #689: Prevent Integer Overflow in Royalty Logic tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_with_royalty_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5101, &String::from_str(&env, "c5101"), &String::from_str(&env, "uri5101"), &false);
+    client.set_default_royalty_bps(&10_000); // 100%, maximises the product
+
+    let result = client.try_transfer_with_royalty(&creator, &buyer, &5101, &u64::MAX);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
+#[test]
+fn test_pay_royalty_with_asset_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5102, &String::from_str(&env, "c5102"), &String::from_str(&env, "uri5102"), &false);
+    client.add_supported_asset(&asset);
+    client.set_default_royalty_bps(&10_000); // 100%, maximises the product
+
+    // checked_mul overflows before the asset transfer is attempted, so no
+    // real Stellar Asset Contract needs to be registered for this case.
+    let result = client.try_pay_royalty_with_asset(&payer, &5102, &asset, &i128::MAX);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Issues #672, #686, #683 tests
 // ─────────────────────────────────────────────────────────────
