@@ -1,9 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contractmeta, contracttype,
-    token, Address, Env, String, Symbol, Val, Vec,
-    Address, Env, Map, String, Symbol, Val,
-    Address, BytesN, Env, String, Symbol, Val, Vec,
+    token, Address, BytesN, Env, Map, String, Symbol, Vec,
 };
 use soroban_token_sdk::metadata::TokenMetadata;
 
@@ -16,7 +14,7 @@ mod test;
 
 pub use admin::Admin;
 pub use metadata::ClipMetadata;
-pub use storage::{get_token_metadata, set_token_metadata, TokenStorage, ROYALTY_BPS_MAX};
+pub use storage::{get_token_metadata, set_token_metadata, ROYALTY_BPS_MAX};
 
 const CLIP_NAME: &[u8] = b"ClipCash NFT";
 const CLIP_SYMBOL: &[u8] = b"CLIP";
