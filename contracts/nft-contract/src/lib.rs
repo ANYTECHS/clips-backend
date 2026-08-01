@@ -17,8 +17,8 @@ pub use admin::Admin;
 pub use metadata::ClipMetadata;
 pub use storage::{get_token_metadata, set_token_metadata, ROYALTY_BPS_MAX};
 
-const CLIP_NAME: &[u8] = b"ClipCash NFT";
-const CLIP_SYMBOL: &[u8] = b"CLIP";
+const CLIP_NAME: &str = "ClipCash NFT";
+const CLIP_SYMBOL: &str = "CLIP";
 pub const MAX_BATCH_SIZE: u32 = 50;
 
 /// Semantic version of this contract build (Issue #692).
@@ -117,14 +117,43 @@ pub enum Error {
 
 #[contractimpl]
 impl ClipsNftContract {
-    /// Return collection name (Issue #686).
+    /// Return collection name (Issue #686). Admin-configurable (Issue
+    /// #679) — falls back to the default "ClipCash NFT" when never
+    /// overridden via `set_name`.
     pub fn name(env: Env) -> String {
-        String::from_str(&env, "ClipCash NFT")
+        storage::get_collection_name(&env)
+            .unwrap_or_else(|| String::from_str(&env, CLIP_NAME))
     }
 
-    /// Return collection symbol (Issue #686).
+    /// Return collection symbol (Issue #686). Admin-configurable (Issue
+    /// #679) — falls back to the default "CLIP" when never overridden via
+    /// `set_symbol`.
     pub fn symbol(env: Env) -> String {
-        String::from_str(&env, "CLIP")
+        storage::get_collection_symbol(&env)
+            .unwrap_or_else(|| String::from_str(&env, CLIP_SYMBOL))
+    }
+
+    /// Update the collection name so it can be rebranded without
+    /// redeploying the contract (Issue #679). Only the contract admin may
+    /// call this.
+    pub fn set_name(env: Env, new_name: String) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        storage::set_collection_name(&env, &new_name);
+        events::emit_name_updated(&env, &new_name);
+        Ok(())
+    }
+
+    /// Update the collection symbol (Issue #679). Only the contract admin
+    /// may call this.
+    pub fn set_symbol(env: Env, new_symbol: String) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        storage::set_collection_symbol(&env, &new_symbol);
+        events::emit_symbol_updated(&env, &new_symbol);
+        Ok(())
     }
 
     /// Return the semantic version of the deployed contract (Issue #692).
@@ -1246,6 +1275,18 @@ mod events {
     pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
         let topics = (Symbol::new(env, "royalty_updated"),);
         env.events().publish(topics, (old_bps, new_bps));
+    }
+
+    /// Emitted when the admin renames the collection via `set_name` (Issue #679).
+    pub fn emit_name_updated(env: &Env, new_name: &String) {
+        let topics = (Symbol::new(env, "name_updated"),);
+        env.events().publish(topics, new_name.clone());
+    }
+
+    /// Emitted when the admin changes the collection symbol via `set_symbol` (Issue #679).
+    pub fn emit_symbol_updated(env: &Env, new_symbol: &String) {
+        let topics = (Symbol::new(env, "symbol_updated"),);
+        env.events().publish(topics, new_symbol.clone());
     }
 
     /// Emitted by `pay_royalty_with_asset` when a royalty is paid out in a

@@ -1323,6 +1323,79 @@ fn test_name_and_symbol() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Configurable collection name / symbol (Issue #679)
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_set_name_updates_name() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.set_name(&s(&env, "Rebranded Clips"));
+    assert_eq!(client.name(), s(&env, "Rebranded Clips"));
+    // Symbol is unaffected by a name change.
+    assert_eq!(client.symbol(), String::from_str(&env, "CLIP"));
+}
+
+#[test]
+fn test_set_symbol_updates_symbol() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.set_symbol(&s(&env, "RCLP"));
+    assert_eq!(client.symbol(), s(&env, "RCLP"));
+    // Name is unaffected by a symbol change.
+    assert_eq!(client.name(), String::from_str(&env, "ClipCash NFT"));
+}
+
+#[test]
+fn test_set_name_requires_admin_auth() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    env.set_auths(&[]);
+
+    let result = client.try_set_name(&s(&env, "Hijacked"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_symbol_requires_admin_auth() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    env.set_auths(&[]);
+
+    let result = client.try_set_symbol(&s(&env, "HACK"));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_name_before_initialize_is_rejected() {
+    let (env, _cid, client) = setup_env();
+
+    env.mock_all_auths();
+    let result = client.try_set_name(&s(&env, "Too Early"));
+    assert_eq!(result.unwrap_err().unwrap(), Error::NotInitialized);
+}
+
+#[test]
+fn test_set_symbol_before_initialize_is_rejected() {
+    let (env, _cid, client) = setup_env();
+
+    env.mock_all_auths();
+    let result = client.try_set_symbol(&s(&env, "TOO"));
+    assert_eq!(result.unwrap_err().unwrap(), Error::NotInitialized);
 // Issue #692: Contract Version Constant tests
 // ─────────────────────────────────────────────────────────────
 

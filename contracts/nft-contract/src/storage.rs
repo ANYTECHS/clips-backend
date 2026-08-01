@@ -98,6 +98,8 @@ const WASM_HASH_KEY:            &str = "wasm";
 const CONTRACT_VERSION_KEY:     &str = "ver";
 const WITHDRAW_UNLOCK_KEY:      &str = "wu";
 const XLM_TOKEN_KEY:            &str = "xlm";
+const COLLECTION_NAME_KEY:      &str = "cname";
+const COLLECTION_SYMBOL_KEY:    &str = "csym";
 
 // ── Admin ────────────────────────────────────────────────────────────────────
 
@@ -111,6 +113,34 @@ pub fn set_admin(env: &Env, admin: &Address) {
 
 pub fn get_admin(env: &Env) -> Option<Address> {
     env.storage().instance().get(&Symbol::new(env, ADMIN_KEY))
+}
+
+// ── Collection name / symbol (Issue #679) ────────────────────────────────────
+// `None` means "no admin override yet" — callers fall back to the contract's
+// hardcoded default name/symbol.
+
+pub fn set_collection_name(env: &Env, name: &soroban_sdk::String) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, COLLECTION_NAME_KEY), name);
+}
+
+pub fn get_collection_name(env: &Env) -> Option<soroban_sdk::String> {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, COLLECTION_NAME_KEY))
+}
+
+pub fn set_collection_symbol(env: &Env, symbol: &soroban_sdk::String) {
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, COLLECTION_SYMBOL_KEY), symbol);
+}
+
+pub fn get_collection_symbol(env: &Env) -> Option<soroban_sdk::String> {
+    env.storage()
+        .instance()
+        .get(&Symbol::new(env, COLLECTION_SYMBOL_KEY))
 }
 
 // ── Token data ───────────────────────────────────────────────────────────────

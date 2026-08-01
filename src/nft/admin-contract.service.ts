@@ -170,6 +170,33 @@ export class AdminContractService {
   }
 
   /**
+   * Query the on-chain `name()` and `symbol()` view functions (Issue #679).
+   *
+   * Both are admin-configurable via `set_name`/`set_symbol` on the
+   * contract, so this always reflects the current collection branding
+   * rather than a hardcoded value.
+   */
+  async getCollectionInfo(): Promise<{ name: string; symbol: string; contractId: string }> {
+    const [name, symbol] = await Promise.all([
+      this.callViewFunction('name'),
+      this.callViewFunction('symbol'),
+    ]);
+
+    return {
+      name: String(name),
+      symbol: String(symbol),
+      contractId: this.CONTRACT_ID,
+    };
+  }
+
+  /**
+   * Simulate a no-argument, no-auth contract view call and return its
+   * decoded native value.
+   */
+  private async callViewFunction(fnName: string): Promise<unknown> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(fnName);
    * Read the deployed contract's semantic version via the read-only
    * `version()` call (Issue #692).
    */
@@ -199,6 +226,8 @@ export class AdminContractService {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to call ${fnName}(): ${msg}`);
+      throw new InternalServerErrorException(`Failed to query contract ${fnName}(): ${msg}`);
       this.logger.error(`Failed to query contract version: ${msg}`);
       throw new InternalServerErrorException(
         `Failed to query contract version: ${msg}`,
@@ -207,6 +236,11 @@ export class AdminContractService {
 
     const results = (simulation as { results?: Array<{ xdr: string }> }).results;
     if (!results?.[0]?.xdr) {
+      throw new InternalServerErrorException(`No return value from ${fnName}() contract call`);
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+    return StellarSdk.scValToNative(returnValue);
       throw new InternalServerErrorException(
         'No return value from version contract call',
       );
