@@ -128,6 +128,30 @@ export class NftOwnershipService {
       return [];
     }
   }
+
+  /**
+   * Get a paginated slice of token IDs owned by a wallet address.
+   *
+   * Uses offset-based pagination: `cursor` is the 0-based index into the
+   * full token list, and `limit` is the maximum number of items to return.
+   *
+   * @returns Paginated result with tokenIds, nextCursor (null when exhausted), and total count.
+   */
+  async getUserTokensPaginated(
+    walletAddress: string,
+    limit: number = 20,
+    cursor: number = 0,
+    contractId?: string,
+  ): Promise<{ tokenIds: number[]; nextCursor: number | null; total: number }> {
+    const allTokens = await this.getWalletTokenIds(walletAddress, contractId);
+    const total = allTokens.length;
+    const start = Math.min(cursor, total);
+    const effectiveLimit = Math.min(Math.max(limit, 1), 100);
+    const end = Math.min(start + effectiveLimit, total);
+    const tokenIds = allTokens.slice(start, end);
+    const nextCursor = end < total ? end : null;
+    return { tokenIds, nextCursor, total };
+  }
 }
 
 export { NFT_OWNERSHIP_STRATEGY };

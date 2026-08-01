@@ -61,6 +61,31 @@ export class WalletNftsResponseDto {
     example: 2,
   })
   balance: number;
+
+  @ApiPropertyOptional({
+    description: 'Cursor (offset) for the next page. Null when no more pages exist.',
+    example: 20,
+    nullable: true,
+  })
+  nextCursor?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Total number of tokens across all pages',
+    example: 45,
+  })
+  total?: number;
+
+  @ApiPropertyOptional({
+    description: 'Requested page size',
+    example: 20,
+  })
+  limit?: number;
+
+  @ApiPropertyOptional({
+    description: 'Current offset (cursor) used for this page',
+    example: 0,
+  })
+  cursor?: number;
 }
 
 export class NftRoyaltyResponseDto {
@@ -145,7 +170,11 @@ export class NftPrepareMintResponseDto {
   xdr: string;
 
   @ApiProperty({
-    description: 'Clip ID being minted',
+    description:
+      'ClipCash database Clip ID — stored on-chain inside `TokenData.clip_id` ' +
+      'so every NFT carries a verifiable link back to the backend record. ' +
+      'Query the on-chain value at any time via the `get_clip_id(token_id)` ' +
+      'contract view function (Issue #674).',
     example: 42,
   })
   clipId: number;

@@ -148,6 +148,18 @@ export class ClipsNftContractClient {
   async totalSupply(): Promise<bigint> {
     return 0n;
   }
+
+  /**
+   * Return a paginated slice of token IDs owned by `owner`.
+   *
+   * @param owner   - Stellar address of the token holder
+   * @param limit   - Maximum number of token IDs to return (capped at 100)
+   * @param cursor  - Offset into the owner's token list (0-based index)
+   * @returns Array of token IDs in the requested page
+   */
+  async getUserTokens(owner: string, limit: number, cursor: number): Promise<number[]> {
+    return [];
+  }
 }
 
 export function createClipsNftContractClient(config: ContractConfig): ClipsNftContractClient {
