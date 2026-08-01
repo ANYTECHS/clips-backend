@@ -444,7 +444,10 @@ export class NftController {
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
     description:
       'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
-      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress.',
+      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress. ' +
+      'For a standalone Node.js reference implementation of this same XDR-building flow (useful when ' +
+      'integrating outside this API, e.g. from an ops script or another backend service), see ' +
+      'contracts/nft-contract/examples/mint-from-backend.ts.',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
@@ -839,6 +842,35 @@ export class NftController {
       networkPassphrase,
       explorerUrl: `${explorerBase}/${contractId}`,
     };
+  }
+
+  /**
+   * GET /nfts/contract/version
+   *
+   * Reads the deployed contract's semantic version via the on-chain,
+   * read-only `version()` call (Issue #692). Unlike `contract/info`
+   * (which is derived from env vars), this reflects what's actually
+   * running in the deployed WASM.
+   */
+  @Get('contract/version')
+  @ApiOperation({
+    summary: 'Get the deployed Soroban NFT contract version',
+    description:
+      'Calls the read-only version() function on the currently deployed ' +
+      'ClipCash NFT Soroban contract and returns its semantic version ' +
+      "alongside the contract ID it was read from.",
+  })
+  @ApiOkResponse({
+    description: 'Contract version returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.1.0',
+      },
+    },
+  })
+  async getContractVersion(): Promise<{ contractId: string; version: string }> {
+    return this.adminContractService.getContractVersion();
   }
 
   /**
