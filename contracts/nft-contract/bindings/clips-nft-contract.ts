@@ -3,6 +3,8 @@
  * Issue #682: Generate TypeScript Contract Bindings
  */
 
+import StellarSdk from '@stellar/stellar-sdk';
+
 export interface TokenData {
   owner: string;
   isSoulbound: boolean;
@@ -94,6 +96,51 @@ export class ClipsNftContractClient {
   }
 
   /**
+   * Build (but do not sign or submit) a Soroban transaction that calls
+   * `mint` on the deployed contract, returning its XDR for an external
+   * signer to sign and submit (Issue #694).
+   *
+   * The contract's `mint` requires `admin.require_auth()` on-chain (see
+   * `contracts/nft-contract/src/lib.rs`), so `sourceAddress` must be the
+   * account that will sign the returned XDR — the contract's configured
+   * admin wallet. See `examples/mint-from-backend.ts` for a runnable
+   * end-to-end example, and `NftMintService.prepareMintTx` /
+   * `POST /nfts/prepare-mint` for how the backend does the equivalent
+   * for user-facing mints.
+   */
+  async buildMintTransaction(params: {
+    sourceAddress: string;
+    to: string;
+    tokenId: bigint;
+    clipId: string;
+    contentUri: string;
+    isSoulbound: boolean;
+  }): Promise<string> {
+    const server = new StellarSdk.rpc.Server(this.config.rpcUrl);
+    const sourceAccount = await server.getAccount(params.sourceAddress);
+
+    const contract = new StellarSdk.Contract(this.config.contractId);
+    const op = contract.call(
+      'mint',
+      StellarSdk.Address.fromString(params.to).toScVal(),
+      StellarSdk.nativeToScVal(params.tokenId, { type: 'u64' }),
+      StellarSdk.nativeToScVal(params.clipId, { type: 'string' }),
+      StellarSdk.nativeToScVal(params.contentUri, { type: 'string' }),
+      StellarSdk.nativeToScVal(params.isSoulbound, { type: 'bool' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.config.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return tx.toXDR();
+  }
+
+  /**
    * Mint multiple clip NFTs in a single transaction (Issue #671)
    */
   async batchMint(params: BatchMintParams): Promise<boolean> {
@@ -112,6 +159,20 @@ export class ClipsNftContractClient {
    */
   async tokenUri(tokenId: bigint): Promise<string | null> {
     return `https://clips.cash/metadata/${tokenId.toString()}`;
+  }
+
+  /**
+   * Calculate the royalty amount owed on `salePriceStroops` at
+   * `royaltyBps` basis points (Issue #680). Reusable helper shared by
+   * `transferWithRoyalty` and off-chain royalty estimates. Rounds down
+   * (truncates toward zero) and returns `0n` for a zero sale price, zero
+   * BPS, or BPS above the 10 000 (100%) maximum.
+   */
+  calculateRoyalty(salePriceStroops: bigint, royaltyBps: number): bigint {
+    if (royaltyBps === 0 || salePriceStroops === 0n || royaltyBps > 10000) {
+      return 0n;
+    }
+    return (salePriceStroops * BigInt(royaltyBps)) / 10000n;
   }
 
   /**

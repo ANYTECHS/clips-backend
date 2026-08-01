@@ -50,6 +50,9 @@ es.onmessage = (ev) => {
     case "mint":            handleMint(record);           break;
     case "transfer":        handleTransfer(record);       break;
     case "approve":         handleApprove(record);        break;
+    case "royalty_updated":          handleRoyaltyUpdated(record);         break;
+    case "royalty_paid":             handleRoyaltyPaid(record);            break;
+    case "royalty_recipient_updated": handleRoyaltyRecipientUpdated(record); break;
     case "royalty_updated": handleRoyaltyUpdated(record); break;
     case "royalty_paid":    handleRoyaltyPaid(record);    break;
     case "royalty_claimed": handleRoyaltyClaimed(record); break;
@@ -229,6 +232,55 @@ Emitted whenever the contract admin updates the default royalty rate.
 
 ---
 
+### `royalty_recipient_updated`
+
+Emitted by `update_royalty_recipient` whenever the royalty recipient address
+for a token is changed. Only the *current* recipient can call
+`update_royalty_recipient`, so this event's `old_recipient` is always the
+signer of the transaction that emitted it.
+
+#### Topics (indexed)
+
+| Position | Type | Value |
+|---|---|---|
+| 0 | `Symbol` | `"royalty_recipient_updated"` |
+| 1 | `u64` | `token_id` — the NFT whose recipient changed |
+
+#### Data
+
+| Type | Value |
+|---|---|
+| `(Address, Address)` | `(old_recipient, new_recipient)` |
+
+#### Example JSON Payload
+
+```json
+{
+  "type": "contract",
+  "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+  "in_successful_contract_call": true,
+  "topic": [
+    { "type": "symbol", "value": "royalty_recipient_updated" },
+    { "type": "u64",    "value": "42" }
+  ],
+  "value": {
+    "type": "tuple",
+    "values": [
+      { "type": "address", "value": "GOLD...RCPT" },
+      { "type": "address", "value": "GNEW...RCPT" }
+    ]
+  }
+}
+```
+
+#### Filter by token
+
+```
+GET /events?type=contract&contract_id=<C...>&topic[0]=<royalty_recipient_updated_xdr>&topic[1]=<token_id_xdr>
+```
+
+---
+
 ### `royalty_paid`
 
 Emitted by the marketplace (via `pay_royalty`) whenever a secondary-sale
@@ -369,5 +421,6 @@ fn handle_event(env: &Env, ev: &SorobanEvent) {
 | `transfer` | `transfer` / `transfer_from` | `("transfer", from, to)` | `token_id` |
 | `approve` | `approve` | `("approve", owner, spender)` | `token_id` |
 | `royalty_updated` | `set_default_royalty_bps` | `("royalty_updated",)` | `(old_bps, new_bps)` |
+| `royalty_recipient_updated` | `update_royalty_recipient` | `("royalty_recipient_updated", token_id)` | `(old_recipient, new_recipient)` |
 | `royalty_paid` | `pay_royalty` | `("royalty_paid", token_id, payer)` | `(creator, amount_stroops)` |
 | `royalty_claimed` | `claim_royalties` | `("royalty_claimed", recipient)` | `(token_id, amount, asset)` |

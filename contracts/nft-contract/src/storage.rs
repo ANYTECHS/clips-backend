@@ -1,3 +1,19 @@
+use soroban_sdk::{Address, BytesN, Env, Map, Symbol, Vec};
+
+use crate::TokenData;
+
+pub struct TokenStorage;
+
+// ── Compact storage keys (issue #642) ──────────────────────────────────────
+// Short keys reduce per-entry storage footprint and RPC read latency.
+const TOTAL_SUPPLY_KEY: &str = "ts";
+const ADMIN_KEY: &str = "adm";
+const DEFAULT_ROYALTY_BPS_KEY: &str = "drb";
+const PAUSED_KEY: &str = "paused";
+const DEFAULT_ROYALTY_ASSET_KEY: &str = "def_royalty_asset";
+const SUPPORTED_ASSETS_KEY: &str = "supported_assets";
+
+/// Maximum allowed royalty value in basis points (100% = 10 000 BPS).
 //! Storage helpers for the ClipCash NFT contract.
 //!
 //! ## Issue #677 — Storage Optimization for Scale
@@ -402,6 +418,23 @@ pub fn is_supported_asset(env: &Env, asset: &Address) -> bool {
     get_supported_assets(env).contains(asset)
 }
 
+pub fn remove_token(env: &Env, token_id: u64) {
+    env.storage().persistent().remove(&token_id);
+}
+
+pub fn remove_token_metadata(env: &Env, token_id: u64) {
+    env.storage()
+        .persistent()
+        .remove(&(token_id, Symbol::new(env, "metadata")));
+}
+
+pub fn decrement_total_supply(env: &Env) {
+    let current = get_total_supply(env);
+    env.storage()
+        .instance()
+        .set(&Symbol::new(env, TOTAL_SUPPLY_KEY), &current.saturating_sub(1));
+}
+
 // ── Platform fee ─────────────────────────────────────────────────────────────
 
 pub fn set_platform_fee(env: &Env, recipient: &Address, bps: u32) {
@@ -435,6 +468,11 @@ pub fn set_wasm_hash(env: &Env, hash: &BytesN<32>) {
 
 pub fn get_wasm_hash(env: &Env) -> Option<BytesN<32>> {
     env.storage()
+        .persistent()
+        .get(&(token_id, Symbol::new(env, "royalties")))
+}
+
+pub fn set_custom_token_uri(env: &Env, token_id: u64, uri: &soroban_sdk::String) {
         .instance()
         .get(&Symbol::new(env, WASM_HASH_KEY))
 }

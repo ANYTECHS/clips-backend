@@ -64,6 +64,8 @@ import {
   RoyaltyQueryResponseDto,
   RoyaltyNotFoundDto,
   RoyaltyUnauthorizedDto,
+  RoyaltyEstimateQueryDto,
+  RoyaltyEstimateResponseDto,
 } from './dto/royalty-query.dto';
 import {
   BurnNftDto,
@@ -445,7 +447,10 @@ export class NftController {
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
     description:
       'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
-      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress.',
+      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress. ' +
+      'For a standalone Node.js reference implementation of this same XDR-building flow (useful when ' +
+      'integrating outside this API, e.g. from an ops script or another backend service), see ' +
+      'contracts/nft-contract/examples/mint-from-backend.ts.',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
@@ -627,6 +632,52 @@ export class NftController {
       royaltyBps,
       royaltyRecipient,
     });
+  }
+
+  /**
+   * GET /nfts/royalty/estimate
+   * Estimates the royalty owed on a given sale price without requiring a
+   * minted token, using the same BPS math the Soroban contract's
+   * `calculate_royalty` helper uses (Issue #680). Useful for showing a
+   * "you'll receive ~X" estimate in the UI before a resale actually happens.
+   */
+  @Get('royalty/estimate')
+  @ApiOperation({
+    summary: 'Estimate the royalty owed on a sale price (Issue #680)',
+    description:
+      'Pure calculation — does not touch the chain. Mirrors the Soroban contract\'s ' +
+      '`calculate_royalty(sale_price, royalty_bps)` helper so estimates match what the ' +
+      'contract actually pays out on `transfer_with_royalty`. Rounds down (truncates toward ' +
+      'zero) any fractional stroop. When `royaltyBps` is omitted, the configured creator ' +
+      'royalty rate is used.',
+  })
+  @ApiQuery({
+    name: 'salePrice',
+    description: 'Sale price in stroops (1 XLM = 10,000,000 stroops)',
+    example: 100_000_000,
+  })
+  @ApiQuery({
+    name: 'royaltyBps',
+    description: 'Royalty rate in basis points (100 = 1%). Defaults to the platform creator royalty rate.',
+    example: 1000,
+    required: false,
+  })
+  @ApiOkResponse({
+    description: 'Royalty estimate calculated successfully',
+    type: RoyaltyEstimateResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid salePrice or royaltyBps' })
+  getRoyaltyEstimate(
+    @Query() query: RoyaltyEstimateQueryDto,
+  ): RoyaltyEstimateResponseDto {
+    const royaltyBps = this.royaltyConfigurationService.getCreatorRoyaltyBps(
+      query.royaltyBps,
+    );
+    const royaltyAmount = this.royaltyConfigurationService.calculateRoyalty(
+      query.salePrice,
+      royaltyBps,
+    );
+    return { salePrice: query.salePrice, royaltyBps, royaltyAmount };
   }
 
   /**
@@ -840,6 +891,35 @@ export class NftController {
       networkPassphrase,
       explorerUrl: `${explorerBase}/${contractId}`,
     };
+  }
+
+  /**
+   * GET /nfts/contract/version
+   *
+   * Reads the deployed contract's semantic version via the on-chain,
+   * read-only `version()` call (Issue #692). Unlike `contract/info`
+   * (which is derived from env vars), this reflects what's actually
+   * running in the deployed WASM.
+   */
+  @Get('contract/version')
+  @ApiOperation({
+    summary: 'Get the deployed Soroban NFT contract version',
+    description:
+      'Calls the read-only version() function on the currently deployed ' +
+      'ClipCash NFT Soroban contract and returns its semantic version ' +
+      "alongside the contract ID it was read from.",
+  })
+  @ApiOkResponse({
+    description: 'Contract version returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.1.0',
+      },
+    },
+  })
+  async getContractVersion(): Promise<{ contractId: string; version: string }> {
+    return this.adminContractService.getContractVersion();
   }
 
   /**
