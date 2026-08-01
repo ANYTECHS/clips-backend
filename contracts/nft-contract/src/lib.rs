@@ -67,9 +67,9 @@ pub enum Error {
     /// The asset contract address is not on the admin-approved allow-list.
     UnsupportedAsset = 9,
     /// Provided WASM hash is all zeros — cannot upgrade to a no-op contract.
-    InvalidWasmHash = 8,
+    InvalidWasmHash = 19,
     /// Clip signature verification failed — caller is not the clip owner.
-    InvalidSignature = 9,
+    InvalidSignature = 20,
     /// Nonce is stale — replay attack detected.
     InvalidNonce = 10,
     /// Clip hash was not pre-verified by the admin.
@@ -89,7 +89,7 @@ pub enum Error {
     /// XLM token SAC address has not been configured (Issue #676).
     XlmTokenNotConfigured = 18,
     /// No royalties have accrued yet — nothing to claim.
-    InsufficientBalance = 15,
+    InsufficientBalance = 21,
 }
 
 #[contractimpl]
@@ -642,7 +642,7 @@ impl ClipsNftContract {
     /// `amount * royalty_bps / 10_000`, using the token's configured
     /// royalty rate (falling back to the contract default). `payer` must
     /// authorize the call and hold a sufficient balance of `asset`.
-    pub fn pay_royalty(
+    pub fn pay_royalty_with_asset(
         env: Env,
         payer: Address,
         token_id: u64,
@@ -664,8 +664,10 @@ impl ClipsNftContract {
             asset_client.transfer(&payer, &token_data.creator, &royalty_amount);
         }
 
-        events::emit_royalty_paid(&env, &payer, &token_data.creator, &asset, token_id, royalty_amount);
+        events::emit_royalty_paid_asset(&env, &payer, &token_data.creator, &asset, token_id, royalty_amount);
         Ok(royalty_amount)
+    }
+
     /// Permanently destroy a token. Only the current owner may burn it.
     ///
     /// Ownership, metadata, royalty overrides and any outstanding approval
@@ -696,6 +698,16 @@ impl ClipsNftContract {
         let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
+        if bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        storage::set_platform_fee(&env, &recipient, bps);
+        Ok(())
+    }
+
+    /// Record a royalty payment made off-chain (in stroops) for `token_id`,
+    /// emitting a `royalty_paid` event for indexers.
     pub fn pay_royalty(
         env: Env,
         token_id: u64,
@@ -732,7 +744,7 @@ impl ClipsNftContract {
             return Err(Error::InvalidRoyaltyBps);
         }
 
-        storage::set_platform_fee(&env, &recipient, bps);
+        storage::set_token_royalty_bps(&env, token_id, bps);
         Ok(())
     }
 
@@ -802,8 +814,6 @@ impl ClipsNftContract {
         }
 
         royalties
-        storage::set_token_royalty_bps(&env, token_id, bps);
-        Ok(())
     }
 
     pub fn get_token_royalty_bps(env: Env, token_id: u64) -> Option<u32> {
@@ -973,6 +983,8 @@ impl ClipsNftContract {
         admin.require_auth();
         storage::set_xlm_token_address(&env, &xlm_token);
         Ok(())
+    }
+
     /// Return a paginated slice of token IDs owned by `owner`.
     ///
     /// `limit`  – maximum number of token IDs to return (capped at 100).
@@ -992,6 +1004,8 @@ impl ClipsNftContract {
             i += 1;
         }
         result
+    }
+
     /// Accumulate royalties for a token.  Called after each royalty payment so
     /// that the owed balance grows until the creator calls `claim_royalties`.
     ///
@@ -1117,6 +1131,8 @@ mod events {
     pub fn emit_unpaused(env: &Env, admin: &Address) {
         let topics = (Symbol::new(env, "unpaused"), admin.clone());
         env.events().publish(topics, ());
+    }
+
     pub fn emit_burn(env: &Env, owner: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "burn"), owner.clone());
         env.events().publish(topics, token_id);
@@ -1125,12 +1141,14 @@ mod events {
     pub fn emit_royalties_updated(env: &Env, token_id: u64, total_bps: u32) {
         let topics = (Symbol::new(env, "royalties_updated"), token_id);
         env.events().publish(topics, total_bps);
+    }
+
     pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
         let topics = (Symbol::new(env, "royalty_updated"),);
         env.events().publish(topics, (old_bps, new_bps));
     }
 
-    pub fn emit_royalty_paid(
+    pub fn emit_royalty_paid_asset(
         env: &Env,
         payer: &Address,
         recipient: &Address,
@@ -1140,6 +1158,10 @@ mod events {
     ) {
         let topics = (Symbol::new(env, "royalty_paid"), payer.clone(), recipient.clone());
         env.events().publish(topics, (asset.clone(), token_id, amount));
+    }
+
+    pub fn emit_royalty_paid(
+        env: &Env,
         recipient: &Address,
         token_id: u64,
         royalty_amount: u64,
