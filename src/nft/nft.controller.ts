@@ -13,7 +13,6 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
 import {
@@ -156,6 +155,48 @@ export class NftController {
     }
     const owner = await this.nftOwnershipService.getOwner(id.toString());
     return { owner };
+  }
+
+  /**
+   * GET /nfts/:id/exists
+   * Lightweight token existence check (Issue #688).
+   * Returns { exists: true } when the token has been minted, { exists: false } otherwise.
+   * Does not require authentication — the frontend uses this before any wallet interaction.
+   */
+  @Get(':id/exists')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Check whether an NFT token has been minted (Issue #688)',
+    description:
+      'Lightweight query that returns a boolean indicating whether the token with the given ' +
+      'ID exists on-chain. Uses an efficient Soroban storage lookup (owner_of). ' +
+      'Existing tokens return { exists: true }; non-existent tokens return { exists: false }. ' +
+      'No authentication required.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Token existence check result',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', example: 42 },
+        exists: {
+          type: 'boolean',
+          description: 'true when the token has been minted, false otherwise',
+          example: true,
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID format' })
+  async tokenExists(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<{ id: number; exists: boolean }> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    const exists = await this.nftOwnershipService.tokenExists(id.toString());
+    return { id, exists };
   }
 
   @Get('/wallets/:address/nfts')
