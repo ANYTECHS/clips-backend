@@ -1160,6 +1160,58 @@ fn test_fractional_royalty_precision_and_rounding() {
     assert_eq!(royalty, 375_000);
 }
 
+#[test]
+fn test_fractional_royalty_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+
+    let sale_price_stroops: u128 = u128::MAX;
+    let royalty_bps: u32 = 10_000;
+    let decimals: u32 = 7;
+
+    let result = client.try_calculate_fractional_royalty(&sale_price_stroops, &royalty_bps, &decimals);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #689: Prevent Integer Overflow in Royalty Logic tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_transfer_with_royalty_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let buyer = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5101, &String::from_str(&env, "c5101"), &String::from_str(&env, "uri5101"), &false);
+    client.set_default_royalty_bps(&10_000); // 100%, maximises the product
+
+    let result = client.try_transfer_with_royalty(&creator, &buyer, &5101, &u64::MAX);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
+#[test]
+fn test_pay_royalty_with_asset_overflow_is_rejected() {
+    let (env, _contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let payer = Address::generate(&env);
+    let asset = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(&creator, &5102, &String::from_str(&env, "c5102"), &String::from_str(&env, "uri5102"), &false);
+    client.add_supported_asset(&asset);
+    client.set_default_royalty_bps(&10_000); // 100%, maximises the product
+
+    // checked_mul overflows before the asset transfer is attempted, so no
+    // real Stellar Asset Contract needs to be registered for this case.
+    let result = client.try_pay_royalty_with_asset(&payer, &5102, &asset, &i128::MAX);
+    assert_eq!(result.unwrap_err().unwrap(), Error::RoyaltyOverflow);
+}
+
 // ─────────────────────────────────────────────────────────────
 // Issues #672, #686, #683 tests
 // ─────────────────────────────────────────────────────────────
@@ -1169,6 +1221,24 @@ fn test_name_and_symbol() {
     let (env, _contract_id, client) = setup_env();
     assert_eq!(client.name(), String::from_str(&env, "ClipCash NFT"));
     assert_eq!(client.symbol(), String::from_str(&env, "CLIP"));
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #692: Contract Version Constant tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_version_is_queryable_without_initialization() {
+    let (env, _contract_id, client) = setup_env();
+    // No initialize() call — version() must work on a fresh, uninitialized
+    // contract since it's a compile-time constant, not stored state.
+    assert_eq!(client.version(), String::from_str(&env, crate::VERSION));
+}
+
+#[test]
+fn test_version_matches_contract_metadata() {
+    let (env, _contract_id, client) = setup_env();
+    assert_eq!(client.version(), String::from_str(&env, "1.1.0"));
 }
 
 #[test]
@@ -1320,5 +1390,245 @@ fn test_update_metadata_one_time_enforcement() {
         Error::MetadataAlreadyUpdated,
         "Second metadata update must return MetadataAlreadyUpdated"
     );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #704: Paginated User Token Query
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_user_tokens_empty_owner() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    let result = client.get_user_tokens(&owner, &10, &0);
+    assert_eq!(result.len(), 0, "empty owner should return empty Vec");
+}
+
+#[test]
+fn test_get_user_tokens_basic() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&owner, &1, &s(&env, "clip_001"), &s(&env, "uri_001"), &false);
+    client.mint(&owner, &2, &s(&env, "clip_002"), &s(&env, "uri_002"), &false);
+    client.mint(&owner, &3, &s(&env, "clip_003"), &s(&env, "uri_003"), &false);
+
+    let result = client.get_user_tokens(&owner, &10, &0);
+    assert_eq!(result.len(), 3, "should return all 3 tokens");
+    assert_eq!(result.get(0).unwrap(), 1);
+    assert_eq!(result.get(1).unwrap(), 2);
+    assert_eq!(result.get(2).unwrap(), 3);
+}
+
+#[test]
+fn test_get_user_tokens_pagination_first_page() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    for i in 1..=5 {
+        let token_id = i;
+        let clip_id = format!("clip_{}", i);
+        let uri = format!("uri_{}", i);
+        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+    }
+
+    let page1 = client.get_user_tokens(&owner, &2, &0);
+    assert_eq!(page1.len(), 2, "first page should have 2 tokens");
+    assert_eq!(page1.get(0).unwrap(), 1);
+    assert_eq!(page1.get(1).unwrap(), 2);
+}
+
+#[test]
+fn test_get_user_tokens_pagination_second_page() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    for i in 1..=5 {
+        let token_id = i;
+        let clip_id = format!("clip_{}", i);
+        let uri = format!("uri_{}", i);
+        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+    }
+
+    let page2 = client.get_user_tokens(&owner, &2, &2);
+    assert_eq!(page2.len(), 2, "second page should have 2 tokens");
+    assert_eq!(page2.get(0).unwrap(), 3);
+    assert_eq!(page2.get(1).unwrap(), 4);
+}
+
+#[test]
+fn test_get_user_tokens_pagination_last_page_partial() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    for i in 1..=5 {
+        let token_id = i;
+        let clip_id = format!("clip_{}", i);
+        let uri = format!("uri_{}", i);
+        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+    }
+
+    let last_page = client.get_user_tokens(&owner, &2, &4);
+    assert_eq!(last_page.len(), 1, "last page should have 1 remaining token");
+    assert_eq!(last_page.get(0).unwrap(), 5);
+}
+
+#[test]
+fn test_get_user_tokens_cursor_beyond_total() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&owner, &1, &s(&env, "clip_001"), &s(&env, "uri_001"), &false);
+
+    let result = client.get_user_tokens(&owner, &10, &100);
+    assert_eq!(result.len(), 0, "cursor beyond total should return empty Vec");
+}
+
+#[test]
+fn test_get_user_tokens_limit_exceeds_total() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    for i in 1..=3 {
+        let token_id = i;
+        let clip_id = format!("clip_{}", i);
+        let uri = format!("uri_{}", i);
+        client.mint(&owner, &token_id, &s(&env, &clip_id), &s(&env, &uri), &false);
+    }
+
+    let result = client.get_user_tokens(&owner, &100, &0);
+    assert_eq!(result.len(), 3, "limit exceeding total should return all tokens");
+}
+
+#[test]
+fn test_get_user_tokens_zero_limit() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&owner, &1, &s(&env, "clip_001"), &s(&env, "uri_001"), &false);
+
+    let result = client.get_user_tokens(&owner, &0, &0);
+    assert_eq!(result.len(), 0, "zero limit should return empty Vec");
+}
+
+#[test]
+fn test_get_user_tokens_limit_capped_at_100() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // Mint 50 tokens (batch limit is 50)
+    let token_ids: Vec<u64> = (1..=50).collect();
+    let clip_ids: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("clip_{}", i))).collect();
+    let uris: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("uri_{}", i))).collect();
+    let soulbound: Vec<bool> = (1..=50).map(|_| false).collect();
+    client.batch_mint(&owner, &token_ids, &clip_ids, &uris, &soulbound);
+
+    // Request 200 (should be capped to 100, but only 50 exist)
+    let result = client.get_user_tokens(&owner, &200, &0);
+    assert_eq!(result.len(), 50, "limit capped to available tokens");
+}
+
+#[test]
+fn test_get_user_tokens_large_collection_multi_page() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    // Mint 50 tokens via batch
+    let token_ids: Vec<u64> = (1..=50).collect();
+    let clip_ids: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("clip_{}", i))).collect();
+    let uris: Vec<String> = (1..=50).map(|i| String::from_str(&env, &format!("uri_{}", i))).collect();
+    let soulbound: Vec<bool> = (1..=50).map(|_| false).collect();
+    client.batch_mint(&owner, &token_ids, &clip_ids, &uris, &soulbound);
+
+    // Page 1
+    let page1 = client.get_user_tokens(&owner, &20, &0);
+    assert_eq!(page1.len(), 20);
+    assert_eq!(page1.get(0).unwrap(), 1);
+    assert_eq!(page1.get(19).unwrap(), 20);
+
+    // Page 2
+    let page2 = client.get_user_tokens(&owner, &20, &20);
+    assert_eq!(page2.len(), 20);
+    assert_eq!(page2.get(0).unwrap(), 21);
+    assert_eq!(page2.get(19).unwrap(), 40);
+
+    // Page 3 (partial)
+    let page3 = client.get_user_tokens(&owner, &20, &40);
+    assert_eq!(page3.len(), 10);
+    assert_eq!(page3.get(0).unwrap(), 41);
+    assert_eq!(page3.get(9).unwrap(), 50);
+
+    // Page 4 (empty)
+    let page4 = client.get_user_tokens(&owner, &20, &60);
+    assert_eq!(page4.len(), 0, "page beyond end should be empty");
+}
+
+#[test]
+fn test_get_user_tokens_only_returns_owner_tokens() {
+    let (env, _cid, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner1 = Address::generate(&env);
+    let owner2 = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+
+    client.mint(&owner1, &1, &s(&env, "clip_001"), &s(&env, "uri_001"), &false);
+    client.mint(&owner1, &2, &s(&env, "clip_002"), &s(&env, "uri_002"), &false);
+    client.mint(&owner2, &3, &s(&env, "clip_003"), &s(&env, "uri_003"), &false);
+    client.mint(&owner2, &4, &s(&env, "clip_004"), &s(&env, "uri_004"), &false);
+    client.mint(&owner2, &5, &s(&env, "clip_005"), &s(&env, "uri_005"), &false);
+
+    let owner1_tokens = client.get_user_tokens(&owner1, &10, &0);
+    assert_eq!(owner1_tokens.len(), 2, "owner1 should have 2 tokens");
+    assert_eq!(owner1_tokens.get(0).unwrap(), 1);
+    assert_eq!(owner1_tokens.get(1).unwrap(), 2);
+
+    let owner2_tokens = client.get_user_tokens(&owner2, &10, &0);
+    assert_eq!(owner2_tokens.len(), 3, "owner2 should have 3 tokens");
+    assert_eq!(owner2_tokens.get(0).unwrap(), 3);
+    assert_eq!(owner2_tokens.get(1).unwrap(), 4);
+    assert_eq!(owner2_tokens.get(2).unwrap(), 5);
 }
 

@@ -7,9 +7,10 @@ import { WalletBalanceService } from './wallet-balance.service';
 import { WalletsController } from './wallets.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
+import { NftOwnershipModule } from '../nft/nft-ownership.module';
 
 @Module({
-  imports: [AuthModule, PrismaModule, StellarModule],
+  imports: [AuthModule, PrismaModule, StellarModule, NftOwnershipModule],
   providers: [
     WalletValidationService,
     WalletManagementService,

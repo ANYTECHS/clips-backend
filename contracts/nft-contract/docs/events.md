@@ -53,6 +53,9 @@ es.onmessage = (ev) => {
     case "royalty_updated":          handleRoyaltyUpdated(record);         break;
     case "royalty_paid":             handleRoyaltyPaid(record);            break;
     case "royalty_recipient_updated": handleRoyaltyRecipientUpdated(record); break;
+    case "royalty_updated": handleRoyaltyUpdated(record); break;
+    case "royalty_paid":    handleRoyaltyPaid(record);    break;
+    case "royalty_claimed": handleRoyaltyClaimed(record); break;
   }
 };
 ```
@@ -333,6 +336,50 @@ GET /events?type=contract&contract_id=<C...>&topic[0]=<royalty_paid_xdr>&topic[1
 
 ---
 
+### `royalty_claimed`
+
+Emitted when a creator successfully calls `claim_royalties` and transfers their
+accrued royalty balance.
+
+#### Topics (indexed)
+
+| Position | Type | Value |
+|---|---|---|
+| 0 | `Symbol` | `"royalty_claimed"` |
+| 1 | `Address` | `recipient` — the royalty recipient who claimed |
+
+#### Data
+
+| Type | Value |
+|---|---|
+| `(u64, i128, Address)` | `(token_id, amount, asset)` |
+
+`amount` is in the smallest unit of `asset` (stroops for XLM).
+
+#### Example JSON Payload
+
+```json
+{
+  "type": "contract",
+  "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+  "in_successful_contract_call": true,
+  "topic": [
+    { "type": "symbol",  "value": "royalty_claimed" },
+    { "type": "address", "value": "GCRE...AT" }
+  ],
+  "value": {
+    "type": "tuple",
+    "values": [
+      { "type": "u64",    "value": "42" },
+      { "type": "i128",   "value": "5000000" },
+      { "type": "address","value": "CAAA...SAC" }
+    ]
+  }
+}
+```
+
+---
+
 ## Indexer Reference (Rust)
 
 The snippet below shows how a Rust indexer can decode the `royalty_paid`
@@ -376,3 +423,4 @@ fn handle_event(env: &Env, ev: &SorobanEvent) {
 | `royalty_updated` | `set_default_royalty_bps` | `("royalty_updated",)` | `(old_bps, new_bps)` |
 | `royalty_recipient_updated` | `update_royalty_recipient` | `("royalty_recipient_updated", token_id)` | `(old_recipient, new_recipient)` |
 | `royalty_paid` | `pay_royalty` | `("royalty_paid", token_id, payer)` | `(creator, amount_stroops)` |
+| `royalty_claimed` | `claim_royalties` | `("royalty_claimed", recipient)` | `(token_id, amount, asset)` |

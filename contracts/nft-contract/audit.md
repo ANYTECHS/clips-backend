@@ -1,6 +1,6 @@
-# ClipCash NFT Contract ó Security Audit Preparation
+# ClipCash NFT Contract ÔøΩ Security Audit Preparation
 
-> **Contract:** `clips-nft-contract` v1.0.0
+> **Contract:** `clips-nft-contract` v1.1.0
 > **Chain:** Stellar / Soroban (SDK 22.0.0)
 > **Prepared:** 2026-07-29
 > **Status:** ?? Ready for External Audit (findings documented below)
@@ -46,17 +46,17 @@ The backend's interaction surface with this contract is documented in Section 11
 
 The `ClipsNftContract` is a Soroban-native NFT contract implementing:
 
-- **Soulbound flag** ó tokens marked `is_soulbound = true` are non-transferable and cannot be approved for delegation.
-- **Admin-gated minting** ó only the stored `admin` address may call `mint`.
-- **Single-approval model** ó one approved spender per token; approval is consumed on `transfer_from`.
-- **Royalty BPS** ó configurable default royalty (0ñ10 000 BPS) stored in instance storage.
-- **Creator provenance** ó `creator` is set to the initial `to` address at mint and never changes.
+- **Soulbound flag** ÔøΩ tokens marked `is_soulbound = true` are non-transferable and cannot be approved for delegation.
+- **Admin-gated minting** ÔøΩ only the stored `admin` address may call `mint`.
+- **Single-approval model** ÔøΩ one approved spender per token; approval is consumed on `transfer_from`.
+- **Royalty BPS** ÔøΩ configurable default royalty (0ÔøΩ10 000 BPS) stored in instance storage.
+- **Creator provenance** ÔøΩ `creator` is set to the initial `to` address at mint and never changes.
 
 ### Public Entry Points
 
 | Function | Caller Auth | Admin-gated |
 |---|---|---|
-| `initialize(admin)` | none (first-caller wins) | ó |
+| `initialize(admin)` | none (first-caller wins) | ÔøΩ |
 | `mint(to, token_id, clip_id, content_uri, is_soulbound)` | admin | YES |
 | `transfer(from, to, token_id)` | token owner (`from`) | NO |
 | `transfer_from(spender, from, to, token_id)` | approved spender | NO |
@@ -93,7 +93,7 @@ pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
 
 **Finding AC-01 (Medium):** `initialize` does **not** call `admin.require_auth()`. Any address can call
 `initialize` with any `admin` value **before** the real deployer does. On Soroban this is a race condition
-ó whoever calls `initialize` first controls the contract.
+ÔøΩ whoever calls `initialize` first controls the contract.
 
 See Section 9.1 for the full finding and recommended fix.
 
@@ -109,7 +109,7 @@ admin.require_auth();
 ```
 
 **Assessment:** PASS. Only the stored admin can invoke `mint`. Soroban's `require_auth()` enforces
-on-ledger authorization ó no off-chain bypass is possible.
+on-ledger authorization ÔøΩ no off-chain bypass is possible.
 
 ---
 
@@ -124,7 +124,7 @@ if token_data.owner != from { return Err(Error::Unauthorized); }
 ```
 
 **Assessment:** PASS. Dual check: (1) `from` must authorize the call, (2) `from` must be the stored owner.
-Both are required ó passing auth but wrong owner, or right owner without auth, both fail.
+Both are required ÔøΩ passing auth but wrong owner, or right owner without auth, both fail.
 
 ---
 
@@ -177,7 +177,7 @@ overflow-checks = true
 ```
 
 **Assessment:** PASS. All integer arithmetic in the release binary is compiled with overflow panics.
-Soroban's `panic = "abort"` means overflows abort the transaction cleanly ó no undefined behaviour.
+Soroban's `panic = "abort"` means overflows abort the transaction cleanly ÔøΩ no undefined behaviour.
 
 ---
 
@@ -192,7 +192,7 @@ pub fn increment_total_supply(env: &Env) {
 }
 ```
 
-**Assessment:** PASS. `u64` with `overflow-checks = true`. Overflow would abort at 2^64 - 1 tokens ó
+**Assessment:** PASS. `u64` with `overflow-checks = true`. Overflow would abort at 2^64 - 1 tokens ÔøΩ
 practically unreachable.
 
 ---
@@ -212,7 +212,7 @@ Off-chain royalty calculation `price * bps / 10_000` is performed in the NestJS 
 not in the contract itself.
 
 **Assessment:** PASS. Bounds checked. Royalty application arithmetic is not enforced on-chain
-(by design ó Soroban does not natively execute royalty enforcement during transfers).
+(by design ÔøΩ Soroban does not natively execute royalty enforcement during transfers).
 
 ---
 
@@ -225,6 +225,33 @@ storage::get_owner_tokens(&env, &owner).len() as u64
 ```
 
 **Assessment:** PASS. `Vec::len()` returns `u32` on Soroban; the `as u64` widening cast is safe.
+
+---
+
+### 4.5 Royalty Multiplication Overflow (Issue #689)
+
+**Location:** `src/lib.rs` ‚Äî `calculate_fractional_royalty`, `transfer_with_royalty`, `pay_royalty_with_asset`.
+
+Three call sites multiply an unbounded, caller-supplied `sale_price` / `amount` by `royalty_bps`
+before dividing by `ROYALTY_BPS_MAX`. `overflow-checks = true` (4.1) would abort the whole
+transaction on overflow in a release build, but that's an opaque panic rather than a typed error,
+and the previous `pay_royalty_with_asset` used `saturating_mul`, which does *not* panic ‚Äî it
+silently clamps to the type's max value and would have paid out a nonsensical royalty amount.
+All three sites now use `checked_mul` and return `Error::RoyaltyOverflow` explicitly:
+
+| Function | Arithmetic type | Overflows only when `sale_price` / `amount` exceeds |
+|---|---|---|
+| `calculate_fractional_royalty` | `u128` | `u128::MAX / 10_000` (~3.4 √ó 10¬≥‚Å¥) |
+| `transfer_with_royalty` | `u64` | `u64::MAX / 10_000` (~1.84 √ó 10¬π‚Åµ stroops, ~184M XLM) |
+| `pay_royalty_with_asset` | `i128` | `i128::MAX / 10_000` (~1.7 √ó 10¬≥‚Å¥) |
+
+`royalty_bps` is bounds-checked to `ROYALTY_BPS_MAX` (10 000) before the multiplication in all
+three functions, so these are the only overflow conditions possible.
+
+**Assessment:** PASS. Extreme values are rejected with a typed `Error::RoyaltyOverflow` instead of
+an opaque panic or a silently-clamped payout. Covered by
+`test_fractional_royalty_overflow_is_rejected`, `test_transfer_with_royalty_overflow_is_rejected`,
+and `test_pay_royalty_with_asset_overflow_is_rejected` in `src/test.rs`.
 
 ---
 
@@ -269,8 +296,8 @@ highest-risk entry points and should be the focus of access control review durin
 
 ### Privileged Deployment Sequence
 
-1. `stellar contract deploy` ó obtains `CONTRACT_ID`
-2. `stellar contract invoke initialize --admin <ADMIN_ADDRESS>` ó **must be called atomically/immediately post-deploy**
+1. `stellar contract deploy` ÔøΩ obtains `CONTRACT_ID`
+2. `stellar contract invoke initialize --admin <ADMIN_ADDRESS>` ÔøΩ **must be called atomically/immediately post-deploy**
 3. Off-chain backend reads `CONTRACT_ID` from environment and routes mint calls through the admin key
 
 > **FINDING AC-01 (Medium):** The gap between deploy and `initialize` is a frontrunning window.
@@ -323,7 +350,7 @@ bare `token_id` key for token data. No collision risk identified.
 | `mint` | `("mint", to)` | `(token_id, is_soulbound)` | PASS |
 | `transfer` | `("transfer", from, to)` | `token_id` | PASS |
 | `approve` | `("approve", owner, spender)` | `token_id` | PASS |
-| `set_default_royalty_bps` | ó | ó | MISSING |
+| `set_default_royalty_bps` | ÔøΩ | ÔøΩ | MISSING |
 
 **FINDING EV-01 (Low):** `set_default_royalty_bps` does not emit an event. Off-chain indexers
 cannot detect royalty changes without polling. A `royalty_updated` event should be added.
@@ -338,7 +365,7 @@ cannot detect royalty changes without polling. A `royalty_updated` event should 
 observes the deploy transaction can immediately call `initialize` with a malicious admin address
 before the legitimate deployer does.
 
-**Impact:** Total contract takeover ó malicious admin controls minting.
+**Impact:** Total contract takeover ÔøΩ malicious admin controls minting.
 
 **Likelihood:** Low in practice (requires monitoring the mempool and acting faster than the deployer),
 but non-zero on high-traffic networks.
@@ -358,7 +385,7 @@ pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
 
 Alternatively, bundle deploy + initialize in one transaction using `stellar contract deploy --invoke-args`.
 
-**Status:** OPEN ó requires code change before mainnet deployment.
+**Status:** OPEN ÔøΩ requires code change before mainnet deployment.
 
 ---
 
@@ -381,7 +408,7 @@ pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
 }
 ```
 
-**Status:** DEFERRED ó acceptable for v1 if admin key is a hardware-secured multisig.
+**Status:** DEFERRED ÔøΩ acceptable for v1 if admin key is a hardware-secured multisig.
 
 ---
 
@@ -399,7 +426,7 @@ entries may be archived, making the contract non-functional until restored.
 - Add `env.storage().persistent().extend_ttl(&key, MIN_TTL, MAX_TTL)` on every `set_token` and `set_owner_token`.
 - Operate a keepalive bot that periodically calls a no-op function to extend the instance TTL.
 
-**Status:** OPEN ó critical for long-term mainnet operation.
+**Status:** OPEN ÔøΩ critical for long-term mainnet operation.
 
 ---
 
@@ -420,7 +447,7 @@ pub fn emit_royalty_updated(env: &Env, old_bps: u32, new_bps: u32) {
 }
 ```
 
-**Status:** OPEN ó low risk, should be resolved before mainnet for transparency.
+**Status:** OPEN ÔøΩ low risk, should be resolved before mainnet for transparency.
 
 ---
 
@@ -432,7 +459,7 @@ with no format validation.
 **Impact:** An admin could mint tokens with empty URIs or malformed URIs. Integrity depends entirely
 on the off-chain backend enforcing URI format.
 
-**Status:** INFORMATIONAL ó acceptable for v1 with trusted admin.
+**Status:** INFORMATIONAL ÔøΩ acceptable for v1 with trusted admin.
 
 ---
 
@@ -445,7 +472,7 @@ a marketplace escrow address.
 **Impact:** Royalty recipient attribution could be incorrect if the off-chain system mints to a
 non-creator wallet.
 
-**Status:** INFORMATIONAL ó a design decision. The backend must always pass the actual creator's
+**Status:** INFORMATIONAL ÔøΩ a design decision. The backend must always pass the actual creator's
 wallet as `to`. Consider adding a separate `creator` parameter to `mint` for future flexibility.
 
 ---
@@ -478,20 +505,20 @@ The test suite (`src/test.rs`) covers **30 test cases** across the following sce
 The NestJS backend (`src/nft/`) interacts with this contract via the Stellar Soroban RPC.
 Key trust assumptions auditors should be aware of:
 
-1. **Admin key custody** ó The private key corresponding to the `admin` address used in `initialize`
+1. **Admin key custody** ÔøΩ The private key corresponding to the `admin` address used in `initialize`
    is held by the backend operator. It is never transmitted over the network; the backend signs
    transactions server-side. Auditors should verify `STELLAR_SECRET_KEY` is loaded from secrets
    management (not hardcoded in source or `.env`).
 
-2. **`mint` invocation** ó The backend's `NftService.mintClip()` calls `mint` after validating
+2. **`mint` invocation** ÔøΩ The backend's `NftService.mintClip()` calls `mint` after validating
    clip ownership and status via `NftMintGuard`. The guard is enforced at the HTTP layer, not
    on-chain. On-chain, only the admin auth check applies.
 
-3. **Signature verification for `prepare-mint`** ó `MintSignatureVerificationService` verifies an
+3. **Signature verification for `prepare-mint`** ÔøΩ `MintSignatureVerificationService` verifies an
    Ed25519 wallet signature before building the XDR. This prevents unauthorized users from
    preparing mint transactions on behalf of others but does **not** substitute for on-chain auth.
 
-4. **Royalty enforcement** ó Royalty BPS is configured on-chain but royalty collection occurs
+4. **Royalty enforcement** ÔøΩ Royalty BPS is configured on-chain but royalty collection occurs
    off-chain. Secondary marketplaces are not forced by the contract to honour royalties.
 
 ### Open Questions for Auditors
@@ -508,7 +535,7 @@ Key trust assumptions auditors should be aware of:
 
 ## 12. Audit Checklist
 
-### Pre-Audit (Internal ó track before sending to auditors)
+### Pre-Audit (Internal ÔøΩ track before sending to auditors)
 
 - [x] Access control review complete
 - [x] Overflow handling review complete
@@ -518,9 +545,9 @@ Key trust assumptions auditors should be aware of:
 - [x] Event emission review complete
 - [x] Findings documented with severity ratings
 - [x] Test coverage mapped
-- [ ] **AC-01 fix merged** ó `admin.require_auth()` added to `initialize`
-- [ ] **ST-01/ST-02 fix merged** ó `extend_ttl` calls added to write functions
-- [ ] **EV-01 fix merged** ó `royalty_updated` event added to `set_default_royalty_bps`
+- [ ] **AC-01 fix merged** ÔøΩ `admin.require_auth()` added to `initialize`
+- [ ] **ST-01/ST-02 fix merged** ÔøΩ `extend_ttl` calls added to write functions
+- [ ] **EV-01 fix merged** ÔøΩ `royalty_updated` event added to `set_default_royalty_bps`
 - [ ] Deploy scripts reviewed for atomic initialize pattern
 - [ ] Admin private key stored in secrets manager (not committed `.env` file)
 - [ ] Soroban SDK dependency pinned to exact version (no range specifiers)
@@ -528,7 +555,7 @@ Key trust assumptions auditors should be aware of:
 
 ### Auditor Review (complete during external audit)
 
-- [ ] Access control ó all `require_auth()` call sites verified
+- [ ] Access control ÔøΩ all `require_auth()` call sites verified
 - [ ] Storage key collision analysis complete
 - [ ] Event completeness verified
 - [ ] Arithmetic safety confirmed
