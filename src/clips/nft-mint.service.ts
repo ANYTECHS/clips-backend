@@ -577,6 +577,8 @@ export class NftMintService {
       ? 'CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA'
       : 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC';
   }
+
+  private buildMetadata(clip: {
     id: number;
     title: string | null;
     caption: string | null;

@@ -132,6 +132,7 @@ const royaltyConfigMock = {
   getCreatorRoyaltyBps: jest.fn().mockReturnValue(1000),
   getPlatformWallet: jest.fn().mockReturnValue('GDV76E6XN6A3Q3WXVZ4KPRQ7L6E6XN6A3Q3WXVZ4KPRQ7L6E6XN6'),
   buildRoyaltyMap: jest.fn(),
+  getRoyaltyAsset: jest.fn().mockReturnValue({ code: 'native' }),
 };
 
 describe('NftMintService.uploadMetadataToIPFS', () => {
