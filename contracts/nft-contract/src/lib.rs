@@ -21,8 +21,22 @@ const CLIP_NAME: &[u8] = b"ClipCash NFT";
 const CLIP_SYMBOL: &[u8] = b"CLIP";
 pub const MAX_BATCH_SIZE: u32 = 50;
 
+/// Semantic version of this contract build (Issue #692).
+///
+/// Follows semver (`MAJOR.MINOR.PATCH`):
+/// - `PATCH` — bug fixes with no interface changes (e.g. this overflow fix).
+/// - `MINOR` — new functions or fields added in a backwards-compatible way.
+/// - `MAJOR` — a breaking change to an existing function's signature,
+///   behavior, or storage layout.
+///
+/// Bump this constant (and the `contractmeta!` value below, which must stay
+/// in sync) in the same PR that introduces the change it describes. Query it
+/// on-chain via the `version()` view function, or off-chain by reading the
+/// `version` contract metadata entry without invoking the contract.
+pub const VERSION: &str = "1.1.0";
+
 contractmeta!(key = "name", val = "ClipCash NFT Contract");
-contractmeta!(key = "version", val = "1.0.0");
+contractmeta!(key = "version", val = "1.1.0");
 
 #[contract]
 pub struct ClipsNftContract;
@@ -108,6 +122,17 @@ impl ClipsNftContract {
     /// Return collection symbol (Issue #686).
     pub fn symbol(env: Env) -> String {
         String::from_str(&env, "CLIP")
+    }
+
+    /// Return the semantic version of the deployed contract (Issue #692).
+    ///
+    /// Public read-only call, no auth required. Reflects the `VERSION`
+    /// constant baked into this WASM build — distinct from
+    /// `get_contract_version`/`set_contract_version`, which is an
+    /// admin-settable runtime value used for external deployment tracking
+    /// and can drift from what's actually running.
+    pub fn version(env: Env) -> String {
+        String::from_str(&env, VERSION)
     }
 
     /// Initialise the contract and set the admin address.

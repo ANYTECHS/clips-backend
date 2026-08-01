@@ -1,6 +1,6 @@
 # ClipCash NFT Contract � Security Audit Preparation
 
-> **Contract:** `clips-nft-contract` v1.0.0
+> **Contract:** `clips-nft-contract` v1.1.0
 > **Chain:** Stellar / Soroban (SDK 22.0.0)
 > **Prepared:** 2026-07-29
 > **Status:** ?? Ready for External Audit (findings documented below)

@@ -1220,6 +1220,24 @@ fn test_name_and_symbol() {
     assert_eq!(client.symbol(), String::from_str(&env, "CLIP"));
 }
 
+// ─────────────────────────────────────────────────────────────
+// Issue #692: Contract Version Constant tests
+// ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_version_is_queryable_without_initialization() {
+    let (env, _contract_id, client) = setup_env();
+    // No initialize() call — version() must work on a fresh, uninitialized
+    // contract since it's a compile-time constant, not stored state.
+    assert_eq!(client.version(), String::from_str(&env, crate::VERSION));
+}
+
+#[test]
+fn test_version_matches_contract_metadata() {
+    let (env, _contract_id, client) = setup_env();
+    assert_eq!(client.version(), String::from_str(&env, "1.1.0"));
+}
+
 #[test]
 fn test_update_royalty_recipient_by_recipient() {
     let (env, _contract_id, client) = setup_env();
