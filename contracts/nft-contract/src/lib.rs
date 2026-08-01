@@ -838,6 +838,25 @@ impl ClipsNftContract {
         storage::get_nonce(&env, &caller)
     }
 
+    /// Return a paginated slice of token IDs owned by `owner`.
+    ///
+    /// `limit`  – maximum number of token IDs to return (capped at 100).
+    /// `cursor` – offset into the owner's token list (0-based index).
+    ///
+    /// Returns an empty Vec when `cursor` >= total tokens or `limit` is 0.
+    pub fn get_user_tokens(env: Env, owner: Address, limit: u32, cursor: u32) -> Vec<u64> {
+        let tokens = storage::get_owner_tokens(&env, &owner);
+        let total = tokens.len();
+        let start = cursor.min(total);
+        let effective_limit = limit.min(100);
+        let end = (start + effective_limit).min(total);
+        let mut result = Vec::new(&env);
+        let mut i = start;
+        while i < end {
+            result.push_back(tokens.get(i).unwrap());
+            i += 1;
+        }
+        result
     /// Accumulate royalties for a token.  Called after each royalty payment so
     /// that the owed balance grows until the creator calls `claim_royalties`.
     ///

@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   HttpCode,
@@ -20,6 +21,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBody,
   ApiBearerAuth,
   ApiInternalServerErrorResponse,
@@ -108,6 +110,10 @@ import {
   UpdateMetadataResponseDto,
   MetadataUpdateLimitErrorDto,
 } from './dto/update-metadata.dto';
+import {
+  GetUserTokensQueryDto,
+  PaginatedUserTokensResponseDto,
+} from './dto/paginated-user-tokens.dto';
 
 @ApiTags('nfts')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
@@ -154,31 +160,65 @@ export class NftController {
 
   @Get('/wallets/:address/nfts')
   @ApiOperation({
-    summary: 'Get NFTs owned by a wallet',
+    summary: 'Get paginated NFTs owned by a wallet',
     description:
-      'Queries the on-chain Soroban contract to get all token IDs currently held by the specified wallet.',
+      'Queries the on-chain Soroban contract to get token IDs held by the specified wallet. ' +
+      'Supports offset-based pagination via limit and cursor query parameters. ' +
+      'Large collections are handled safely by returning paginated results.',
   })
   @ApiParam({
     name: 'address',
     description: 'Stellar wallet address',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
-  @ApiOkResponse({
-    description: 'Owned NFTs returned successfully',
-    type: WalletNftsResponseDto,
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Maximum number of token IDs to return (1-100, default 20)',
+    example: 20,
   })
-  @ApiBadRequestResponse({ description: 'Invalid wallet address' })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description: 'Offset into the owner\'s token list for pagination (0-based, default 0)',
+    example: 0,
+  })
+  @ApiOkResponse({
+    description: 'Paginated NFTs returned successfully',
+    type: PaginatedUserTokensResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid wallet address or pagination parameters' })
   async getWalletNfts(
     @Param('address') address: string,
-  ): Promise<WalletNftsResponseDto> {
+    @Query() query: GetUserTokensQueryDto,
+  ): Promise<PaginatedUserTokensResponseDto> {
     if (!address || address.length !== 56 || !address.startsWith('G')) {
       throw new BadRequestException('Invalid Stellar wallet address');
     }
-    const tokenIds = await this.nftOwnershipService.getWalletTokenIds(address);
+
+    const limit = query.limit ?? 20;
+    const cursor = query.cursor ?? 0;
+
+    if (limit < 1 || limit > 100) {
+      throw new BadRequestException('limit must be between 1 and 100');
+    }
+    if (cursor < 0) {
+      throw new BadRequestException('cursor must be >= 0');
+    }
+
+    const result = await this.nftOwnershipService.getUserTokensPaginated(
+      address,
+      limit,
+      cursor,
+    );
+
     return {
       address,
-      tokenIds,
-      balance: tokenIds.length,
+      tokenIds: result.tokenIds,
+      nextCursor: result.nextCursor,
+      total: result.total,
+      limit,
+      cursor,
     };
   }
 
@@ -817,6 +857,8 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
   async prepareUnpause(@Body() dto: PrepareContractPauseDto) {
     return this.adminContractService.preparePauseTx(dto.adminAddress, false);
+  }
+
   @UseGuards(LoginGuard)
   @Patch(':id/royalty-recipient')
   @HttpCode(HttpStatus.OK)

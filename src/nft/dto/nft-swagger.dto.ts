@@ -61,6 +61,31 @@ export class WalletNftsResponseDto {
     example: 2,
   })
   balance: number;
+
+  @ApiPropertyOptional({
+    description: 'Cursor (offset) for the next page. Null when no more pages exist.',
+    example: 20,
+    nullable: true,
+  })
+  nextCursor?: number | null;
+
+  @ApiPropertyOptional({
+    description: 'Total number of tokens across all pages',
+    example: 45,
+  })
+  total?: number;
+
+  @ApiPropertyOptional({
+    description: 'Requested page size',
+    example: 20,
+  })
+  limit?: number;
+
+  @ApiPropertyOptional({
+    description: 'Current offset (cursor) used for this page',
+    example: 0,
+  })
+  cursor?: number;
 }
 
 export class NftRoyaltyResponseDto {
