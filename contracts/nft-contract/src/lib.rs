@@ -81,6 +81,10 @@ pub enum Error {
     InvalidBatchSize = 15,
     /// One-time metadata update limit reached for token ID.
     MetadataAlreadyUpdated = 16,
+    /// `sale_price * royalty_bps` would overflow the arithmetic type used
+    /// for the calculation. See the safe-limits table on each royalty
+    /// function for the maximum `sale_price` that avoids this.
+    RoyaltyOverflow = 17,
     MetadataAlreadyUpdated = 14,
     /// withdraw_xlm called before initiate_withdraw (Issue #676).
     WithdrawNotInitiated = 15,
@@ -276,16 +280,30 @@ impl ClipsNftContract {
     }
 
     /// Calculate fractional royalty for assets with custom decimal precision (Issue #685).
+    ///
+    /// Uses checked arithmetic (Issue #689): `sale_price * royalty_bps` is
+    /// computed with `checked_mul` and returns `Error::RoyaltyOverflow`
+    /// instead of panicking if the product would overflow `u128`. Since
+    /// `royalty_bps` is capped at `ROYALTY_BPS_MAX` (10 000), overflow can
+    /// only occur for `sale_price > u128::MAX / 10_000`
+    /// (~3.4 * 10^34), a value with no realistic on-chain meaning.
     pub fn calculate_fractional_royalty(
         _env: Env,
         sale_price: u128,
         royalty_bps: u32,
         _asset_decimals: u32,
-    ) -> u128 {
-        if royalty_bps == 0 || sale_price == 0 || royalty_bps > storage::ROYALTY_BPS_MAX {
-            return 0;
+    ) -> Result<u128, Error> {
+        if royalty_bps == 0 || sale_price == 0 {
+            return Ok(0);
         }
-        (sale_price * (royalty_bps as u128)) / (storage::ROYALTY_BPS_MAX as u128)
+        if royalty_bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+
+        let product = sale_price
+            .checked_mul(royalty_bps as u128)
+            .ok_or(Error::RoyaltyOverflow)?;
+        Ok(product / (storage::ROYALTY_BPS_MAX as u128))
     }
 
     pub fn transfer(
@@ -344,10 +362,17 @@ impl ClipsNftContract {
             .or_else(|| storage::get_default_royalty_bps(&env))
             .unwrap_or(0);
 
+        // Checked arithmetic (Issue #689): `royalty_bps` is capped at
+        // ROYALTY_BPS_MAX (10 000), so `sale_price * royalty_bps` only
+        // overflows `u64` for `sale_price > u64::MAX / 10_000`
+        // (~1.84 * 10^15 stroops, i.e. ~184 million XLM at 7 decimals).
         let royalty_amount: u64 = if royalty_bps == 0 || sale_price == 0 {
             0
         } else {
-            sale_price * (royalty_bps as u64) / (storage::ROYALTY_BPS_MAX as u64)
+            sale_price
+                .checked_mul(royalty_bps as u64)
+                .ok_or(Error::RoyaltyOverflow)?
+                / (storage::ROYALTY_BPS_MAX as u64)
         };
 
         let recipient = Self::get_royalty_recipient(env.clone(), token_id)
@@ -659,7 +684,14 @@ impl ClipsNftContract {
 
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
         let bps = storage::get_default_royalty_bps(&env).unwrap_or(0);
-        let royalty_amount = amount.saturating_mul(bps as i128) / (ROYALTY_BPS_MAX as i128);
+        // Checked arithmetic (Issue #689): previously used `saturating_mul`,
+        // which silently clamps to `i128::MAX` on overflow and would pay out
+        // a nonsensical royalty amount instead of failing. `checked_mul`
+        // rejects the call outright via `Error::RoyaltyOverflow`.
+        let royalty_amount = amount
+            .checked_mul(bps as i128)
+            .ok_or(Error::RoyaltyOverflow)?
+            / (ROYALTY_BPS_MAX as i128);
 
         if royalty_amount > 0 {
             let asset_client = token::Client::new(&env, &asset);
