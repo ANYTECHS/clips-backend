@@ -78,6 +78,11 @@ import {
   UpdateRoyaltySplitsResponseDto,
   RoyaltySplitsValidationErrorDto,
 } from './dto/royalty-splits.dto';
+import {
+  ClaimRoyaltiesDto,
+  ClaimRoyaltiesResponseDto,
+  ClaimRoyaltiesInsufficientBalanceDto,
+} from './dto/claim-royalties.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -962,5 +967,53 @@ export class NftController {
     }
 
     return this.nftService.updateMetadata(tokenIdStr, dto);
+  }
+
+  /**
+   * POST /nfts/:id/claim-royalties
+   * Builds an unsigned Soroban `claim_royalties` transaction for the
+   * creator to sign. Verifies a non-zero claimable balance before building
+   * the XDR to avoid unnecessary failed on-chain transactions.
+   */
+  @UseGuards(LoginGuard)
+  @Post(':id/claim-royalties')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Claim accumulated royalties for an NFT',
+    description:
+      'Builds an unsigned Soroban `claim_royalties(token_id, asset)` transaction XDR. ' +
+      'Checks the on-chain claimable balance first — returns 400 when there is nothing to claim. ' +
+      'The recipient must sign and submit the returned XDR. On-chain execution transfers the ' +
+      'full accrued amount, resets the balance to zero, and emits a `RoyaltyClaimed` event.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiBody({ type: ClaimRoyaltiesDto })
+  @ApiOkResponse({
+    description: 'Unsigned claim_royalties transaction XDR returned',
+    type: ClaimRoyaltiesResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'No claimable royalties, invalid wallet address, or clip not minted',
+    type: ClaimRoyaltiesInsufficientBalanceDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'Caller does not own this clip' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiServiceUnavailableResponse({
+    description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
+  })
+  async claimRoyalties(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ClaimRoyaltiesDto,
+    @Req() req: Request,
+  ): Promise<ClaimRoyaltiesResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+    return this.nftMintService.prepareClaimRoyaltiesTx(
+      id,
+      dto.walletAddress,
+      dto.assetContractId,
+    );
   }
 }
