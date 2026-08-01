@@ -1,9 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contractmeta, contracttype,
-    token, Address, Env, String, Symbol, Val, Vec,
-    Address, Env, Map, String, Symbol, Val,
-    Address, BytesN, Env, String, Symbol, Val, Vec,
+    token, Address, BytesN, Env, Map, String, Symbol, Vec,
 };
 use soroban_token_sdk::metadata::TokenMetadata;
 
@@ -16,7 +14,7 @@ mod test;
 
 pub use admin::Admin;
 pub use metadata::ClipMetadata;
-pub use storage::{get_token_metadata, set_token_metadata, TokenStorage, ROYALTY_BPS_MAX};
+pub use storage::{get_token_metadata, set_token_metadata, ROYALTY_BPS_MAX};
 
 const CLIP_NAME: &[u8] = b"ClipCash NFT";
 const CLIP_SYMBOL: &[u8] = b"CLIP";
@@ -82,6 +80,16 @@ pub enum Error {
     InvalidBatchSize = 13,
     /// One-time metadata update limit reached for token ID.
     MetadataAlreadyUpdated = 14,
+    /// withdraw_xlm called before initiate_withdraw (Issue #676).
+    WithdrawNotInitiated = 15,
+    /// withdraw_xlm called before the 24-hour timelock has elapsed (Issue #676).
+    WithdrawTimelockActive = 16,
+    /// withdraw_xlm amount must be greater than zero (Issue #676).
+    InvalidWithdrawAmount = 17,
+    /// XLM token SAC address has not been configured (Issue #676).
+    XlmTokenNotConfigured = 18,
+    /// No royalties have accrued yet — nothing to claim.
+    InsufficientBalance = 15,
 }
 
 #[contractimpl]
@@ -389,7 +397,15 @@ impl ClipsNftContract {
             return Err(Error::Unauthorized);
         }
 
-        if !storage::is_approved(&env, token_id, &spender) && token_data.owner != spender {
+        // Allow the transfer if spender is:
+        //   1. the token owner itself,
+        //   2. approved for this specific token, or
+        //   3. an approved-for-all operator for `from` (Issue #675)
+        let is_authorised = token_data.owner == spender
+            || storage::is_approved(&env, token_id, &spender)
+            || storage::is_approved_for_all(&env, &from, &spender);
+
+        if !is_authorised {
             return Err(Error::Unauthorized);
         }
 
@@ -432,6 +448,37 @@ impl ClipsNftContract {
         Ok(())
     }
 
+    /// Grant or revoke operator approval for all tokens (Issue #675).
+    ///
+    /// When `approved` is `true`, `operator` is allowed to call
+    /// `transfer_from` on any token owned by `owner`, matching ERC-721's
+    /// `setApprovalForAll` semantics.  Set `approved` to `false` to revoke.
+    ///
+    /// `owner.require_auth()` is enforced — only the owner may change their
+    /// own operator list.
+    pub fn set_approval_for_all(
+        env: Env,
+        owner: Address,
+        operator: Address,
+        approved: bool,
+    ) -> Result<(), Error> {
+        owner.require_auth();
+
+        if storage::is_paused(&env) {
+            return Err(Error::ContractPaused);
+        }
+
+        storage::set_approval_for_all(&env, &owner, &operator, approved);
+        events::emit_approval_for_all(&env, &owner, &operator, approved);
+        Ok(())
+    }
+
+    /// Return whether `operator` is approved to manage all tokens owned by
+    /// `owner` (Issue #675).
+    pub fn is_approved_for_all(env: Env, owner: Address, operator: Address) -> bool {
+        storage::is_approved_for_all(&env, &owner, &operator)
+    }
+
     pub fn owner_of(env: Env, token_id: u64) -> Option<Address> {
         storage::get_token(&env, token_id).map(|t| t.owner)
     }
@@ -464,6 +511,18 @@ impl ClipsNftContract {
 
     pub fn get_creator(env: Env, token_id: u64) -> Option<Address> {
         storage::get_token(&env, token_id).map(|t| t.creator)
+    }
+
+    /// Return the original ClipCash backend clip ID stored at mint time (Issue #674).
+    ///
+    /// Every NFT records the database Clip ID that was passed to `mint()` or
+    /// `batch_mint()`. This creates a verifiable on-chain link between the NFT
+    /// and the ClipCash database record, enabling ownership and royalty checks
+    /// that cross the Web2/Web3 boundary.
+    ///
+    /// Returns `None` when the token does not exist.
+    pub fn get_clip_id(env: Env, token_id: u64) -> Option<String> {
+        storage::get_token(&env, token_id).map(|t| t.clip_id)
     }
 
     pub fn balance_of(env: Env, owner: Address) -> u64 {
@@ -835,6 +894,175 @@ impl ClipsNftContract {
     pub fn get_nonce(env: Env, caller: Address) -> u64 {
         storage::get_nonce(&env, &caller)
     }
+
+    // ── Issue #676: Emergency withdraw for stuck XLM ────────────────────────
+
+    /// Initiate a 24-hour timelock before XLM can be withdrawn (Issue #676).
+    ///
+    /// The admin calls this first to start the clock. After 24 hours have
+    /// passed, `withdraw_xlm` can be executed. This two-step design prevents
+    /// accidental or malicious instant drains.
+    ///
+    /// Only the contract admin may call this function.
+    pub fn initiate_withdraw(env: Env) -> Result<u64, Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        let unlock_time = env.ledger().timestamp() + storage::WITHDRAW_TIMELOCK_SECS;
+        storage::set_withdraw_unlock_time(&env, unlock_time);
+
+        events::emit_withdraw_initiated(&env, &admin, unlock_time);
+        Ok(unlock_time)
+    }
+
+    /// Return the timestamp (Unix seconds) when a pending withdraw becomes
+    /// executable, or `None` when no initiation is pending (Issue #676).
+    pub fn get_withdraw_unlock_time(env: Env) -> Option<u64> {
+        storage::get_withdraw_unlock_time(&env)
+    }
+
+    /// Withdraw accidentally-stuck XLM to `recipient` (Issue #676).
+    ///
+    /// Requirements:
+    ///   - Caller must be the contract admin.
+    ///   - `initiate_withdraw()` must have been called at least 24 hours ago.
+    ///   - `amount_stroops` must be > 0.
+    ///
+    /// On success the timelock is cleared and a `withdraw_xlm` event is
+    /// emitted so the transaction is auditable on-chain.
+    pub fn withdraw_xlm(
+        env: Env,
+        recipient: Address,
+        amount_stroops: i128,
+    ) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if amount_stroops <= 0 {
+            return Err(Error::InvalidWithdrawAmount);
+        }
+
+        let unlock_time = storage::get_withdraw_unlock_time(&env)
+            .ok_or(Error::WithdrawNotInitiated)?;
+
+        if env.ledger().timestamp() < unlock_time {
+            return Err(Error::WithdrawTimelockActive);
+        }
+
+        // Clear timelock before transferring (checks-effects-interactions).
+        storage::clear_withdraw_unlock_time(&env);
+
+        // Transfer native XLM from the contract's own balance to recipient.
+        let xlm_token_address = storage::get_xlm_token_address(&env)
+            .ok_or(Error::XlmTokenNotConfigured)?;
+        let token_client = token::Client::new(&env, &xlm_token_address);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &amount_stroops,
+        );
+
+        events::emit_withdraw_xlm(&env, &admin, &recipient, amount_stroops);
+        Ok(())
+    }
+
+    /// Set the XLM Stellar Asset Contract (SAC) address used by
+    /// `withdraw_xlm`. Only the admin may call this (Issue #676).
+    pub fn set_xlm_token_address(env: Env, xlm_token: Address) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        storage::set_xlm_token_address(&env, &xlm_token);
+        Ok(())
+    /// Return a paginated slice of token IDs owned by `owner`.
+    ///
+    /// `limit`  – maximum number of token IDs to return (capped at 100).
+    /// `cursor` – offset into the owner's token list (0-based index).
+    ///
+    /// Returns an empty Vec when `cursor` >= total tokens or `limit` is 0.
+    pub fn get_user_tokens(env: Env, owner: Address, limit: u32, cursor: u32) -> Vec<u64> {
+        let tokens = storage::get_owner_tokens(&env, &owner);
+        let total = tokens.len();
+        let start = cursor.min(total);
+        let effective_limit = limit.min(100);
+        let end = (start + effective_limit).min(total);
+        let mut result = Vec::new(&env);
+        let mut i = start;
+        while i < end {
+            result.push_back(tokens.get(i).unwrap());
+            i += 1;
+        }
+        result
+    /// Accumulate royalties for a token.  Called after each royalty payment so
+    /// that the owed balance grows until the creator calls `claim_royalties`.
+    ///
+    /// Only the contract admin may call this — it is invoked internally by
+    /// off-chain infra that tracks on-chain `royalty_paid` events and credits
+    /// the per-token ledger.
+    pub fn accrue_royalties(
+        env: Env,
+        token_id: u64,
+        amount: i128,
+    ) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+
+        storage::add_accumulated_royalty(&env, token_id, amount);
+        Ok(())
+    }
+
+    /// Return the claimable royalty balance for a token.
+    pub fn get_claimable_royalties(env: Env, token_id: u64) -> Result<i128, Error> {
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+        Ok(storage::get_accumulated_royalty(&env, token_id))
+    }
+
+    /// Claim all accumulated royalties for `token_id`.
+    ///
+    /// Only the token's royalty recipient (creator by default) may call this.
+    /// Transfers the full claimable balance via the SAC `asset`, resets the
+    /// on-chain balance to zero, and emits `RoyaltyClaimed`.
+    ///
+    /// Returns `Error::InsufficientBalance` when there is nothing to claim.
+    pub fn claim_royalties(
+        env: Env,
+        token_id: u64,
+        asset: Address,
+    ) -> Result<i128, Error> {
+        if !storage::is_supported_asset(&env, &asset) {
+            return Err(Error::UnsupportedAsset);
+        }
+
+        let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+
+        // Only the current royalty recipient (or creator as fallback) may claim.
+        let recipient = Self::get_royalty_recipient(env.clone(), token_id)
+            .unwrap_or_else(|| token_data.creator.clone());
+
+        recipient.require_auth();
+
+        let claimable = storage::get_accumulated_royalty(&env, token_id);
+        if claimable <= 0 {
+            return Err(Error::InsufficientBalance);
+        }
+
+        // Transfer accumulated amount to recipient via SAC.
+        let contract_address = env.current_contract_address();
+        let asset_client = token::Client::new(&env, &asset);
+        asset_client.transfer(&contract_address, &recipient, &claimable);
+
+        // Reset balance — prevents double claims.
+        storage::reset_accumulated_royalty(&env, token_id);
+
+        events::emit_royalty_claimed(&env, &recipient, token_id, claimable, &asset);
+
+        Ok(claimable)
+    }
 }
 
 mod events {
@@ -863,6 +1091,22 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    /// Emitted when an owner grants or revokes operator-level approval for
+    /// all their tokens (Issue #675 — `set_approval_for_all`).
+    pub fn emit_approval_for_all(
+        env: &Env,
+        owner: &Address,
+        operator: &Address,
+        approved: bool,
+    ) {
+        let topics = (
+            Symbol::new(env, "approval_all"),
+            owner.clone(),
+            operator.clone(),
+        );
+        env.events().publish(topics, approved);
     }
 
     pub fn emit_paused(env: &Env, admin: &Address) {
@@ -914,6 +1158,28 @@ mod events {
         env.events().publish(topics, (new_wasm_hash.clone(),));
     }
 
+    /// Emitted when the admin calls `initiate_withdraw()` (Issue #676).
+    /// `unlock_time` is the Unix timestamp after which `withdraw_xlm` may run.
+    pub fn emit_withdraw_initiated(env: &Env, admin: &Address, unlock_time: u64) {
+        let topics = (Symbol::new(env, "withdraw_init"), admin.clone());
+        env.events().publish(topics, unlock_time);
+    }
+
+    /// Emitted on a successful `withdraw_xlm()` execution (Issue #676).
+    pub fn emit_withdraw_xlm(
+        env: &Env,
+        admin: &Address,
+        recipient: &Address,
+        amount_stroops: i128,
+    ) {
+        let topics = (
+            Symbol::new(env, "withdraw_xlm"),
+            admin.clone(),
+            recipient.clone(),
+        );
+        env.events().publish(topics, amount_stroops);
+    }
+
     pub fn emit_royalty_recipient_updated(
         env: &Env,
         token_id: u64,
@@ -932,5 +1198,20 @@ mod events {
     ) {
         let topics = (Symbol::new(env, "metadata_updated"), token_id, owner.clone());
         env.events().publish(topics, metadata.clone());
+    }
+
+    /// Emitted when a creator successfully claims their accumulated royalties.
+    ///
+    /// Topics:  `["royalty_claimed", recipient: Address]`
+    /// Data:    `(token_id: u64, amount: i128, asset: Address)`
+    pub fn emit_royalty_claimed(
+        env: &Env,
+        recipient: &Address,
+        token_id: u64,
+        amount: i128,
+        asset: &Address,
+    ) {
+        let topics = (Symbol::new(env, "royalty_claimed"), recipient.clone());
+        env.events().publish(topics, (token_id, amount, asset.clone()));
     }
 }
