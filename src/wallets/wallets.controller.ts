@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   Controller,
   Delete,
   Get,
   Param,
   ParseIntPipe,
+  Query,
   Req,
   UseGuards,
   HttpCode,
@@ -17,19 +19,23 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiQuery,
   ApiBadRequestResponse,
   ApiUnauthorizedResponse,
   ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
   ApiConflictResponse,
+  ApiOkResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
 import { WalletBalanceService } from './wallet-balance.service';
 import { CreateWalletConnectionDto } from './dto/connect-wallet.dto';
+import { WalletNftsQueryDto } from './dto/wallet-nfts-query.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
 import { WalletBalanceResult } from '../stellar/stellar.service';
+import { NftOwnershipService } from '../nft/nft-ownership.service';
 
 interface AuthRequest extends Request {
   user: { userId: number; email: string | null };
@@ -45,6 +51,7 @@ export class WalletsController {
   constructor(
     private readonly walletsService: WalletsService,
     private readonly walletBalanceService: WalletBalanceService,
+    private readonly nftOwnershipService: NftOwnershipService,
   ) {}
 
   @Get()
@@ -230,5 +237,101 @@ export class WalletsController {
     @Body() dto: CreateWalletConnectionDto,
   ) {
     return this.walletsService.connect(req.user.userId, dto);
+  }
+
+  /**
+   * GET /wallets/:address/nfts
+   * Returns all token IDs owned by the given Stellar wallet address,
+   * with optional pagination (Issue #673).
+   */
+  @Get(':address/nfts')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List NFT token IDs owned by a Stellar wallet address (Issue #673)',
+    description:
+      'Returns all token IDs currently owned by the specified Stellar wallet address. ' +
+      'Supports pagination via `page` and `limit` query parameters. ' +
+      'Large collections are handled safely via result-size limits (max 100 per page). ' +
+      'Authentication is not required — the address is the lookup key.',
+  })
+  @ApiParam({
+    name: 'address',
+    description: 'Stellar wallet address (56-character G... address)',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-based, default: 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Results per page (max 100, default: 20)',
+    example: 20,
+  })
+  @ApiOkResponse({
+    description: 'Paginated list of NFT token IDs owned by the wallet',
+    schema: {
+      type: 'object',
+      properties: {
+        address: {
+          type: 'string',
+          example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+        tokenIds: {
+          type: 'array',
+          items: { type: 'number' },
+          example: [42, 51, 99],
+        },
+        total: {
+          type: 'number',
+          description: 'Total number of tokens owned by this wallet',
+          example: 3,
+        },
+        page: { type: 'number', example: 1 },
+        limit: { type: 'number', example: 20 },
+        hasNextPage: {
+          type: 'boolean',
+          description: 'True when there are more pages available',
+          example: false,
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid Stellar wallet address format' })
+  async getWalletNfts(
+    @Param('address') address: string,
+    @Query() query: WalletNftsQueryDto,
+  ) {
+    if (!address || address.length !== 56 || !address.startsWith('G')) {
+      throw new BadRequestException(
+        'Invalid Stellar wallet address: must be a 56-character G... address',
+      );
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const allTokenIds = await this.nftOwnershipService.getWalletTokenIds(address);
+    const total = allTokenIds.length;
+
+    // Apply pagination
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const tokenIds = allTokenIds.slice(start, end);
+    const hasNextPage = end < total;
+
+    return {
+      address,
+      tokenIds,
+      total,
+      page,
+      limit,
+      hasNextPage,
+    };
   }
 }
