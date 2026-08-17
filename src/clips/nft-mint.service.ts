@@ -15,6 +15,7 @@ import { ConfigService } from '../config/config.service';
 import { IpfsUploadService, NftMetadata } from '../nft/ipfs-upload.service';
 import { NftOwnershipService } from '../nft/nft-ownership.service';
 import { RoyaltyConfigurationService } from '../nft/royalty-configuration.service';
+import { checkedRoyaltyAmount, checkedBpsAdd } from '../common/helpers/safe-math.helper';
 
 interface NftAttribute {
   trait_type: string;
@@ -360,7 +361,10 @@ export class NftMintService {
       );
     }
 
-    const totalBps = shares.reduce((sum, share) => sum + share.bps, 0);
+    const totalBps = shares.reduce(
+      (sum, share) => checkedBpsAdd(sum, share.bps),
+      0,
+    );
     if (totalBps > 10_000) {
       throw new BadRequestException(
         `Combined royalty shares (${totalBps} bps) exceed the maximum of 10000 bps (100%).`,
@@ -771,10 +775,13 @@ export class NftMintService {
       royaltyBpsOverride ??
       this.royaltyConfigurationService.getCreatorRoyaltyBps(undefined);
 
-    // Compute royalty amount (integer division, rounded down)
+    // Compute royalty amount using checked BigInt arithmetic to prevent
+    // IEEE-754 precision loss for large sale prices (see safe-math.helper.ts).
+    // Returns floor(salePrice * royaltyBps / 10_000), matching the Soroban
+    // contract's integer-division semantics.
     const royaltyAmount =
       salePrice > 0 && royaltyBps > 0
-        ? Math.floor((salePrice * royaltyBps) / 10_000)
+        ? checkedRoyaltyAmount(salePrice, royaltyBps)
         : 0;
 
     const royaltyPercent = royaltyBps / 100;
