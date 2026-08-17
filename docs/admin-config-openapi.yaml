@@ -1,0 +1,533 @@
+openapi: 3.0.0
+info:
+  title: ClipCash NFT Contract - Admin Configuration API
+  description: |
+    Soroban smart contract endpoints for administrators to configure global contract settings
+    including platform fees and default royalty rates.
+    
+    **Authentication:** All admin endpoints require Stellar keypair authorization.
+    The caller must be the contract administrator registered during initialization.
+  version: 1.1.0
+  contact:
+    name: ClipCash Team
+    url: https://clipcash.xyz
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.clipcash.xyz/v1/contracts
+    description: Production environment
+  - url: https://testnet.clipcash.xyz/v1/contracts
+    description: Testnet environment
+  - url: http://localhost:8000/v1/contracts
+    description: Local development
+
+tags:
+  - name: Admin Configuration
+    description: Administrative endpoints for global contract configuration
+  - name: Configuration Getters
+    description: Read-only endpoints to retrieve current configuration
+
+paths:
+  /admin/platform-fee/set:
+    post:
+      summary: Set Default Platform Fee
+      description: |
+        Updates the global platform fee that is deducted from royalties.
+        Only the contract administrator can call this endpoint.
+      operationId: setDefaultPlatformFee
+      tags:
+        - Admin Configuration
+      security:
+        - StellarAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPlatformFeeRequest'
+            examples:
+              example1:
+                summary: Set 5% platform fee
+                value:
+                  contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+                  recipient: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJI板BC
+                  bps: 500
+              example2:
+                summary: Set 2.5% platform fee
+                value:
+                  contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+                  recipient: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+                  bps: 250
+      responses:
+        '200':
+          description: Platform fee successfully updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigUpdateResponse'
+              examples:
+                success:
+                  summary: Successful update
+                  value:
+                    transaction_hash: 6b9d5c9d6e8f7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c
+                    status: completed
+                    config_type: platform_fee
+                    old_bps: 0
+                    new_bps: 500
+                    events:
+                      - type: config_updated
+                        topics:
+                          - config_updated
+                          - GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+                        data:
+                          config_type: platform_fee
+                          old_bps: 0
+                          new_bps: 500
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_bps:
+                  summary: BPS exceeds maximum
+                  value:
+                    error: InvalidRoyaltyBps
+                    message: BPS value cannot exceed 10,000 (100%)
+                    code: 7
+        '401':
+          description: Unauthorized - Invalid signature or not admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  summary: Not the contract admin
+                  value:
+                    error: Unauthorized
+                    message: Caller is not the contract administrator
+                    code: 1
+        '500':
+          description: Internal server error
+
+  /admin/default-royalty/set:
+    post:
+      summary: Set Default Royalty BPS
+      description: |
+        Updates the global default royalty rate applied to all NFT transfers.
+        Only the contract administrator can call this endpoint.
+      operationId: setDefaultRoyaltyBps
+      tags:
+        - Admin Configuration
+      security:
+        - StellarAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetDefaultRoyaltyRequest'
+            examples:
+              example1:
+                summary: Set 10% default royalty
+                value:
+                  contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+                  bps: 1000
+              example2:
+                summary: Set 5% default royalty
+                value:
+                  contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+                  bps: 500
+      responses:
+        '200':
+          description: Default royalty successfully updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigUpdateResponse'
+              examples:
+                success:
+                  summary: Successful update
+                  value:
+                    transaction_hash: 7c9d5c9d6e8f7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c
+                    status: completed
+                    config_type: default_royalty
+                    old_bps: 500
+                    new_bps: 1000
+                    events:
+                      - type: config_updated
+                        topics:
+                          - config_updated
+                          - GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+                        data:
+                          config_type: default_royalty
+                          old_bps: 500
+                          new_bps: 1000
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_bps:
+                  summary: BPS exceeds maximum
+                  value:
+                    error: InvalidRoyaltyBps
+                    message: BPS value cannot exceed 10,000 (100%)
+                    code: 7
+        '401':
+          description: Unauthorized - Invalid signature or not admin
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unauthorized:
+                  summary: Not the contract admin
+                  value:
+                    error: Unauthorized
+                    message: Caller is not the contract administrator
+                    code: 1
+        '500':
+          description: Internal server error
+
+  /admin/platform-fee/get:
+    get:
+      summary: Get Current Platform Fee
+      description: Retrieves the currently configured platform fee and recipient address.
+      operationId: getDefaultPlatformFee
+      tags:
+        - Configuration Getters
+      parameters:
+        - name: contract_id
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^C[A-Z2-7]{55}$'
+          description: Soroban contract ID
+          example: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+      responses:
+        '200':
+          description: Current platform fee configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlatformFeeResponse'
+              examples:
+                with_fee:
+                  summary: Platform fee configured
+                  value:
+                    recipient: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+                    bps: 500
+                without_fee:
+                  summary: No platform fee set
+                  value:
+                    recipient: null
+                    bps: null
+        '400':
+          description: Invalid contract ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+
+  /admin/default-royalty/get:
+    get:
+      summary: Get Current Default Royalty
+      description: Retrieves the currently configured default royalty rate in BPS.
+      operationId: getDefaultRoyaltyBps
+      tags:
+        - Configuration Getters
+      parameters:
+        - name: contract_id
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^C[A-Z2-7]{55}$'
+          description: Soroban contract ID
+          example: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+      responses:
+        '200':
+          description: Current default royalty configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DefaultRoyaltyResponse'
+              examples:
+                with_royalty:
+                  summary: Default royalty configured
+                  value:
+                    bps: 1000
+                without_royalty:
+                  summary: No default royalty set
+                  value:
+                    bps: null
+        '400':
+          description: Invalid contract ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+
+components:
+  schemas:
+    SetPlatformFeeRequest:
+      type: object
+      required:
+        - contract_id
+        - recipient
+        - bps
+      properties:
+        contract_id:
+          type: string
+          pattern: '^C[A-Z2-7]{55}$'
+          description: Soroban contract ID
+          example: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+        recipient:
+          type: string
+          pattern: '^G[A-Z2-7]{55}$'
+          description: Stellar account address to receive platform fees
+          example: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+        bps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: |
+            Platform fee in basis points.
+            - 100 = 1%
+            - 500 = 5%
+            - 1000 = 10%
+            - 10000 = 100%
+          example: 500
+        memo:
+          type: string
+          maxLength: 300
+          description: Optional memo for the transaction
+          example: Set platform fee to 5%
+
+    SetDefaultRoyaltyRequest:
+      type: object
+      required:
+        - contract_id
+        - bps
+      properties:
+        contract_id:
+          type: string
+          pattern: '^C[A-Z2-7]{55}$'
+          description: Soroban contract ID
+          example: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+        bps:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: |
+            Default royalty in basis points.
+            - 100 = 1%
+            - 500 = 5%
+            - 1000 = 10%
+            - 10000 = 100%
+          example: 1000
+        memo:
+          type: string
+          maxLength: 300
+          description: Optional memo for the transaction
+          example: Set default royalty to 10%
+
+    ConfigUpdateResponse:
+      type: object
+      required:
+        - transaction_hash
+        - status
+        - config_type
+        - old_bps
+        - new_bps
+      properties:
+        transaction_hash:
+          type: string
+          description: Stellar transaction hash
+          example: 6b9d5c9d6e8f7a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c
+        status:
+          type: string
+          enum:
+            - pending
+            - completed
+            - failed
+          description: Transaction status
+          example: completed
+        config_type:
+          type: string
+          enum:
+            - platform_fee
+            - default_royalty
+          description: Type of configuration updated
+          example: platform_fee
+        old_bps:
+          type: integer
+          description: Previous BPS value
+          example: 0
+        new_bps:
+          type: integer
+          description: New BPS value
+          example: 500
+        events:
+          type: array
+          description: Emitted contract events
+          items:
+            $ref: '#/components/schemas/ContractEvent'
+        timestamp:
+          type: string
+          format: date-time
+          description: Transaction timestamp
+          example: 2024-01-15T10:30:00Z
+
+    ContractEvent:
+      type: object
+      properties:
+        type:
+          type: string
+          enum:
+            - config_updated
+            - royalty_updated
+          description: Event type
+          example: config_updated
+        topics:
+          type: array
+          items:
+            type: string
+          description: Event topics
+          example:
+            - config_updated
+            - GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+        data:
+          type: object
+          description: Event data payload
+          example:
+            config_type: platform_fee
+            old_bps: 0
+            new_bps: 500
+
+    PlatformFeeResponse:
+      type: object
+      properties:
+        recipient:
+          type: string
+          pattern: '^G[A-Z2-7]{55}$'
+          nullable: true
+          description: Platform fee recipient address
+          example: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+        bps:
+          type: integer
+          nullable: true
+          description: Current platform fee in BPS (null if not set)
+          example: 500
+
+    DefaultRoyaltyResponse:
+      type: object
+      properties:
+        bps:
+          type: integer
+          nullable: true
+          description: Current default royalty in BPS (null if not set)
+          example: 1000
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+        - code
+      properties:
+        error:
+          type: string
+          enum:
+            - Unauthorized
+            - InvalidRoyaltyBps
+            - NotInitialized
+            - ContractPaused
+            - InternalError
+          description: Error type
+          example: InvalidRoyaltyBps
+        message:
+          type: string
+          description: Human-readable error message
+          example: BPS value cannot exceed 10,000 (100%)
+        code:
+          type: integer
+          description: Contract error code
+          example: 7
+        details:
+          type: object
+          description: Additional error details
+          nullable: true
+
+  securitySchemes:
+    StellarAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Stellar-Ed25519
+      description: |
+        Stellar keypair signature authorization.
+        
+        The bearer token should be a signed transaction envelope that authorizes
+        the operation. The signer must be the contract administrator.
+        
+        Example: Bearer <signed-transaction-envelope>
+
+x-examples:
+  platformFeeFlow:
+    title: Platform Fee Configuration Flow
+    description: Complete example of configuring platform fees
+    steps:
+      - step: 1
+        description: Get current configuration
+        operation: getDefaultPlatformFee
+        request:
+          contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+        response:
+          recipient: null
+          bps: null
+      - step: 2
+        description: Set platform fee to 5%
+        operation: setDefaultPlatformFee
+        request:
+          contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+          recipient: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+          bps: 500
+        response:
+          status: completed
+          old_bps: 0
+          new_bps: 500
+      - step: 3
+        description: Verify configuration
+        operation: getDefaultPlatformFee
+        request:
+          contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+        response:
+          recipient: GBRPYHIL2CI3WHZDTOOQFC6EB4NCCCTVQQ2GSTSZ36K27GUJIBC
+          bps: 500
+
+  defaultRoyaltyFlow:
+    title: Default Royalty Configuration Flow
+    description: Complete example of configuring default royalty
+    steps:
+      - step: 1
+        description: Set default royalty to 10%
+        operation: setDefaultRoyaltyBps
+        request:
+          contract_id: CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4
+          bps: 1000
+        response:
+          status: completed
+          old_bps: 0
+          new_bps: 1000

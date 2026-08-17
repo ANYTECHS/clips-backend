@@ -652,6 +652,13 @@ impl ClipsNftContract {
         let old_bps = storage::get_default_royalty_bps(&env).unwrap_or(0);
         storage::set_default_royalty_bps(&env, bps);
         events::emit_royalty_updated(&env, old_bps, bps);
+        events::emit_config_updated(
+            &env,
+            &admin,
+            &String::from_str(&env, "default_royalty"),
+            old_bps,
+            bps,
+        );
         Ok(())
     }
 
@@ -813,7 +820,16 @@ impl ClipsNftContract {
             return Err(Error::InvalidRoyaltyBps);
         }
 
+        let old_bps = storage::get_platform_fee(&env).map(|(_, bps)| bps).unwrap_or(0);
         storage::set_platform_fee(&env, &recipient, bps);
+        
+        events::emit_config_updated(
+            &env,
+            &admin,
+            &String::from_str(&env, "platform_fee"),
+            old_bps,
+            bps,
+        );
         Ok(())
     }
 
@@ -1380,5 +1396,24 @@ mod events {
     ) {
         let topics = (Symbol::new(env, "royalty_claimed"), recipient.clone());
         env.events().publish(topics, (token_id, amount, asset.clone()));
+    }
+
+    /// Emitted when admin updates global contract configuration (platform fee or default royalty).
+    ///
+    /// Topics:  `["config_updated", admin: Address]`
+    /// Data:    `(config_type: String, old_bps: u32, new_bps: u32)`
+    ///
+    /// `config_type` values:
+    /// - "platform_fee" — platform fee BPS updated
+    /// - "default_royalty" — default royalty BPS updated
+    pub fn emit_config_updated(
+        env: &Env,
+        admin: &Address,
+        config_type: &String,
+        old_bps: u32,
+        new_bps: u32,
+    ) {
+        let topics = (Symbol::new(env, "config_updated"), admin.clone());
+        env.events().publish(topics, (config_type.clone(), old_bps, new_bps));
     }
 }
