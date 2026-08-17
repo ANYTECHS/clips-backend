@@ -46,8 +46,11 @@ export class PrepareTransferDto {
   @ApiProperty({
     description:
       'Agreed sale price in stroops (1 XLM = 10_000_000 stroops). ' +
-      'Used to compute the royalty amount: royalty = salePrice × royaltyBps / 10_000. ' +
-      'Pass 0 for a gifted/free transfer (no royalty will be charged).',
+      'Used to compute the royalty amount: royalty = floor(salePrice × royaltyBps / 10_000). ' +
+      'Arithmetic is performed with BigInt to prevent IEEE-754 overflow — see safe-math.helper.ts. ' +
+      'Pass 0 for a gifted/free transfer (no royalty will be charged). ' +
+      'Values where floor(salePrice × royaltyBps / 10_000) > Number.MAX_SAFE_INTEGER ' +
+      '(≈ 9 × 10^15) are rejected with HTTP 400.',
     example: 5000000000,
     minimum: 0,
   })

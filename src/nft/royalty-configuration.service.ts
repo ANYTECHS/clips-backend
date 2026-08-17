@@ -5,6 +5,10 @@ import {
   CLIP_ROYALTY_BPS_MAX,
   DEFAULT_ROYALTY_BPS_MAX,
 } from '../common/validators/is-valid-royalty-bps.validator';
+import {
+  checkedRoyaltyAmount,
+  checkedBpsAdd,
+} from '../common/helpers/safe-math.helper';
 
 export const ROYALTY_PROTOCOL_MAX_BPS = DEFAULT_ROYALTY_BPS_MAX;
 
@@ -62,6 +66,12 @@ export class RoyaltyConfigurationService {
    *
    * Rounding: truncates toward zero (`Math.floor`), matching the contract's
    * integer-division semantics — any fractional stroop is rounded down.
+   *
+   * Overflow protection: the intermediate product `salePrice × royaltyBps` is
+   * computed with `BigInt` arithmetic to prevent IEEE-754 precision loss for
+   * large sale prices (see `checkedRoyaltyAmount` in safe-math.helper.ts).
+   * A `BadRequestException` is thrown if the result exceeds
+   * `Number.MAX_SAFE_INTEGER`.
    */
   calculateRoyalty(salePrice: number, royaltyBps: number): number {
     this.validateRoyaltyBps(royaltyBps);
@@ -73,7 +83,7 @@ export class RoyaltyConfigurationService {
     if (salePrice === 0 || royaltyBps === 0) {
       return 0;
     }
-    return Math.floor((salePrice * royaltyBps) / ROYALTY_PROTOCOL_MAX_BPS);
+    return checkedRoyaltyAmount(salePrice, royaltyBps);
   }
 
   validateRoyaltyBps(bps: number): void {
@@ -93,7 +103,9 @@ export class RoyaltyConfigurationService {
   }
 
   validateCombinedRoyaltyBps(creatorBps: number, platformBps: number): void {
-    const total = creatorBps + platformBps;
+    // checkedBpsAdd validates both operands are non-negative integers and that
+    // the sum fits within Number.MAX_SAFE_INTEGER before comparing to the cap.
+    const total = checkedBpsAdd(creatorBps, platformBps);
     if (total > ROYALTY_PROTOCOL_MAX_BPS) {
       throw new BadRequestException(
         `Combined royalty (${total} bps = ${creatorBps} creator + ${platformBps} platform) exceeds protocol maximum of ${ROYALTY_PROTOCOL_MAX_BPS} bps.`,
@@ -134,7 +146,7 @@ export class RoyaltyConfigurationService {
       );
     }
 
-    const total = creatorBps + platformBps;
+    const total = checkedBpsAdd(creatorBps, platformBps);
     if (total > ROYALTY_PROTOCOL_MAX_BPS) {
       throw new Error(
         `Combined royalty (${total} bps = ${creatorBps} creator + ${platformBps} platform) exceeds protocol maximum of ${ROYALTY_PROTOCOL_MAX_BPS} bps`,

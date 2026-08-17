@@ -142,6 +142,55 @@ describe('RoyaltyConfigurationService', () => {
         BadRequestException,
       );
     });
+
+    // ── Extreme / boundary value tests ──────────────────────────────────────
+
+    it('handles a very large safe sale price correctly (900 000 XLM at 1500 bps)', () => {
+      // 9_000_000_000_000 stroops × 1500 bps / 10_000 = 1_350_000_000_000
+      // Both salePrice and result are well within Number.MAX_SAFE_INTEGER.
+      const salePrice = 9_000_000_000_000;
+      const royaltyBps = 1500;
+      const expected = Math.floor((salePrice * royaltyBps) / 10_000);
+      // Verify expected is safe (i.e. the test assumption is correct)
+      expect(expected).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+      expect(service.calculateRoyalty(salePrice, royaltyBps)).toBe(expected);
+    });
+
+    it('returns 0 for any salePrice when royaltyBps is 0', () => {
+      expect(service.calculateRoyalty(Number.MAX_SAFE_INTEGER, 0)).toBe(0);
+    });
+
+    it('returns 0 for salePrice of 0 regardless of royaltyBps', () => {
+      expect(service.calculateRoyalty(0, 1500)).toBe(0);
+    });
+
+    it('correctly computes royalty for salePrice = 1 and royaltyBps = 1 (floors to 0)', () => {
+      // 1 * 1 / 10_000 = 0.0001 -> floors to 0
+      expect(service.calculateRoyalty(1, 1)).toBe(0);
+    });
+
+    it('correctly computes royalty for minimum non-zero result (salePrice=10000, bps=1)', () => {
+      // 10_000 * 1 / 10_000 = 1
+      expect(service.calculateRoyalty(10_000, 1)).toBe(1);
+    });
+
+    it('throws BadRequestException when computed royalty would exceed Number.MAX_SAFE_INTEGER', () => {
+      // salePrice = Number.MAX_SAFE_INTEGER (9_007_199_254_740_991),
+      // royaltyBps = 1500 → product = 1.35 × 10^19 >> Number.MAX_SAFE_INTEGER (9 × 10^15)
+      // checkedRoyaltyAmount must reject this rather than silently corrupt it.
+      expect(() =>
+        service.calculateRoyalty(Number.MAX_SAFE_INTEGER, 1500),
+      ).toThrow(BadRequestException);
+    });
+
+    it('throws BadRequestException for salePrice just above the safe threshold', () => {
+      // 10^16 * 1500 / 10_000 = 1.5 × 10^15 which IS safe; increase bps to push result over.
+      // Number.MAX_SAFE_INTEGER / 10_000 ≈ 900_719_925_474 -> use salePrice slightly above
+      const highPrice = Math.floor(Number.MAX_SAFE_INTEGER / 1500) + 1; // result would overflow
+      expect(() =>
+        service.calculateRoyalty(highPrice, 1500),
+      ).toThrow(BadRequestException);
+    });
   });
 
   it('throws when platform wallet is missing', () => {
