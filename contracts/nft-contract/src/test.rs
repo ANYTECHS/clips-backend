@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use crate::{ClipMetadata, ClipsNftContract, ClipsNftContractClient, Error};
+use crate::{
+    ClipMetadata, ClipsNftContract, ClipsNftContractClient, Error,
+    METADATA_REFRESH_COOLDOWN_SECS,
+};
 use soroban_sdk::{
     testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env,
     String, Symbol, TryIntoVal, Vec,
@@ -1562,6 +1565,54 @@ fn test_update_metadata_one_time_enforcement() {
         Error::MetadataAlreadyUpdated,
         "Second metadata update must return MetadataAlreadyUpdated"
     );
+}
+
+#[test]
+fn test_refresh_metadata_requires_cooldown_and_emits_event() {
+    let (env, contract_id, client) = setup_env();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin);
+    client.mint(
+        &owner,
+        &6002,
+        &String::from_str(&env, "c6002"),
+        &String::from_str(&env, "uri6002"),
+        &false,
+    );
+
+    let metadata = ClipMetadata {
+        name: String::from_str(&env, "Refreshed Clip"),
+        description: String::from_str(&env, "Refreshed description"),
+        content_uri: String::from_str(&env, "ipfs://QmRefreshedUri"),
+        creator: String::from_str(&env, "CreatorName"),
+        royalty_percent: 10,
+        is_soulbound: false,
+        created_at: env.ledger().timestamp(),
+        virality_score: 99,
+        original_duration: 30,
+    };
+
+    client.refresh_metadata(&6002, &metadata);
+    assert_eq!(client.token_uri(&6002), Some(metadata.content_uri.clone()));
+
+    let (_, topics, data) = env.events().all().last().unwrap();
+    let event_name: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+    assert_eq!(event_name, Symbol::new(&env, "metadata_refreshed"));
+    assert_eq!(topics.get(1).unwrap().try_into_val::<u64>(&env).unwrap(), 6002);
+    assert_eq!(topics.get(2).unwrap().try_into_val::<Address>(&env).unwrap(), admin);
+    assert_eq!(data.try_into_val::<ClipMetadata>(&env).unwrap(), metadata);
+
+    assert_eq!(
+        client.try_refresh_metadata(&6002, &metadata).unwrap_err().unwrap(),
+        Error::MetadataRefreshCooldown
+    );
+
+    env.ledger().set_timestamp(METADATA_REFRESH_COOLDOWN_SECS + 1);
+    client.refresh_metadata(&6002, &metadata);
+    assert_eq!(env.events().all().last().unwrap().0, contract_id);
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ pub use storage::{get_token_metadata, set_token_metadata, ROYALTY_BPS_MAX};
 const CLIP_NAME: &str = "ClipCash NFT";
 const CLIP_SYMBOL: &str = "CLIP";
 pub const MAX_BATCH_SIZE: u32 = 50;
+pub const METADATA_REFRESH_COOLDOWN_SECS: u64 = 30 * 24 * 60 * 60;
 
 /// Semantic version of this contract build (Issue #692).
 ///
@@ -113,6 +114,8 @@ pub enum Error {
     XlmTokenNotConfigured = 18,
     /// No royalties have accrued yet — nothing to claim.
     InsufficientBalance = 21,
+    /// Admin metadata refresh is still within its 30-day cooldown.
+    MetadataRefreshCooldown = 22,
 }
 
 #[contractimpl]
@@ -333,6 +336,33 @@ impl ClipsNftContract {
         storage::set_metadata_updated(&env, token_id);
 
         events::emit_metadata_updated(&env, token_id, &token_data.owner, &new_metadata);
+        Ok(())
+    }
+
+    /// Refresh metadata after minting. Only the contract admin may refresh a
+    /// token, and each token can be refreshed at most once every 30 days.
+    pub fn refresh_metadata(
+        env: Env,
+        token_id: u64,
+        new_metadata: ClipMetadata,
+    ) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        let mut token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
+        let now = env.ledger().timestamp();
+        if let Some(last_refresh) = storage::get_metadata_refreshed_at(&env, token_id) {
+            if now < last_refresh.saturating_add(METADATA_REFRESH_COOLDOWN_SECS) {
+                return Err(Error::MetadataRefreshCooldown);
+            }
+        }
+
+        token_data.content_uri = new_metadata.content_uri.clone();
+        storage::set_token(&env, token_id, &token_data);
+        storage::set_token_metadata(&env, token_id, &new_metadata);
+        storage::set_metadata_refreshed_at(&env, token_id, now);
+
+        events::emit_metadata_refreshed(&env, token_id, &admin, &new_metadata);
         Ok(())
     }
 
@@ -1380,6 +1410,16 @@ mod events {
         metadata: &ClipMetadata,
     ) {
         let topics = (Symbol::new(env, "metadata_updated"), token_id, owner.clone());
+        env.events().publish(topics, metadata.clone());
+    }
+
+    pub fn emit_metadata_refreshed(
+        env: &Env,
+        token_id: u64,
+        admin: &Address,
+        metadata: &ClipMetadata,
+    ) {
+        let topics = (Symbol::new(env, "metadata_refreshed"), token_id, admin.clone());
         env.events().publish(topics, metadata.clone());
     }
 

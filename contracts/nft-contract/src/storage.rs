@@ -74,6 +74,8 @@ pub enum DataKey {
     Metadata(u64),
     /// Flag: metadata has been updated once already.
     MetadataUpdated(u64),
+    /// Unix timestamp of the most recent admin metadata refresh.
+    MetadataRefreshedAt(u64),
     /// Custom / override token URI.
     CustomUri(u64),
     /// Per-token multi-recipient royalty split map.
@@ -313,6 +315,18 @@ pub fn is_metadata_updated(env: &Env, token_id: u64) -> bool {
         .persistent()
         .get(&DataKey::MetadataUpdated(token_id))
         .unwrap_or(false)
+}
+
+pub fn set_metadata_refreshed_at(env: &Env, token_id: u64, timestamp: u64) {
+    env.storage()
+        .persistent()
+        .set(&DataKey::MetadataRefreshedAt(token_id), &timestamp);
+}
+
+pub fn get_metadata_refreshed_at(env: &Env, token_id: u64) -> Option<u64> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::MetadataRefreshedAt(token_id))
 }
 
 // ── Custom token URI ─────────────────────────────────────────────────────────

@@ -1090,6 +1090,46 @@ Update custom per-token metadata URI for an NFT (Issue #670). Restricts updates 
 
 ---
 
+### POST /nfts/:id/refresh-metadata _(requires x-admin-secret)_
+
+Prepare a backend-authorized Soroban metadata refresh transaction. The request
+must include the contract admin wallet address; that wallet signs and submits
+the returned XDR. On-chain, each token may be refreshed once every 30 days and
+the contract emits a `metadata_refreshed` event after a successful refresh.
+
+**Request**
+
+```json
+{
+  "adminAddress": "GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "name": "Updated Clip Title",
+  "description": "Updated clip description and analytics",
+  "contentUri": "ipfs://QmNewMetadataHash",
+  "creator": "Clip creator",
+  "royaltyPercent": 10,
+  "isSoulbound": false,
+  "createdAt": 1700000000,
+  "viralityScore": 95,
+  "originalDuration": 30
+}
+```
+
+**Response `201`**
+
+```json
+{
+  "xdr": "AAAAAgAAAAA...",
+  "action": "refresh_metadata",
+  "tokenId": "42",
+  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4",
+  "network": "testnet"
+}
+```
+
+**Errors:** `401` missing or invalid `x-admin-secret` · `429` metadata refresh
+is within the 30-day cooldown · `500` invalid admin wallet or Soroban failure
+
+
 ### POST /nfts/verify-ownership
 
 Verify on-chain NFT ownership via the Soroban `owner_of` contract method. Does not require authentication.
