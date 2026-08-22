@@ -31,6 +31,7 @@ import {
   ApiConflictResponse,
   ApiOkResponse,
   ApiServiceUnavailableResponse,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
@@ -112,6 +113,11 @@ import {
   UpdateMetadataResponseDto,
   MetadataUpdateLimitErrorDto,
 } from './dto/update-metadata.dto';
+import {
+  RefreshMetadataDto,
+  RefreshMetadataResponseDto,
+  MetadataRefreshCooldownErrorDto,
+} from './dto/refresh-metadata.dto';
 import {
   GetUserTokensQueryDto,
   PaginatedUserTokensResponseDto,
@@ -979,6 +985,35 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
   async prepareUnpause(@Body() dto: PrepareContractPauseDto) {
     return this.adminContractService.preparePauseTx(dto.adminAddress, false);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post(':id/refresh-metadata')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare an admin-authorized NFT metadata refresh',
+    description:
+      'Builds an unsigned Soroban refresh_metadata(token_id, metadata) transaction. ' +
+      'Requires x-admin-secret; the contract admin wallet signs and submits the XDR. ' +
+      'Each token is limited to one refresh every 30 days on-chain.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: RefreshMetadataDto })
+  @ApiOkResponse({
+    description: 'Metadata refresh transaction XDR returned',
+    type: RefreshMetadataResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
+  @ApiTooManyRequestsResponse({
+    description: 'Metadata refresh is still within the 30-day cooldown',
+    type: MetadataRefreshCooldownErrorDto,
+  })
+  async prepareRefreshMetadata(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RefreshMetadataDto,
+  ): Promise<RefreshMetadataResponseDto> {
+    const { adminAddress, ...metadata } = dto;
+    return this.adminContractService.prepareRefreshMetadataTx(id, adminAddress, metadata);
   }
 
   @UseGuards(LoginGuard)

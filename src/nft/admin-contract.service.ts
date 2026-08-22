@@ -69,6 +69,47 @@ export class AdminContractService {
     };
   }
 
+  async prepareRefreshMetadataTx(
+    tokenId: number,
+    adminAddress: string,
+    metadata: Record<string, string | number | boolean>,
+  ) {
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(
+      'refresh_metadata',
+      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(metadata, { type: 'map' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action: 'refresh_metadata',
+      tokenId: tokenId.toString(),
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
   /**
    * Query the on-chain `get_clip_id(token_id)` view function (Issue #674).
    *
