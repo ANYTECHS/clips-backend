@@ -8,6 +8,7 @@ import { AdminFeesController } from './fees.controller';
 import { FeeService } from './fee.service';
 import { PayoutMethodService } from './payout-method.service';
 import { PayoutMethodController } from './payout-method.controller';
+import { SoftDeleteService } from './soft-delete.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { AuthModule } from '../auth/auth.module';
@@ -46,11 +47,12 @@ import { ConfigService } from '../config/config.service';
     PayoutReceiptService,
     FeeService,
     PayoutMethodService,
+    SoftDeleteService,
     PayoutRetryProcessor,
     StellarConfirmationProcessor,
     PayoutApprovalService,
     ConfigService,
   ],
-  exports: [PayoutsService, FeeService, PayoutMethodService],
+  exports: [PayoutsService, FeeService, PayoutMethodService, SoftDeleteService],
 })
 export class PayoutsModule {}
