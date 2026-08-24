@@ -19,6 +19,9 @@ import { StellarConfirmationProcessor } from './stellar-confirmation.processor';
 import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
 import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
+import { BalanceService } from './balance.service';
+import { PayoutStateMachineService } from './payout-state-machine.service';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 
 @Module({
   imports: [
@@ -50,7 +53,10 @@ import { ConfigService } from '../config/config.service';
     StellarConfirmationProcessor,
     PayoutApprovalService,
     ConfigService,
+    BalanceService,
+    PayoutStateMachineService,
+    PayoutRetryStrategyService,
   ],
-  exports: [PayoutsService, FeeService, PayoutMethodService],
+  exports: [PayoutsService, FeeService, PayoutMethodService, BalanceService],
 })
 export class PayoutsModule {}

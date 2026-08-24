@@ -26,12 +26,14 @@ import { Request } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
+import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
 import {
   PayoutProcessResponseDto,
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
 } from './dto/payout-responses.dto';
 import { PayoutsService } from './payouts.service';
+import { BalanceService } from './balance.service';
 
 interface RequestWithUser extends Request {
   user: { userId: number };
@@ -60,7 +62,104 @@ const validationErrorSchema = {
 @Controller('payouts')
 @Auth()
 export class PayoutsController {
-  constructor(private readonly payoutsService: PayoutsService) {}
+  constructor(
+    private readonly payoutsService: PayoutsService,
+    private readonly balanceService: BalanceService,
+  ) {}
+
+  @Get('balance')
+  @ApiOperation({
+    summary: 'Get available balance for payout',
+    description:
+      'Returns the available balance that can be withdrawn. ' +
+      'Formula: Total Earnings - Total Paid Out - Total Pending Payouts.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Available balance information',
+    schema: {
+      type: 'object',
+      properties: {
+        totalEarnings: { type: 'number', example: 500 },
+        totalPaidOut: { type: 'number', example: 100 },
+        totalPending: { type: 'number', example: 50 },
+        availableBalance: { type: 'number', example: 350 },
+      },
+    },
+  })
+  async getBalance(@Req() req: RequestWithUser) {
+    return this.balanceService.getAvailableBalance(req.user.userId);
+  }
+
+  @Post('request-partial')
+  @ApiOperation({
+    summary: 'Request a partial payout (withdraw specific amount)',
+    description:
+      'Request to withdraw a specific amount up to the available balance. ' +
+      'Amount must be positive and not exceed available balance. ' +
+      'Payout status is determined by amount: ' +
+      'below approval threshold → approved, above → pending_review.',
+  })
+  @ApiBody({
+    type: CreatePayoutRequestDto,
+    examples: {
+      stellarPartial: {
+        summary: 'Withdraw $200 to Stellar wallet',
+        value: {
+          amount: 200,
+          walletId: 1,
+          reason: 'Monthly withdrawal',
+        },
+      },
+      bankTransfer: {
+        summary: 'Withdraw $150 via bank transfer',
+        value: {
+          amount: 150,
+          payoutMethodId: 1,
+          reason: 'Quarterly payout',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Partial payout request created successfully',
+    type: PayoutResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid amount, insufficient balance, or validation failed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message:
+          'Requested amount $300 exceeds available balance $250. ' +
+          'Total earnings: $500, Total paid out: $100, Pending payouts: $150.',
+        error: 'Bad Request',
+      },
+    },
+  })
+  async requestPartialPayout(
+    @Req() req: RequestWithUser,
+    @Body() dto: CreatePayoutRequestDto,
+  ) {
+    // Validate amount first
+    await this.balanceService.validatePayoutAmount(
+      req.user.userId,
+      dto.amount,
+    );
+
+    // Reserve balance atomically
+    const payoutId = await this.balanceService.reserveBalance(
+      req.user.userId,
+      dto.amount,
+      dto.payoutMethodId,
+      dto.walletId,
+    );
+
+    // Return created payout
+    return this.payoutsService.getPayoutById(req.user.userId, payoutId);
+  }
 
   @Post('request')
   @ApiOperation({
