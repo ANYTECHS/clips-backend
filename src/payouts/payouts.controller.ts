@@ -91,7 +91,7 @@ export class PayoutsController {
     schema: {
       example: {
         statusCode: 400,
-        message: 'Minimum payout amount is 5 USD equivalent.',
+        message: ['Minimum payout for USD is 5. Requested amount: 3.', 'Maximum payout for USD is 10000.'],
         error: 'Bad Request',
       },
     },
