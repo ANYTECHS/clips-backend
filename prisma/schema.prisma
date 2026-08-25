@@ -129,17 +129,19 @@ model ClipPost {
 }
 
 model Earning {
-  id              Int       @id @default(autoincrement())
-  clipId          Int
-  amount          Float
-  currency        String    @default("USD")
-  date            DateTime
-  source          String?
-  isAnomaly       Boolean   @default(false)
-  anomalyReason   String?
-  createdAt       DateTime  @default(now())
-  deletedAt       DateTime?
-  clip            Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  id                    Int       @id @default(autoincrement())
+  clipId                Int
+  amount                Float
+  currency              String    @default("USD")
+  amountInBaseCurrency  Float?
+  exchangeRate          Float?
+  date                  DateTime
+  source                String?
+  isAnomaly             Boolean   @default(false)
+  anomalyReason         String?
+  createdAt             DateTime  @default(now())
+  deletedAt             DateTime?
+  clip                  Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
 }
 
 model UserPlatform {
@@ -186,6 +188,8 @@ model Payout {
   confirmedAt      DateTime?
   paidAt           DateTime?
   approvedAt       DateTime?
+  approvedBy       Int?
+  reviewedAt       DateTime?
   rejectedAt       DateTime?
   rejectionReason  String?
   feeAmount        Float?
@@ -336,17 +340,20 @@ model PayoutFeeConfig {
 }
 
 model PlatformWebhookLog {
-  id          Int      @id @default(autoincrement())
-  platform    String
-  eventType   String
-  payload     String
-  signature   String?
-  isValid     Boolean  @default(false)
-  processedAt DateTime @default(now())
-  error       String?
+  id           Int      @id @default(autoincrement())
+  platform     String
+  eventType    String
+  eventId      String?
+  payload      String
+  signature    String?
+  isValid      Boolean  @default(false)
+  processedAt  DateTime @default(now())
+  error        String?
 
+  @@unique([platform, eventId])
   @@index([platform])
   @@index([processedAt])
+  @@index([eventId])
 }
 
 model AnomalyAlert {
