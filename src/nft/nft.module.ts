@@ -20,6 +20,8 @@ import { AdminContractService } from './admin-contract.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
+import { RedisModule } from '../redis/redis.module';
+import { ConfigModule } from '../config/config.module';
 import { GasMetricsService } from './gas-metrics.service';
 
 @Module({
@@ -30,6 +32,7 @@ import { GasMetricsService } from './gas-metrics.service';
     IpfsUploadModule,
     NftOwnershipModule,
     RedisModule,
+    ConfigModule,
   ],
   providers: [
     NftConfig,

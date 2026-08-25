@@ -20,6 +20,7 @@ import { StellarConfirmationProcessor } from './stellar-confirmation.processor';
 import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
 import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
+import { EarningsModule } from '../earnings/earnings.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { ConfigService } from '../config/config.service';
     AuthModule,
     EncryptionModule,
     MetricsModule,
+    EarningsModule,
     BullModule.registerQueue({
       name: PAYOUT_RETRY_QUEUE,
       defaultJobOptions: { priority: PAYOUT_RETRY_QUEUE_PRIORITY },
