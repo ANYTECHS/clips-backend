@@ -202,6 +202,28 @@ export class PayoutsController {
     return this.payoutsService.getPayoutById(req.user.userId, id);
   }
 
+  @Get(':id/on-chain-status')
+  @ApiOperation({
+    summary: 'Get real-time on-chain status for a Stellar payout',
+    description:
+      'Queries Horizon directly for the live on-chain confirmation status of a Stellar payout transaction. ' +
+      'Returns the DB record enriched with real-time data from the Stellar network, including whether the ' +
+      'transaction was found, succeeded, and when it was confirmed.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+  })
+  @ApiNotFoundResponse({ description: 'Payout not found' })
+  async getOnChainStatus(
+    @Req() req: RequestWithUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.payoutsService.getOnChainStatus(req.user.userId, id);
+  }
+
   @Post(':id/process')
   @ApiOperation({
     summary: 'Process a payout',
