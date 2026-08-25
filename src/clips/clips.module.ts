@@ -1,0 +1,17 @@
+import { Module } from '@nestjs/common';
+import { PrismaModule } from '../prisma/prisma.module';
+import { StellarModule } from '../stellar/stellar.module';
+import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
+import { IpfsUploadModule } from '../nft/ipfs-upload.module';
+import { NftConfig } from '../nft/nft.config';
+import { NftMetadataService } from '../nft/nft-metadata.service';
+import { RoyaltyConfigurationService } from '../nft/royalty-configuration.service';
+import { CloudinaryService } from './cloudinary.service';
+import { NftMintService } from './nft-mint.service';
+
+@Module({
+  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule],
+  providers: [CloudinaryService, NftConfig, RoyaltyConfigurationService, NftMetadataService, NftMintService],
+  exports: [CloudinaryService, NftMintService],
+})
+export class ClipsModule {}
