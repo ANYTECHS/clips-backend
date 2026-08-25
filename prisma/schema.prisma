@@ -294,17 +294,20 @@ model PayoutFeeConfig {
 }
 
 model PlatformWebhookLog {
-  id          Int      @id @default(autoincrement())
-  platform    String
-  eventType   String
-  payload     String
-  signature   String?
-  isValid     Boolean  @default(false)
-  processedAt DateTime @default(now())
-  error       String?
+  id           Int      @id @default(autoincrement())
+  platform     String
+  eventType    String
+  eventId      String?
+  payload      String
+  signature    String?
+  isValid      Boolean  @default(false)
+  processedAt  DateTime @default(now())
+  error        String?
 
+  @@unique([platform, eventId])
   @@index([platform])
   @@index([processedAt])
+  @@index([eventId])
 }
 
 model AnomalyAlert {
