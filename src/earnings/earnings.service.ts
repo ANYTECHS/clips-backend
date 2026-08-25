@@ -29,40 +29,44 @@ export class EarningsService {
     private readonly config: ConfigService,
   ) {}
 
-  async getUserTotalEarnings(userId: number): Promise<UserEarningsSummary> {
-    const cacheKey = earnings:total:;
-    const cached = await this.redis.get(cacheKey);
-    if (cached) {
-      return JSON.parse(cached);
+  async getUserTotalEarnings(userId: number, tx?: any): Promise<UserEarningsSummary> {
+    const cacheKey = `earnings:total:${userId}`;
+    if (!tx) {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
     }
 
-    const result = await this.prisma.withTransaction(async (tx) => {
-      const totalEarnings = await tx.earning.aggregate({
-        where: { clip: { video: { userId } }, deletedAt: null },
-        _sum: { amount: true },
-      });
+    const client = tx ?? this.prisma;
 
-      const totalPaidOut = await tx.payout.aggregate({
-        where: { userId, status: { in: ['completed', 'processing'] } },
-        _sum: { amount: true },
-      });
-
-      const totalEarned = totalEarnings._sum.amount ?? 0;
-      const paid = totalPaidOut._sum.amount ?? 0;
-
-      return {
-        totalEarned,
-        totalPaidOut: paid,
-        availableBalance: totalEarned - paid,
-        currency: 'USD' as const,
-      };
+    const totalEarnings = await client.earning.aggregate({
+      where: { clip: { video: { userId } }, deletedAt: null },
+      _sum: { amount: true },
     });
 
-    await this.redis.setex(
-      cacheKey,
-      this.config.earningsCacheTtlSeconds,
-      JSON.stringify(result),
-    );
+    const totalPaidOut = await client.payout.aggregate({
+      where: { userId, status: { in: ['completed', 'processing'] } },
+      _sum: { amount: true },
+    });
+
+    const totalEarned = totalEarnings._sum.amount ?? 0;
+    const paid = totalPaidOut._sum.amount ?? 0;
+
+    const result = {
+      totalEarned,
+      totalPaidOut: paid,
+      availableBalance: totalEarned - paid,
+      currency: 'USD' as const,
+    };
+
+    if (!tx) {
+      await this.redis.setex(
+        cacheKey,
+        this.config.earningsCacheTtlSeconds,
+        JSON.stringify(result),
+      );
+    }
 
     return result;
   }
@@ -91,7 +95,7 @@ export class EarningsService {
   }
 
   async refreshEarningsCache(userId: number): Promise<void> {
-    const cacheKey = earnings:total:;
+    const cacheKey = `earnings:total:${userId}`;
     await this.redis.del(cacheKey);
     await this.getUserTotalEarnings(userId);
   }
