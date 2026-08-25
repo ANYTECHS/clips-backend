@@ -18,13 +18,7 @@ import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
-
-const OPEN_PAYOUT_STATUSES = [
-  'pending',
-  'pending_approval',
-  'approved',
-  'processing',
-] as const;
+import { OPEN_PAYOUT_STATUSES } from './payouts.constants';
 
 @Injectable()
 export class PayoutsService {
@@ -84,7 +78,7 @@ export class PayoutsService {
       throw new NotFoundException('Payout record not found');
     }
 
-    if (payout.status !== 'approved' && payout.status !== 'pending') {
+    if (payout.status !== 'approved' && payout.status !== 'pending' && payout.status !== 'pending_review') {
       throw new BadRequestException(
         `Payout must be approved or pending before Stellar initiation (current status: ${payout.status})`,
       );
@@ -443,6 +437,63 @@ export class PayoutsService {
     return status;
   }
 
+  /**
+   * Query Horizon directly for the real-time on-chain confirmation status
+   * of a Stellar payout transaction.  Returns the DB record enriched with
+   * live data from the Stellar network.
+   */
+  async getOnChainStatus(
+    userId: number,
+    payoutId: number,
+  ): Promise<{
+    id: number;
+    status: string;
+    onChainTxHash: string | null;
+    confirmedAt: Date | null;
+    onChain: {
+      found: boolean;
+      successful?: boolean;
+      confirmedAt?: Date;
+    };
+  }> {
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+      select: {
+        id: true,
+        status: true,
+        onChainTxHash: true,
+        confirmedAt: true,
+      },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout record not found');
+    }
+
+    let onChain = { found: false as const };
+
+    if (payout.onChainTxHash && payout.method === 'stellar') {
+      try {
+        const result = await this.stellarService.getTransactionStatus(
+          payout.onChainTxHash,
+        );
+        onChain = result;
+      } catch (error) {
+        this.logger.warn(
+          `Horizon status query failed for payout ${payoutId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return {
+      id: payout.id,
+      status: payout.status,
+      onChainTxHash: payout.onChainTxHash,
+      confirmedAt: payout.confirmedAt,
+      onChain,
+    };
+  }
+
   async processPayout(payoutId: number): Promise<{
     id: number;
     status: string;
@@ -565,7 +616,7 @@ export class PayoutsService {
 
       const confirmedTime = verification.confirmedAt || new Date();
 
-      await this.prisma.payout.update({
+      const completePayoutData = await this.prisma.payout.update({
         where: { id: payoutId },
         data: {
           status: 'completed',
@@ -573,6 +624,7 @@ export class PayoutsService {
           externalTransactionId: txHash,
           onChainTxHash: txHash,
           confirmedAt: confirmedTime,
+          paidAt: confirmedTime,
         },
       });
 
@@ -581,13 +633,18 @@ export class PayoutsService {
       );
 
       void this.payoutReceiptService.generateAndSendReceipt({
-        payoutId: payout.id,
-        amount: payout.amount,
-        currency: payout.currency,
-        method: payout.method,
+        payoutId: completePayoutData.id,
+        amount: completePayoutData.amount,
+        currency: completePayoutData.currency,
+        method: completePayoutData.method,
+        feeAmount: completePayoutData.feeAmount ?? undefined,
+        feePercentage: completePayoutData.feePercentage ?? undefined,
+        finalAmount: completePayoutData.finalAmount ?? undefined,
         transactionId: transaction.hash().toString('hex'),
         onChainTxHash: txHash,
         confirmedAt: confirmedTime,
+        paidAt: confirmedTime,
+        status: 'completed',
         recipientEmail: payout.user.email,
         walletAddress: payout.wallet.address,
       });
@@ -643,20 +700,40 @@ export class PayoutsService {
     }
   }
 
-  async approvePayout(payoutId: number): Promise<{ id: number; status: string; approvedAt: Date }> {
+  async approvePayout(
+    payoutId: number,
+    adminUserId?: number,
+    _note?: string,
+  ): Promise<{ id: number; status: string; approvedAt: Date; approvedBy: number | null }> {
     const payout = await this.prisma.payout.findUnique({ where: { id: payoutId } });
     if (!payout) throw new NotFoundException('Payout not found');
-    if (!['pending', 'pending_approval'].includes(payout.status)) {
+    if (!this.payoutApprovalService.canApprove(payout.status)) {
       throw new BadRequestException(`Cannot approve payout in '${payout.status}' status`);
     }
 
+    const now = new Date();
     const updated = await this.prisma.payout.update({
       where: { id: payoutId },
-      data: { status: 'approved', approvedAt: new Date() },
+      data: {
+        status: 'approved',
+        approvedAt: now,
+        approvedBy: adminUserId ?? null,
+        reviewedAt: now,
+      },
     });
 
-    this.logger.log(`Payout ${payoutId} approved by admin`);
-    return { id: updated.id, status: updated.status, approvedAt: updated.approvedAt! };
+    await this.prisma.earningsAuditLog.create({
+      data: {
+        userId: payout.userId,
+        amount: payout.amount,
+        actionType: 'payout_approved',
+      },
+    });
+
+    this.logger.log(
+      `Payout ${payoutId} approved by admin${adminUserId ? ` ${adminUserId}` : ''}`,
+    );
+    return { id: updated.id, status: updated.status, approvedAt: updated.approvedAt!, approvedBy: updated.approvedBy };
   }
 
   async rejectPayout(
@@ -665,13 +742,22 @@ export class PayoutsService {
   ): Promise<{ id: number; status: string; rejectedAt: Date; rejectionReason: string | null }> {
     const payout = await this.prisma.payout.findUnique({ where: { id: payoutId } });
     if (!payout) throw new NotFoundException('Payout not found');
-    if (!['pending', 'pending_approval', 'approved'].includes(payout.status)) {
+    if (!this.payoutApprovalService.canReject(payout.status)) {
       throw new BadRequestException(`Cannot reject payout in '${payout.status}' status`);
     }
 
+    const now = new Date();
     const updated = await this.prisma.payout.update({
       where: { id: payoutId },
-      data: { status: 'rejected', rejectedAt: new Date(), rejectionReason: reason ?? null },
+      data: { status: 'rejected', rejectedAt: now, reviewedAt: now, rejectionReason: reason ?? null },
+    });
+
+    await this.prisma.earningsAuditLog.create({
+      data: {
+        userId: payout.userId,
+        amount: payout.amount,
+        actionType: 'payout_rejected',
+      },
     });
 
     this.logger.log(`Payout ${payoutId} rejected by admin. Reason: ${reason ?? 'none'}`);
@@ -686,6 +772,14 @@ export class PayoutsService {
   async listPendingPayouts(): Promise<Array<{ id: number; userId: number; amount: number; currency: string; status: string; createdAt: Date }>> {
     return this.prisma.payout.findMany({
       where: { status: { in: ['pending_approval', 'approved'] } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, userId: true, amount: true, currency: true, status: true, createdAt: true },
+    });
+  }
+
+  async listPendingReviewPayouts(): Promise<Array<{ id: number; userId: number; amount: number; currency: string; status: string; createdAt: Date }>> {
+    return this.prisma.payout.findMany({
+      where: { status: 'pending_review' },
       orderBy: { createdAt: 'asc' },
       select: { id: true, userId: true, amount: true, currency: true, status: true, createdAt: true },
     });
@@ -804,9 +898,14 @@ export class PayoutsService {
             amount: payout.amount,
             currency: payout.currency,
             method: payout.method,
+            feeAmount: payout.feeAmount ?? undefined,
+            feePercentage: payout.feePercentage ?? undefined,
+            finalAmount: payout.finalAmount ?? undefined,
             transactionId: transaction.hash().toString('hex'),
             onChainTxHash: txHash,
             confirmedAt: confirmedTime,
+            paidAt: confirmedTime,
+            status: 'completed',
             recipientEmail: payout.user.email,
             walletAddress: payout.wallet.address,
           });
@@ -837,7 +936,7 @@ export class PayoutsService {
       throw new NotFoundException('Payout record not found');
     }
 
-    if (!['pending', 'pending_approval'].includes(payout.status)) {
+    if (!['pending', 'pending_review', 'pending_approval'].includes(payout.status)) {
       throw new BadRequestException(
         `Cannot cancel payout in '${payout.status}' status. Only pending payouts can be canceled.`
       );
@@ -985,5 +1084,72 @@ export class PayoutsService {
     }
 
     return { successful: false };
+  }
+
+  /**
+   * Get payout receipt PDF for download
+   */
+  async getPayoutReceiptPdf(userId: number, payoutId: number): Promise<Buffer> {
+    // Verify ownership and that payout exists
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+      include: {
+        wallet: { select: { address: true } },
+        user: { select: { email: true } },
+      },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout not found');
+    }
+
+    if (payout.status !== 'completed') {
+      throw new BadRequestException(
+        'Receipt is only available for completed payouts',
+      );
+    }
+
+    // Verify receipt exists
+    const receipt = await this.prisma.payoutReceipt.findUnique({
+      where: { payoutId },
+    });
+
+    if (!receipt) {
+      throw new NotFoundException('Receipt not found for this payout');
+    }
+
+    // Generate PDF on-demand
+    return this.payoutReceiptService.getReceiptPdf(payoutId, {
+      payoutId: payout.id,
+      amount: payout.amount,
+      currency: payout.currency,
+      method: payout.method,
+      feeAmount: payout.feeAmount ?? undefined,
+      feePercentage: payout.feePercentage ?? undefined,
+      finalAmount: payout.finalAmount ?? undefined,
+      transactionId: payout.transactionId || '',
+      onChainTxHash: payout.onChainTxHash,
+      confirmedAt: payout.confirmedAt || new Date(),
+      paidAt: payout.paidAt || new Date(),
+      status: payout.status,
+      recipientEmail: payout.user.email,
+      walletAddress: payout.wallet?.address || '',
+    });
+  }
+
+  /**
+   * Get payout receipt metadata
+   */
+  async getReceiptMetadata(userId: number, payoutId: number) {
+    // Verify ownership
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout not found');
+    }
+
+    return this.payoutReceiptService.getReceiptByPayoutId(payoutId);
   }
 }
