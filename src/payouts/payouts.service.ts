@@ -565,7 +565,7 @@ export class PayoutsService {
 
       const confirmedTime = verification.confirmedAt || new Date();
 
-      await this.prisma.payout.update({
+      const completePayoutData = await this.prisma.payout.update({
         where: { id: payoutId },
         data: {
           status: 'completed',
@@ -573,6 +573,7 @@ export class PayoutsService {
           externalTransactionId: txHash,
           onChainTxHash: txHash,
           confirmedAt: confirmedTime,
+          paidAt: confirmedTime,
         },
       });
 
@@ -581,13 +582,18 @@ export class PayoutsService {
       );
 
       void this.payoutReceiptService.generateAndSendReceipt({
-        payoutId: payout.id,
-        amount: payout.amount,
-        currency: payout.currency,
-        method: payout.method,
+        payoutId: completePayoutData.id,
+        amount: completePayoutData.amount,
+        currency: completePayoutData.currency,
+        method: completePayoutData.method,
+        feeAmount: completePayoutData.feeAmount ?? undefined,
+        feePercentage: completePayoutData.feePercentage ?? undefined,
+        finalAmount: completePayoutData.finalAmount ?? undefined,
         transactionId: transaction.hash().toString('hex'),
         onChainTxHash: txHash,
         confirmedAt: confirmedTime,
+        paidAt: confirmedTime,
+        status: 'completed',
         recipientEmail: payout.user.email,
         walletAddress: payout.wallet.address,
       });
@@ -804,9 +810,14 @@ export class PayoutsService {
             amount: payout.amount,
             currency: payout.currency,
             method: payout.method,
+            feeAmount: payout.feeAmount ?? undefined,
+            feePercentage: payout.feePercentage ?? undefined,
+            finalAmount: payout.finalAmount ?? undefined,
             transactionId: transaction.hash().toString('hex'),
             onChainTxHash: txHash,
             confirmedAt: confirmedTime,
+            paidAt: confirmedTime,
+            status: 'completed',
             recipientEmail: payout.user.email,
             walletAddress: payout.wallet.address,
           });
@@ -985,5 +996,72 @@ export class PayoutsService {
     }
 
     return { successful: false };
+  }
+
+  /**
+   * Get payout receipt PDF for download
+   */
+  async getPayoutReceiptPdf(userId: number, payoutId: number): Promise<Buffer> {
+    // Verify ownership and that payout exists
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+      include: {
+        wallet: { select: { address: true } },
+        user: { select: { email: true } },
+      },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout not found');
+    }
+
+    if (payout.status !== 'completed') {
+      throw new BadRequestException(
+        'Receipt is only available for completed payouts',
+      );
+    }
+
+    // Verify receipt exists
+    const receipt = await this.prisma.payoutReceipt.findUnique({
+      where: { payoutId },
+    });
+
+    if (!receipt) {
+      throw new NotFoundException('Receipt not found for this payout');
+    }
+
+    // Generate PDF on-demand
+    return this.payoutReceiptService.getReceiptPdf(payoutId, {
+      payoutId: payout.id,
+      amount: payout.amount,
+      currency: payout.currency,
+      method: payout.method,
+      feeAmount: payout.feeAmount ?? undefined,
+      feePercentage: payout.feePercentage ?? undefined,
+      finalAmount: payout.finalAmount ?? undefined,
+      transactionId: payout.transactionId || '',
+      onChainTxHash: payout.onChainTxHash,
+      confirmedAt: payout.confirmedAt || new Date(),
+      paidAt: payout.paidAt || new Date(),
+      status: payout.status,
+      recipientEmail: payout.user.email,
+      walletAddress: payout.wallet?.address || '',
+    });
+  }
+
+  /**
+   * Get payout receipt metadata
+   */
+  async getReceiptMetadata(userId: number, payoutId: number) {
+    // Verify ownership
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout not found');
+    }
+
+    return this.payoutReceiptService.getReceiptByPayoutId(payoutId);
   }
 }
