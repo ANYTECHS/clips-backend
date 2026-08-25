@@ -11,6 +11,7 @@ import { PlatformRevenueController } from './platform-revenue.controller';
 import { BatchRoyaltyService } from './batch-royalty.service';
 import { BatchRoyaltyController } from './batch-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
+import { ClipsModule } from '../clips/clips.module';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
@@ -28,6 +29,7 @@ import { GasMetricsService } from './gas-metrics.service';
     IpfsUploadModule,
     NftOwnershipModule,
     RedisModule,
+    ClipsModule,
   ],
   providers: [
     NftConfig,
