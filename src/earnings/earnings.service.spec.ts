@@ -3,6 +3,7 @@ import { EarningsService } from './earnings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 
 describe('EarningsService', () => {
   let service: EarningsService;
@@ -19,6 +20,10 @@ describe('EarningsService', () => {
       payout: { aggregate: jest.fn() },
       clip: { findUnique: jest.fn() },
       withTransaction: jest.fn((fn: any) => fn(prisma)),
+      earning: { aggregate: jest.fn(), findMany: jest.fn(), create: jest.fn() },
+      payout: { aggregate: jest.fn() },
+      monthlyEarning: { findUnique: jest.fn() },
+      clip: { findUnique: jest.fn() },
     };
     redis = {
       get: jest.fn().mockResolvedValue(null),
@@ -32,6 +37,7 @@ describe('EarningsService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: RedisService, useValue: redis },
         { provide: ConfigService, useValue: { earningsCacheTtlSeconds: 3600 } },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
       ],
     }).compile();
 
@@ -50,6 +56,7 @@ describe('EarningsService', () => {
         availableBalance: 50,
         currency: 'USD',
       };
+      const cached = { totalEarned: 100, totalPaidOut: 50, availableBalance: 50, currency: 'USD' };
       redis.get.mockResolvedValue(JSON.stringify(cached));
 
       const result = await service.getUserTotalEarnings(1);

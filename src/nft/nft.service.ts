@@ -13,6 +13,7 @@ import { UpdateTokenUriResponseDto } from './dto/update-token-uri.dto';
 import { UpdateRoyaltyRecipientResponseDto } from './dto/update-royalty-recipient.dto';
 import { UpdateMetadataDto, UpdateMetadataResponseDto } from './dto/update-metadata.dto';
 import { GasMetricsService } from './gas-metrics.service';
+import { ClipsService } from '../clips/clips.service';
 
 /**
  * A single royalty recipient entry.
@@ -51,6 +52,7 @@ export class NftService {
 
   constructor(
     private readonly config: NftConfig,
+    private readonly clipsService: ClipsService,
     @Optional() private readonly gasMetricsService?: GasMetricsService,
   ) {}
 
@@ -61,6 +63,14 @@ export class NftService {
   async mintClip(dto: CreateMintDto): Promise<MintResult> {
     this.validateConfig();
 
+    const clipId = parseInt(dto.clipId, 10);
+    if (isNaN(clipId)) {
+      throw new BadRequestException(`Invalid clipId: ${dto.clipId}`);
+    }
+
+    await this.clipsService.preventDoubleMint(clipId);
+    await this.clipsService.updateMintStatusToMinting(clipId);
+
     const royalties = this.buildRoyalties(dto.creatorWallet);
 
     const transaction: MintTransaction = {
@@ -70,7 +80,15 @@ export class NftService {
       builtAt: new Date().toISOString(),
     };
 
-    const txHash = await this.submitTransaction(transaction);
+    let txHash: string;
+    try {
+      txHash = await this.submitTransaction(transaction);
+      await this.clipsService.markMinted(clipId, txHash);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.clipsService.markMintFailed(clipId, message);
+      throw err;
+    }
 
     this.logger.log(
       `Minted clip ${dto.clipId} | tx: ${txHash} | royalties: ${JSON.stringify(royalties)}`,

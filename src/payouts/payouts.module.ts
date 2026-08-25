@@ -8,6 +8,7 @@ import { AdminFeesController } from './fees.controller';
 import { FeeService } from './fee.service';
 import { PayoutMethodService } from './payout-method.service';
 import { PayoutMethodController } from './payout-method.controller';
+import { SoftDeleteService } from './soft-delete.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { AuthModule } from '../auth/auth.module';
@@ -18,8 +19,12 @@ import { PAYOUT_RETRY_QUEUE, PAYOUT_RETRY_QUEUE_PRIORITY } from './payout-retry.
 import { StellarConfirmationProcessor } from './stellar-confirmation.processor';
 import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
 import { PayoutApprovalService } from './payout-approval.service';
+import { PayoutLimitsService } from './payout-limits.service';
 import { ConfigService } from '../config/config.service';
 import { EarningsModule } from '../earnings/earnings.module';
+import { BalanceService } from './balance.service';
+import { PayoutStateMachineService } from './payout-state-machine.service';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 
 @Module({
   imports: [
@@ -48,11 +53,18 @@ import { EarningsModule } from '../earnings/earnings.module';
     PayoutReceiptService,
     FeeService,
     PayoutMethodService,
+    SoftDeleteService,
     PayoutRetryProcessor,
     StellarConfirmationProcessor,
     PayoutApprovalService,
+    PayoutLimitsService,
     ConfigService,
+    BalanceService,
+    PayoutStateMachineService,
+    PayoutRetryStrategyService,
   ],
-  exports: [PayoutsService, FeeService, PayoutMethodService],
+  exports: [PayoutsService, FeeService, PayoutMethodService, PayoutLimitsService],
+  exports: [PayoutsService, FeeService, PayoutMethodService, BalanceService],
+  exports: [PayoutsService, FeeService, PayoutMethodService, SoftDeleteService],
 })
 export class PayoutsModule {}

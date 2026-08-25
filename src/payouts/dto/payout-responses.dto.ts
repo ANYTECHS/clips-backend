@@ -22,6 +22,7 @@ export class PayoutResponseDto {
     example: 'pending',
     enum: [
       'pending',
+      'pending_review',
       'pending_approval',
       'approved',
       'processing',

@@ -13,6 +13,14 @@ export class FeeService {
 
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * Calculate fees before processing a payout
+   * Supports both fixed and percentage fee types
+   * Example: $100 payout with 2% platform fee ($2) + $1 network fee = $97 user receives
+   * @param amount The payout amount in cents/smallest unit
+   * @param method The payout method (e.g., 'stellar', 'stripe', 'ach')
+   * @returns Fee calculation with breakdowns
+   */
   async calculateFee(amount: number, method: string): Promise<FeeCalculation> {
     const feeConfig = await this.prisma.payoutFeeConfig.findUnique({
       where: { method },
@@ -27,8 +35,20 @@ export class FeeService {
       };
     }
 
-    const percentageFee = (amount * feeConfig.feePercentage) / 100;
-    const totalFee = percentageFee + feeConfig.fixedFee;
+    let totalFee = 0;
+    const feeType = feeConfig.feeType || 'fixed';
+
+    if (feeType === 'percentage') {
+      // Calculate percentage fee
+      totalFee = (amount * feeConfig.feePercentage) / 100;
+    } else if (feeType === 'fixed') {
+      // Use fixed fee
+      totalFee = feeConfig.fixedFee;
+    } else {
+      // Default: combine both fixed and percentage (legacy behavior)
+      const percentageFee = (amount * feeConfig.feePercentage) / 100;
+      totalFee = percentageFee + feeConfig.fixedFee;
+    }
 
     const feeAmount = this.applyFeeBounds(
       totalFee,
@@ -63,7 +83,8 @@ export class FeeService {
 
   async createFeeConfig(data: {
     method: string;
-    feePercentage: number;
+    feeType?: 'fixed' | 'percentage';
+    feePercentage?: number;
     fixedFee?: number;
     minFee?: number;
     maxFee?: number;
@@ -71,7 +92,8 @@ export class FeeService {
     return this.prisma.payoutFeeConfig.create({
       data: {
         method: data.method,
-        feePercentage: data.feePercentage,
+        feeType: data.feeType ?? 'fixed',
+        feePercentage: data.feePercentage ?? 0,
         fixedFee: data.fixedFee ?? 0,
         minFee: data.minFee ?? 0,
         maxFee: data.maxFee,
@@ -82,6 +104,7 @@ export class FeeService {
   async updateFeeConfig(
     method: string,
     data: {
+      feeType?: 'fixed' | 'percentage';
       feePercentage?: number;
       fixedFee?: number;
       minFee?: number;
