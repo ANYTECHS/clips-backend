@@ -92,8 +92,23 @@ model Clip {
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
   earnings      Earning[]
   clipPosts     ClipPost[]
+  royalty       ClipRoyalty?
 
   @@index([videoId])
+}
+
+model ClipRoyalty {
+  id               Int       @id @default(autoincrement())
+  clipId           Int       @unique
+  recipientAddress String
+  basisPoints      Int
+  platformFeeBps   Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  clip             Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@index([recipientAddress])
 }
 
 model ClipPost {
@@ -179,6 +194,7 @@ model Payout {
   lastAttemptAt    DateTime?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   wallet           Wallet?       @relation(fields: [walletId], references: [id])
   payoutMethod     PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
@@ -186,6 +202,8 @@ model Payout {
 
   @@index([payoutMethodId])
   @@index([status])
+  @@index([deletedAt])
+  @@index([userId, deletedAt])
 }
 
 model PayoutReceipt {
@@ -302,6 +320,7 @@ model StellarWebhookLog {
 model PayoutFeeConfig {
   id              Int      @id @default(autoincrement())
   method          String   @unique
+  feeType         String   @default("fixed") // "fixed" or "percentage"
   feePercentage   Float
   fixedFee        Float    @default(0)
   minFee          Float    @default(0)

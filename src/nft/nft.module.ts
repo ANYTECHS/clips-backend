@@ -10,6 +10,8 @@ import { PlatformRevenueService } from './platform-revenue.service';
 import { PlatformRevenueController } from './platform-revenue.controller';
 import { BatchRoyaltyService } from './batch-royalty.service';
 import { BatchRoyaltyController } from './batch-royalty.controller';
+import { ClipRoyaltyService } from './clip-royalty.service';
+import { ClipRoyaltyController } from './clip-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
@@ -38,6 +40,7 @@ import { GasMetricsService } from './gas-metrics.service';
     RoyaltyQueryService,
     PlatformRevenueService,
     BatchRoyaltyService,
+    ClipRoyaltyService,
     NftMintGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
@@ -47,6 +50,7 @@ import { GasMetricsService } from './gas-metrics.service';
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,
+    ClipRoyaltyController,
   ],
   exports: [
     NftService,
@@ -56,6 +60,7 @@ import { GasMetricsService } from './gas-metrics.service';
     RoyaltyQueryService,
     PlatformRevenueService,
     BatchRoyaltyService,
+    ClipRoyaltyService,
     IpfsUploadModule,
     NftOwnershipModule,
     RoyaltyConfigurationService,
