@@ -18,6 +18,14 @@ import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
+import { PayoutLimitsService } from './payout-limits.service';
+
+const OPEN_PAYOUT_STATUSES = [
+  'pending',
+  'pending_approval',
+  'approved',
+  'processing',
+] as const;
 import { OPEN_PAYOUT_STATUSES } from './payouts.constants';
 
 @Injectable()
@@ -25,7 +33,7 @@ export class PayoutsService {
   private readonly logger = new Logger(PayoutsService.name);
   private readonly defaultPayoutCurrency =
     process.env.DEFAULT_PAYOUT_CURRENCY ?? 'USD';
-  private readonly payoutLimitsService: any; // temp fix since it was referenced but not injected
+  private readonly payoutLimitsService: PayoutLimitsService;
 
   constructor(
     private prisma: PrismaService,
@@ -35,13 +43,30 @@ export class PayoutsService {
     private feeService: FeeService,
     private payoutApprovalService: PayoutApprovalService,
     private readonly config: ConfigService,
+    payoutLimitsService: PayoutLimitsService,
     @InjectQueue(PAYOUT_RETRY_QUEUE) private payoutRetryQueue: Queue,
-  ) {}
+  ) {
+    this.payoutLimitsService = payoutLimitsService;
+  }
 
   private assertMinimumPayout(amount: number): void {
     if (amount < this.config.minStellarPayout) {
       throw new BadRequestException(
         `Minimum payout amount is ${this.config.minStellarPayout} USD equivalent.`,
+      );
+    }
+  }
+
+  private assertPayoutLimits(amount: number, currency: string): void {
+    const limits = this.payoutLimitsService.getLimits(currency);
+    if (amount < limits.min) {
+      throw new BadRequestException(
+        `Minimum payout for ${currency} is ${limits.min}. Requested amount: ${amount}.`,
+      );
+    }
+    if (amount > limits.max) {
+      throw new BadRequestException(
+        `Maximum payout for ${currency} is ${limits.max}. Requested amount: ${amount}.`,
       );
     }
   }
@@ -277,6 +302,7 @@ export class PayoutsService {
     }
 
     this.assertMinimumPayout(amount);
+    this.assertPayoutLimits(amount, currency);
 
     const totalEarnings = await this.prisma.earning.aggregate({
       where: { clip: { video: { userId } }, deletedAt: null },
