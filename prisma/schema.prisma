@@ -187,6 +187,8 @@ model Payout {
   confirmedAt      DateTime?
   paidAt           DateTime?
   approvedAt       DateTime?
+  approvedBy       Int?
+  reviewedAt       DateTime?
   rejectedAt       DateTime?
   rejectionReason  String?
   feeAmount        Float?
