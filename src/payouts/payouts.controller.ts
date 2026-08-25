@@ -158,6 +158,7 @@ export class PayoutsController {
     description: 'Filter by payout status',
     enum: [
       'pending',
+      'pending_review',
       'pending_approval',
       'approved',
       'processing',
