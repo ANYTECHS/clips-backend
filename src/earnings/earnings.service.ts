@@ -66,6 +66,14 @@ export class EarningsService {
     userId: number,
     startDate: Date,
     endDate: Date,
+  ): Promise<Array<{
+    id: number;
+    amount: number;
+    currency: string;
+    date: Date;
+    source: string | null;
+    clipId: number;
+  }>> {
   ) {
     return this.prisma.earning.findMany({
       where: {
@@ -82,6 +90,12 @@ export class EarningsService {
         source: true,
         clipId: true,
       },
+    });
+  }
+
+  async getMonthlyEarnings(userId: number, year: number, month: number) {
+    return this.prisma.monthlyEarning.findUnique({
+      where: { userId_year_month: { userId, year, month } },
     });
   }
 
@@ -124,6 +138,7 @@ export class EarningsService {
 
     return earning;
   }
+}
 }
     private readonly currencyService: CurrencyService,
     private readonly redis: RedisService,
