@@ -437,6 +437,63 @@ export class PayoutsService {
     return status;
   }
 
+  /**
+   * Query Horizon directly for the real-time on-chain confirmation status
+   * of a Stellar payout transaction.  Returns the DB record enriched with
+   * live data from the Stellar network.
+   */
+  async getOnChainStatus(
+    userId: number,
+    payoutId: number,
+  ): Promise<{
+    id: number;
+    status: string;
+    onChainTxHash: string | null;
+    confirmedAt: Date | null;
+    onChain: {
+      found: boolean;
+      successful?: boolean;
+      confirmedAt?: Date;
+    };
+  }> {
+    const payout = await this.prisma.payout.findFirst({
+      where: { id: payoutId, userId },
+      select: {
+        id: true,
+        status: true,
+        onChainTxHash: true,
+        confirmedAt: true,
+      },
+    });
+
+    if (!payout) {
+      throw new NotFoundException('Payout record not found');
+    }
+
+    let onChain = { found: false as const };
+
+    if (payout.onChainTxHash && payout.method === 'stellar') {
+      try {
+        const result = await this.stellarService.getTransactionStatus(
+          payout.onChainTxHash,
+        );
+        onChain = result;
+      } catch (error) {
+        this.logger.warn(
+          `Horizon status query failed for payout ${payoutId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    return {
+      id: payout.id,
+      status: payout.status,
+      onChainTxHash: payout.onChainTxHash,
+      confirmedAt: payout.confirmedAt,
+      onChain,
+    };
+  }
+
   async processPayout(payoutId: number): Promise<{
     id: number;
     status: string;
