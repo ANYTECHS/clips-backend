@@ -93,8 +93,23 @@ model Clip {
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
   earnings      Earning[]
   clipPosts     ClipPost[]
+  royalty       ClipRoyalty?
 
   @@index([videoId])
+}
+
+model ClipRoyalty {
+  id               Int       @id @default(autoincrement())
+  clipId           Int       @unique
+  recipientAddress String
+  basisPoints      Int
+  platformFeeBps   Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  clip             Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@index([recipientAddress])
 }
 
 model ClipPost {
@@ -182,14 +197,35 @@ model Payout {
   failureReason    String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   wallet           Wallet?       @relation(fields: [walletId], references: [id])
   payoutMethod     PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
+  receipt          PayoutReceipt?
 
   @@index([payoutMethodId])
   @@index([status])
   @@index([userId])
   @@index([nextRetryAt])
+  @@index([deletedAt])
+  @@index([userId, deletedAt])
+}
+
+model PayoutReceipt {
+  id               Int       @id @default(autoincrement())
+  payoutId         Int       @unique
+  receiptId        String    @unique
+  pdfUrl           String?
+  pdfStoragePath   String?
+  emailSent        Boolean   @default(false)
+  emailSentAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  payout           Payout    @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+
+  @@index([payoutId])
+  @@index([receiptId])
+  @@index([emailSent])
 }
 
 model Subscription {
@@ -289,6 +325,7 @@ model StellarWebhookLog {
 model PayoutFeeConfig {
   id              Int      @id @default(autoincrement())
   method          String   @unique
+  feeType         String   @default("fixed") // "fixed" or "percentage"
   feePercentage   Float
   fixedFee        Float    @default(0)
   minFee          Float    @default(0)

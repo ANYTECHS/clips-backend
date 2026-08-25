@@ -7,6 +7,8 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -22,7 +24,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
@@ -32,6 +34,7 @@ import {
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
 } from './dto/payout-responses.dto';
+import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
 
@@ -336,5 +339,64 @@ export class PayoutsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.payoutsService.cancelPayout(req.user.userId, id);
+  }
+
+  @Get(':id/receipt')
+  @ApiOperation({
+    summary: 'Download payout receipt as PDF',
+    description:
+      'Downloads the payout receipt as a PDF file. Receipt must exist for the payout.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiResponse({
+    status: 200,
+    description: 'PDF receipt file',
+    content: {
+      'application/pdf': {
+        schema: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Payout or receipt not found' })
+  @ApiBadRequestResponse({ description: 'Receipt generation failed' })
+  async getPayoutReceipt(
+    @Req() req: RequestWithUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.payoutsService.getPayoutReceiptPdf(
+      req.user.userId,
+      id,
+    );
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="payout-receipt-${id}.pdf"`,
+    });
+
+    res.send(file);
+  }
+
+  @Get(':id/receipt/metadata')
+  @ApiOperation({
+    summary: 'Get payout receipt metadata',
+    description:
+      'Retrieves receipt metadata including receipt ID, email status, and timestamps.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiResponse({
+    status: 200,
+    description: 'Receipt metadata',
+    type: PayoutReceiptDto,
+  })
+  @ApiNotFoundResponse({ description: 'Receipt not found' })
+  async getReceiptMetadata(
+    @Req() req: RequestWithUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<PayoutReceiptDto> {
+    return this.payoutsService.getReceiptMetadata(req.user.userId, id);
   }
 }
