@@ -1,6 +1,9 @@
 export const ANOMALY_DETECTION_QUEUE = 'anomaly-detection';
+export const ANOMALY_DETECTION_QUEUE_PRIORITY = 3;
 
-/**
- * Analytics/anomaly detection is a background task and can be queued lower.
- */
-export const ANOMALY_DETECTION_QUEUE_PRIORITY = 20;
+export interface AnomalyDetectionJobData {
+  earningId: number;
+  userId: number;
+  amount: number;
+  clipId: number;
+}

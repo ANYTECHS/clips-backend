@@ -1,220 +1,171 @@
 import {
-  BadRequestException,
   Controller,
   Get,
-  Delete,
-  Query,
-  Param,
+  Post,
+  Body,
   Req,
-  Res,
+  HttpCode,
+  HttpStatus,
+  ParseIntPipe,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
+  ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiQuery,
-  ApiParam,
-  ApiBearerAuth,
   ApiUnauthorizedResponse,
-  ApiBadRequestResponse,
-  ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
-import { Public } from '../auth/decorators/public.decorator';
-import { EarningsService } from './earnings.service';
-import type { Request, Response } from 'express';
-import { Currency } from './earnings.types';
+import { LeaderboardService, LeaderboardResponse } from './leaderboard.service';
 
-interface RequestWithUser extends Request {
+interface RequestWithUser {
+import { Controller, Get, Query, Req } from '@nestjs/common';
+import { Request } from 'express';
+import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { EarningsService } from './earnings.service';
+import { Auth } from '../auth/decorators/auth.decorator';
+
+interface AuthRequest extends Request {
   user: { userId: number };
 }
 
 @ApiTags('earnings')
-@ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
-@ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@Controller('earnings')
+export class EarningsController {
+  constructor(private readonly leaderboardService: LeaderboardService) {}
+
+  @Get('leaderboard')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get top creators leaderboard',
+    description:
+      'Returns the top earning creators who have opted in to the leaderboard. ' +
+      'Only includes users with showOnLeaderboard=true and at least one earning.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Number of top creators to return (default: 100, max: 500)',
+    type: 'number',
+    example: 100,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Top creators leaderboard',
+    schema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              rank: { type: 'number', example: 1 },
+              userId: { type: 'number', example: 123 },
+              username: { type: 'string', example: 'creator123' },
+              totalEarnings: { type: 'number', example: 5000 },
+            },
+          },
+        },
+        updatedAt: { type: 'string', format: 'date-time' },
+      },
+    },
+  })
+  @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+  async getLeaderboard(
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+  ): Promise<LeaderboardResponse> {
+    return this.leaderboardService.getLeaderboard(limit);
+  }
+
+  @Get('leaderboard/rank')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @Auth()
+  @ApiOperation({
+    summary: "Get user's rank on the leaderboard",
+    description:
+      'Returns the authenticated user\'s rank, total earnings, and leaderboard visibility setting.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'User rank information',
+    schema: {
+      type: 'object',
+      properties: {
+        rank: {
+          type: 'number',
+          nullable: true,
+          example: 5,
+          description:
+            'User rank if showOnLeaderboard=true and has earnings, otherwise null',
+        },
+        totalEarnings: { type: 'number', example: 2500 },
+        showOnLeaderboard: { type: 'boolean', example: true },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+  async getUserRank(@Req() req: RequestWithUser) {
+    return this.leaderboardService.getUserRank(req.user.userId);
+  }
+
+  @Post('leaderboard/visibility')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @Auth()
+  @ApiOperation({
+    summary: 'Update leaderboard visibility',
+    description:
+      'Enable or disable leaderboard visibility for the authenticated user.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Leaderboard visibility updated',
+    schema: {
+      type: 'object',
+      properties: {
+        showOnLeaderboard: { type: 'boolean', example: true },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+  async updateLeaderboardVisibility(
+    @Req() req: RequestWithUser,
+    @Body() body: { showOnLeaderboard: boolean },
+  ) {
+    return this.leaderboardService.setLeaderboardVisibility(
+      req.user.userId,
+      body.showOnLeaderboard,
+    );
+@ApiBearerAuth()
 @Auth()
 @Controller('earnings')
 export class EarningsController {
   constructor(private readonly earningsService: EarningsService) {}
 
-  @Get('metrics')
-  @ApiOperation({
-    summary: 'Get earnings dashboard metrics',
-    description:
-      'Returns aggregated earnings metrics for the authenticated user',
-  })
-  @ApiQuery({
-    name: 'currency',
-    required: false,
-    enum: Currency,
-    description: 'Currency for metrics (default: USD)',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Dashboard metrics retrieved successfully',
-  })
-  @ApiBadRequestResponse({ description: 'Invalid currency parameter' })
-  async getDashboardMetrics(
-    @Req() req: RequestWithUser,
-    @Query('currency') currency: Currency = Currency.USD,
-  ) {
-    return this.earningsService.getDashboardMetrics(req.user.userId, currency);
-  }
-
-  @Get('export')
-  @ApiOperation({
-    summary: 'Export earnings to CSV',
-    description: 'Exports earnings data as a downloadable CSV file',
-  })
-  @ApiQuery({
-    name: 'startDate',
-    required: false,
-    description: 'Start date filter (YYYY-MM-DD)',
-  })
-  @ApiQuery({
-    name: 'endDate',
-    required: false,
-    description: 'End date filter (YYYY-MM-DD)',
-  })
-  @ApiQuery({
-    name: 'format',
-    required: false,
-    description: 'Export format (default: csv)',
-    example: 'csv',
-  })
-  @ApiResponse({ status: 200, description: 'CSV file downloaded' })
-  @ApiBadRequestResponse({ description: 'Invalid export format or parameters' })
-  async exportEarnings(
-    @Req() req: RequestWithUser,
-    @Res() res: Response,
+  @Get()
+  @ApiQuery({ name: 'startDate', required: false, type: String })
+  @ApiQuery({ name: 'endDate', required: false, type: String })
+  async getEarnings(
+    @Req() req: AuthRequest,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-    @Query('format') format = 'csv',
   ) {
-    if (format !== 'csv') {
-      throw new BadRequestException('Only format=csv is supported');
-    }
+    const filters: { startDate?: Date; endDate?: Date } = {};
+    if (startDate) filters.startDate = new Date(startDate);
+    if (endDate) filters.endDate = new Date(endDate);
 
-    const { filename, content } = await this.earningsService.exportEarningsCsv(
-      req.user.userId,
-      { startDate, endDate },
-    );
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.send(content);
+    return this.earningsService.getEarnings(req.user.userId, filters);
   }
 
-  @Get()
-  @ApiOperation({
-    summary: 'Get earnings list',
-    description: 'Returns paginated earnings data for the authenticated user',
-  })
-  @ApiQuery({
-    name: 'page',
-    required: false,
-    description: 'Page number (default: 1)',
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: 'Items per page (default: 20)',
-  })
-  @ApiQuery({
-    name: 'currency',
-    required: false,
-    enum: Currency,
-    description: 'Currency filter (default: USD)',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Earnings list retrieved successfully',
-  })
-  @ApiBadRequestResponse({ description: 'Invalid pagination parameters' })
-  async getEarnings(
-    @Req() req: RequestWithUser,
-    @Query('page') page = '1',
-    @Query('limit') limit = '20',
-    @Query('currency') currency: Currency = Currency.USD,
-  ) {
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 20;
-
-    return this.earningsService.getEarningsDashboard(
-      req.user.userId,
-      pageNum,
-      limitNum,
-      currency,
-    );
-  }
-
-  @Delete(':id')
-  @ApiOperation({
-    summary: 'Delete an earning record',
-    description: 'Soft-deletes an earning record by ID',
-  })
-  @ApiParam({ name: 'id', description: 'Earning record ID', type: 'number' })
-  @ApiResponse({ status: 200, description: 'Earning record deleted' })
-  @ApiBadRequestResponse({ description: 'Invalid earning ID' })
-  @ApiNotFoundResponse({ description: 'Earning record not found' })
-  async deleteEarning(@Req() req: RequestWithUser, @Param('id') id: string) {
-    return this.earningsService.softDelete(parseInt(id, 10), req.user.userId);
-  }
-
-  @Public()
-  @Get('leaderboard')
-  @ApiOperation({
-    summary: 'Get earnings leaderboard',
-    description: 'Returns top earners leaderboard (public)',
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: 'Number of top earners (default: 10, max: 100)',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Leaderboard retrieved successfully',
-  })
-  async getLeaderboard(@Query('limit') limit = '10') {
-    const limitNum = Math.min(parseInt(limit, 10) || 10, 100);
-    return this.earningsService.getLeaderboard(limitNum);
-  }
-
-  @Get('by-platform')
-  @ApiOperation({
-    summary: 'Get earnings by platform',
-    description: 'Returns earnings breakdown by social platform',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Platform earnings retrieved successfully',
-  })
-  async getEarningsByPlatform(@Req() req: RequestWithUser) {
-    return this.earningsService.getEarningsByPlatform(req.user.userId);
-  }
-  @Get('summary')
-  @ApiOperation({
-    summary: 'Get earnings summary',
-    description: 'Returns a summary of total earnings',
-  })
-  @ApiQuery({
-    name: 'currency',
-    required: false,
-    enum: Currency,
-    description: 'Currency for summary (default: USD)',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Earnings summary retrieved successfully',
-  })
-  @ApiBadRequestResponse({ description: 'Invalid currency parameter' })
-  async getEarningsSummary(
-    @Req() req: RequestWithUser,
-    @Query('currency') currency: Currency = Currency.USD,
-  ) {
-    return this.earningsService.getEarningsSummary(req.user.userId, currency);
+  @Get('aggregate')
+  async aggregateEarnings(@Req() req: AuthRequest) {
+    return this.earningsService.aggregateEarnings(req.user.userId);
   }
 }

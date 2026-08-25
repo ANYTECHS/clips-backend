@@ -1,129 +1,153 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
+import { ConfigService } from '../config/config.service';
+import { AnomalySeverity, AnomalyStatus } from './earning-anomaly.entity';
 
-interface AnomalyConfig {
-  thresholdMultiplier: number;
-  minEarningsForAnalysis: number;
-  lookbackDays: number;
+interface BaselineResult {
+  avgAmount: number;
+  stdDev: number;
+  sampleCount: number;
 }
 
 @Injectable()
 export class AnomalyDetectionService {
   private readonly logger = new Logger(AnomalyDetectionService.name);
-  private readonly config: AnomalyConfig = {
-    thresholdMultiplier: parseFloat(process.env.ANOMALY_THRESHOLD_MULTIPLIER ?? '3'),
-    minEarningsForAnalysis: parseFloat(process.env.MIN_EARNINGS_FOR_ANALYSIS ?? '10'),
-    lookbackDays: parseInt(process.env.ANOMALY_LOOKBACK_DAYS ?? '30', 10),
-  };
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
-  async detectAnomalies(earningId: number): Promise<{
-    isAnomaly: boolean;
-    reason?: string;
-    severity?: 'low' | 'medium' | 'high';
-  }> {
-    const earning = await this.prisma.earning.findUnique({
-      where: { id: earningId },
+  @Cron(CronExpression.EVERY_HOUR)
+  async detectAnomalies(): Promise<void> {
+    this.logger.log('Running earnings anomaly detection scan...');
+
+    const thresholdMultiplier = this.config.anomalyThresholdMultiplier;
+    const lookbackDays = this.config.anomalyLookbackDays;
+    const minEarnings = this.config.minEarningsForAnalysis;
+
+    const recentEarnings = await this.prisma.earning.findMany({
+      where: {
+        deletedAt: null,
+        isAnomaly: false,
+        createdAt: {
+          gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        },
+      },
       include: {
         clip: {
-          include: {
-            video: {
-              select: { userId: true },
-            },
-          },
+          include: { video: { select: { userId: true } } },
         },
       },
     });
 
-    if (!earning) {
-      this.logger.warn(`Earning ${earningId} not found for anomaly detection`);
-      return { isAnomaly: false };
+    for (const earning of recentEarnings) {
+      const userId = earning.clip?.video?.userId;
+      if (!userId) continue;
+
+      try {
+        const baseline = await this.calculateBaseline(userId, lookbackDays);
+        if (baseline.sampleCount < 3 || baseline.avgAmount < minEarnings) {
+          continue;
+        }
+
+        const upperBound = baseline.avgAmount + thresholdMultiplier * baseline.stdDev;
+
+        if (earning.amount > upperBound) {
+          const severity = this.classifySeverity(earning.amount, baseline);
+          await this.flagAnomaly(earning.id, userId, severity, earning.amount, baseline);
+        }
+      } catch (error) {
+        this.logger.error(
+          Anomaly check failed for earning : ,
+        );
+      }
     }
+  }
 
-    const userId = earning.clip.video.userId;
+  async calculateBaseline(userId: number, lookbackDays: number): Promise<BaselineResult> {
+    const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
 
-    const userEarnings = await this.prisma.earning.findMany({
+    const earnings = await this.prisma.earning.findMany({
       where: {
         clip: { video: { userId } },
         deletedAt: null,
-        date: {
-          gte: new Date(
-            Date.now() - this.config.lookbackDays * 24 * 60 * 60 * 1000,
-          ),
-        },
+        isAnomaly: false,
+        createdAt: { gte: cutoff },
       },
-      select: { amount: true, date: true },
-      orderBy: { date: 'desc' },
+      select: { amount: true },
     });
 
-    if (userEarnings.length < 3) {
-      this.logger.log(
-        `User ${userId} has insufficient earnings history for anomaly detection`,
-      );
-      return { isAnomaly: false };
+    if (earnings.length === 0) {
+      return { avgAmount: 0, stdDev: 0, sampleCount: 0 };
     }
 
-    const amounts = userEarnings.map((e) => e.amount);
-    const mean = amounts.reduce((sum, a) => sum + a, 0) / amounts.length;
+    const amounts = earnings.map((e) => e.amount);
+    const avgAmount = amounts.reduce((sum, a) => sum + a, 0) / amounts.length;
     const variance =
-      amounts.reduce((sum, a) => sum + Math.pow(a - mean, 2), 0) / amounts.length;
+      amounts.reduce((sum, a) => sum + Math.pow(a - avgAmount, 2), 0) /
+      amounts.length;
     const stdDev = Math.sqrt(variance);
 
-    const zScore = (earning.amount - mean) / (stdDev || 1);
+    return { avgAmount, stdDev, sampleCount: amounts.length };
+  }
 
-    if (zScore > this.config.thresholdMultiplier) {
-      const severity: 'low' | 'medium' | 'high' =
-        zScore > 5 ? 'high' : zScore > 4 ? 'medium' : 'low';
+  private classifySeverity(
+    amount: number,
+    baseline: BaselineResult,
+  ): AnomalySeverity {
+    if (baseline.stdDev === 0) return AnomalySeverity.MEDIUM;
 
-      const reason = `Earning amount $${earning.amount.toFixed(2)} is ${zScore.toFixed(2)} standard deviations above the user's average of $${mean.toFixed(2)}`;
+    const zScore = (amount - baseline.avgAmount) / baseline.stdDev;
 
-      await this.prisma.earning.update({
-        where: { id: earningId },
-        data: {
-          isAnomaly: true,
-          anomalyReason: reason,
-        },
-      });
+    if (zScore > 5) return AnomalySeverity.CRITICAL;
+    if (zScore > 4) return AnomalySeverity.HIGH;
+    if (zScore > 3) return AnomalySeverity.MEDIUM;
+    return AnomalySeverity.LOW;
+  }
 
-      await this.prisma.anomalyAlert.create({
-        data: {
-          earningId,
-          userId,
-          amount: earning.amount,
-          reason,
-          severity,
-        },
-      });
+  private async flagAnomaly(
+    earningId: number,
+    userId: number,
+    severity: AnomalySeverity,
+    amount: number,
+    baseline: BaselineResult,
+  ): Promise<void> {
+    const reason =
+      Earning amount  exceeds baseline (avg: ,  +
+      stdDev: , samples: );
 
-      this.logger.warn(
-        `Anomaly detected for earning ${earningId}: ${reason} (severity: ${severity})`,
-      );
+    await this.prisma.earning.update({
+      where: { id: earningId },
+      data: { isAnomaly: true, anomalyReason: reason },
+    });
 
-      return { isAnomaly: true, reason, severity };
+    await this.prisma.anomalyAlert.create({
+      data: {
+        earningId,
+        userId,
+        amount,
+        reason,
+        severity,
+        isResolved: false,
+      },
+    });
+
+    this.logger.warn(
+      Anomaly detected: earning , user , severity , amount ,
+    );
+  }
+
+  async markFalsePositive(alertId: number, reviewedBy?: number): Promise<void> {
+    const alert = await this.prisma.anomalyAlert.findUnique({
+      where: { id: alertId },
+    });
+
+    if (!alert) {
+      throw new Error(Anomaly alert  not found);
     }
 
-    return { isAnomaly: false };
-  }
-
-  async getUnresolvedAlerts(): Promise<
-    Array<{
-      id: number;
-      earningId: number;
-      userId: number;
-      amount: number;
-      reason: string;
-      severity: string;
-      createdAt: Date;
-    }>
-  > {
-    return this.prisma.anomalyAlert.findMany({
-      where: { isResolved: false },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
-
-  async resolveAlert(alertId: number): Promise<void> {
     await this.prisma.anomalyAlert.update({
       where: { id: alertId },
       data: {
@@ -132,6 +156,28 @@ export class AnomalyDetectionService {
       },
     });
 
-    this.logger.log(`Anomaly alert ${alertId} resolved`);
+    await this.prisma.earning.update({
+      where: { id: alert.earningId },
+      data: { isAnomaly: false, anomalyReason: null },
+    });
+
+    this.logger.log(
+      Anomaly alert  marked as false positive for earning ,
+    );
+  }
+
+  async getAnomalyAlerts(
+    userId?: number,
+    unresolvedOnly = true,
+  ): Promise<any[]> {
+    const where: any = {};
+    if (userId) where.userId = userId;
+    if (unresolvedOnly) where.isResolved = false;
+
+    return this.prisma.anomalyAlert.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
   }
 }

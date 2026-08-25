@@ -35,6 +35,7 @@ import { QueueDashboardModule } from './queue-dashboard/queue-dashboard.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from './queue/queue.module';
 import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.module';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
@@ -137,6 +138,7 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
     HealthModule,
     QueueDashboardModule,
     GracefulShutdownModule,
+    CommonModule,
   ],
   controllers: [AppController],
   providers: [

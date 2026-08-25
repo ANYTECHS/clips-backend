@@ -23,6 +23,12 @@ export class UserResponseDto {
   @ApiPropertyOptional({ example: 'custodial' })
   walletType?: string | null;
 
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether user is visible on the leaderboard',
+  })
+  showOnLeaderboard?: boolean;
+
   @ApiProperty()
   createdAt: Date;
 

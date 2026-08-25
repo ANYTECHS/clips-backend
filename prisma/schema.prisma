@@ -21,6 +21,7 @@ model User {
   walletType             String?
   encryptedStellarSecret String?
   role                   String         @default("user")
+  showOnLeaderboard      Boolean        @default(false)
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
   videos                 Video[]
@@ -128,17 +129,19 @@ model ClipPost {
 }
 
 model Earning {
-  id              Int       @id @default(autoincrement())
-  clipId          Int
-  amount          Float
-  currency        String    @default("USD")
-  date            DateTime
-  source          String?
-  isAnomaly       Boolean   @default(false)
-  anomalyReason   String?
-  createdAt       DateTime  @default(now())
-  deletedAt       DateTime?
-  clip            Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  id                    Int       @id @default(autoincrement())
+  clipId                Int
+  amount                Float
+  currency              String    @default("USD")
+  amountInBaseCurrency  Float?
+  exchangeRate          Float?
+  date                  DateTime
+  source                String?
+  isAnomaly             Boolean   @default(false)
+  anomalyReason         String?
+  createdAt             DateTime  @default(now())
+  deletedAt             DateTime?
+  clip                  Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
 }
 
 model UserPlatform {
@@ -177,7 +180,7 @@ model Payout {
   amount           Float
   currency         String        @default("USD")
   method           String
-  status           String
+  status           String        @default("pending")
   transactionId    String?
   externalTransactionId String?
   stellarXdr       String?
@@ -185,6 +188,8 @@ model Payout {
   confirmedAt      DateTime?
   paidAt           DateTime?
   approvedAt       DateTime?
+  approvedBy       Int?
+  reviewedAt       DateTime?
   rejectedAt       DateTime?
   rejectionReason  String?
   feeAmount        Float?
@@ -192,6 +197,8 @@ model Payout {
   finalAmount      Float?
   retryCount       Int           @default(0)
   lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  failureReason    String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   deletedAt        DateTime?
@@ -202,6 +209,8 @@ model Payout {
 
   @@index([payoutMethodId])
   @@index([status])
+  @@index([userId])
+  @@index([nextRetryAt])
   @@index([deletedAt])
   @@index([userId, deletedAt])
 }
@@ -331,17 +340,20 @@ model PayoutFeeConfig {
 }
 
 model PlatformWebhookLog {
-  id          Int      @id @default(autoincrement())
-  platform    String
-  eventType   String
-  payload     String
-  signature   String?
-  isValid     Boolean  @default(false)
-  processedAt DateTime @default(now())
-  error       String?
+  id           Int      @id @default(autoincrement())
+  platform     String
+  eventType    String
+  eventId      String?
+  payload      String
+  signature    String?
+  isValid      Boolean  @default(false)
+  processedAt  DateTime @default(now())
+  error        String?
 
+  @@unique([platform, eventId])
   @@index([platform])
   @@index([processedAt])
+  @@index([eventId])
 }
 
 model AnomalyAlert {
