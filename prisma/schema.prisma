@@ -21,6 +21,7 @@ model User {
   walletType             String?
   encryptedStellarSecret String?
   role                   String         @default("user")
+  showOnLeaderboard      Boolean        @default(false)
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
   videos                 Video[]
@@ -179,7 +180,7 @@ model Payout {
   amount           Float
   currency         String        @default("USD")
   method           String
-  status           String
+  status           String        @default("pending")
   transactionId    String?
   externalTransactionId String?
   stellarXdr       String?
@@ -196,6 +197,8 @@ model Payout {
   finalAmount      Float?
   retryCount       Int           @default(0)
   lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  failureReason    String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   deletedAt        DateTime?
@@ -206,6 +209,8 @@ model Payout {
 
   @@index([payoutMethodId])
   @@index([status])
+  @@index([userId])
+  @@index([nextRetryAt])
   @@index([deletedAt])
   @@index([userId, deletedAt])
 }
