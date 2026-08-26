@@ -12,6 +12,14 @@ describe('EarningsService', () => {
 
   beforeEach(async () => {
     prisma = {
+      earning: {
+        aggregate: jest.fn(),
+        findMany: jest.fn(),
+        create: jest.fn(),
+      },
+      payout: { aggregate: jest.fn() },
+      clip: { findUnique: jest.fn() },
+      withTransaction: jest.fn((fn: any) => fn(prisma)),
       earning: { aggregate: jest.fn(), findMany: jest.fn(), create: jest.fn() },
       payout: { aggregate: jest.fn() },
       monthlyEarning: { findUnique: jest.fn() },
@@ -42,6 +50,12 @@ describe('EarningsService', () => {
 
   describe('getUserTotalEarnings', () => {
     it('returns cached result when available', async () => {
+      const cached = {
+        totalEarned: 100,
+        totalPaidOut: 50,
+        availableBalance: 50,
+        currency: 'USD',
+      };
       const cached = { totalEarned: 100, totalPaidOut: 50, availableBalance: 50, currency: 'USD' };
       redis.get.mockResolvedValue(JSON.stringify(cached));
 
@@ -59,6 +73,29 @@ describe('EarningsService', () => {
       expect(result.totalPaidOut).toBe(80);
       expect(result.availableBalance).toBe(120);
       expect(redis.setex).toHaveBeenCalled();
+    });
+  });
+
+  describe('getEarningsByPeriod', () => {
+    it('queries earnings within date range', async () => {
+      const mockEarnings = [
+        { id: 1, amount: 50, currency: 'USD', date: new Date(), source: 'youtube', clipId: 1 },
+      ];
+      prisma.earning.findMany.mockResolvedValue(mockEarnings);
+
+      const result = await service.getEarningsByPeriod(
+        1,
+        new Date('2025-01-01'),
+        new Date('2025-12-31'),
+      );
+      expect(result).toEqual(mockEarnings);
+      expect(prisma.earning.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            clip: { video: { userId: 1 } },
+          }),
+        }),
+      );
     });
   });
 });
