@@ -1,4 +1,6 @@
+/**
+ * NFT Mint queue name and priority constant.
+ * Used by BullMQ queue registration across the application.
+ */
 export const NFT_MINT_QUEUE = 'nft-mint';
-
-/** Lower number = higher priority in BullMQ */
-export const NFT_MINT_QUEUE_PRIORITY = 15;
+export const NFT_MINT_QUEUE_PRIORITY = 3;

@@ -1,4 +1,6 @@
+/**
+ * Clip Posting queue name and priority constant.
+ * Used by BullMQ queue registration across the application.
+ */
 export const CLIP_POSTING_QUEUE = 'clip-posting';
-
-/** Lower number = higher priority in BullMQ */
-export const CLIP_POSTING_QUEUE_PRIORITY = 20;
+export const CLIP_POSTING_QUEUE_PRIORITY = 4;

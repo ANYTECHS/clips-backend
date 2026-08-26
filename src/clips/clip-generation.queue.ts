@@ -1,4 +1,6 @@
+/**
+ * Clip Generation queue name and priority constant.
+ * Used by BullMQ queue registration across the application.
+ */
 export const CLIP_GENERATION_QUEUE = 'clip-generation';
-
-/** Lower number = higher priority in BullMQ */
-export const CLIP_GENERATION_QUEUE_PRIORITY = 10;
+export const CLIP_GENERATION_QUEUE_PRIORITY = 5;

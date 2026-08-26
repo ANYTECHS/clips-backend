@@ -1,4 +1,9 @@
 export const ANOMALY_DETECTION_QUEUE = 'anomaly-detection';
+export const ANOMALY_DETECTION_QUEUE_PRIORITY = 3;
 
-/** Lower number = higher priority in BullMQ */
-export const ANOMALY_DETECTION_QUEUE_PRIORITY = 30;
+export interface AnomalyDetectionJobData {
+  earningId: number;
+  userId: number;
+  amount: number;
+  clipId: number;
+}
