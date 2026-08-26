@@ -190,6 +190,7 @@ export class PayoutsService {
         stellarXdr,
         externalTransactionId: transactionId,
         onChainTxHash: transactionId,
+        lastAttemptAt: new Date(),
       },
     });
 
