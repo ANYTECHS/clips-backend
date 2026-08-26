@@ -52,7 +52,7 @@ model Video {
   fileSize         BigInt?
   status           String   @default("pending")
   processingError  String?
-  // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, errorDetails?: string }
+  // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, avgDurationSec?: number, errorDetails?: string }
   processingStats  Json?
   // Schema: { duration: number, width: number, height: number, format: string, fps: number, bitrate: number }
   metadata         Json?
