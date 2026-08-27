@@ -1,3 +1,21 @@
+/**
+ * ClipsService — CRUD and configuration for clip records.
+ *
+ * Issue #747: setRoyaltyBps() stores a per-clip royalty (0–1500 bps)
+ *             on the Clip model so the value is available at mint time.
+ */
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+
+export const ROYALTY_BPS_MIN = 0;
+export const ROYALTY_BPS_MAX = 1500;
+export const ROYALTY_BPS_DEFAULT = 1000;
 import {
   Injectable,
   Logger,
@@ -6,6 +24,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  isClipPosted,
+  POSTED_CLIP_MINT_ERROR,
+} from './clip-post-status.util';
 
 const NFT_STATUSES = {
   NONE: 'none',
@@ -47,6 +69,74 @@ export class ClipsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Issue #747 — Royalty BPS configuration per clip
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Set (or reset) the royalty basis points for a clip.
+   *
+   * Acceptance criteria:
+   *  ✓ royaltyBps Int? field on Clip model (0–1500 = 0–15%)
+   *  ✓ Validate range: throws BadRequestException outside [0, 1500]
+   *  ✓ Store default 1000 (10%) when royaltyBps is undefined / null
+   *  ✓ Value is passed to Soroban mint transaction via NftMintService
+   *
+   * @param clipId     Clip to configure.
+   * @param userId     Authenticated user — must own the clip.
+   * @param royaltyBps Royalty in BPS (0–1500). Pass undefined to use default.
+   */
+  async setRoyaltyBps(
+    clipId: number,
+    userId: number,
+    royaltyBps?: number,
+  ): Promise<{ clipId: number; royaltyBps: number }> {
+    // Default to 1000 when not provided.
+    const bps = royaltyBps ?? ROYALTY_BPS_DEFAULT;
+
+    // Validate range (DTO decorators already guard this on the HTTP layer;
+    // this check guards programmatic calls from other services).
+    if (!Number.isInteger(bps) || bps < ROYALTY_BPS_MIN || bps > ROYALTY_BPS_MAX) {
+      throw new BadRequestException(
+        `royaltyBps must be an integer between ${ROYALTY_BPS_MIN} and ${ROYALTY_BPS_MAX} (received: ${bps})`,
+      );
+    }
+
+    // Fetch clip and verify ownership.
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { video: { select: { userId: true } } },
+    });
+
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
+
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException(
+        `You do not own clip ${clipId}`,
+      );
+    }
+
+    // Persist the value.
+    await this.prisma.clip.update({
+      where: { id: clipId },
+      data: { royaltyBps: bps },
+    });
+
+    this.logger.log(`Clip ${clipId} royaltyBps set to ${bps} by user ${userId}`);
+
+    return { clipId, royaltyBps: bps };
+  }
+
+  /**
+   * Get the current royaltyBps for a clip.
+   * Returns the schema default (1000) when the field is null.
+   */
+  async getRoyaltyBps(clipId: number): Promise<{ clipId: number; royaltyBps: number }> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      select: { id: true, royaltyBps: true },
   /**
    * Find a clip by ID. Returns null when the clip does not exist.
    */
@@ -95,6 +185,40 @@ export class ClipsService {
       throw new ConflictException(
         `Clip ${clipId} is currently being minted. Please wait.`,
       );
+    }
+
+    await this.preventPostedMint(clipId);
+  }
+
+  /**
+   * Business rule (Issue #764): a clip that has already been auto-posted to a
+   * social platform cannot be minted as an NFT.
+   *
+   * `NftMintGuard` enforces this at the HTTP edge for single-clip endpoints,
+   * but the guard resolves exactly one `clipId` and so never runs for
+   * `POST /nfts/batch-mint`. Enforcing it here as well means every mint path —
+   * single, batch, or queued — goes through the same check.
+   *
+   * Throws `BadRequestException` (HTTP 400), per the issue's acceptance
+   * criteria, rather than the 409 used for double-mint attempts: a posted clip
+   * is permanently ineligible, not a transient conflict to retry.
+   */
+  async preventPostedMint(clipId: number): Promise<void> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      select: {
+        postStatus: true,
+        postedAt: true,
+        clipPosts: { select: { status: true } },
+      },
+    });
+
+    if (!clip) {
+      throw new NotFoundException(`Clip with ID ${clipId} not found`);
+    }
+
+    if (isClipPosted(clip)) {
+      throw new BadRequestException(POSTED_CLIP_MINT_ERROR);
     }
   }
 
@@ -184,6 +308,7 @@ export class ClipsService {
       throw new NotFoundException(`Clip ${clipId} not found`);
     }
 
+    return { clipId: clip.id, royaltyBps: clip.royaltyBps ?? ROYALTY_BPS_DEFAULT };
     if (clip.video.userId !== userId) {
       throw new BadRequestException('You do not own this clip');
     }

@@ -24,8 +24,10 @@ import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.
 import { RedisModule } from '../redis/redis.module';
 import { ConfigModule } from '../config/config.module';
 import { GasMetricsService } from './gas-metrics.service';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
+  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
   imports: [
     PrismaModule,
     StellarModule,
@@ -36,39 +38,15 @@ import { GasMetricsService } from './gas-metrics.service';
     ClipsModule,
   ],
   providers: [
-    NftConfig,
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    NftMintGuard,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
-    AdminContractService,
+    NftConfig, NftService, GasMetricsService, NftMintService, NftMetadataService,
+    RoyaltyQueryService, PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    NftMintGuard, RoyaltyConfigurationService, MintSignatureVerificationService, AdminContractService,
   ],
-  controllers: [
-    NftController,
-    PlatformRevenueController,
-    BatchRoyaltyController,
-    ClipRoyaltyController,
-  ],
+  controllers: [NftController, PlatformRevenueController, BatchRoyaltyController, ClipRoyaltyController],
   exports: [
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    IpfsUploadModule,
-    NftOwnershipModule,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
+    NftService, GasMetricsService, NftMintService, NftMetadataService, RoyaltyQueryService,
+    PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    IpfsUploadModule, NftOwnershipModule, RoyaltyConfigurationService, MintSignatureVerificationService,
   ],
 })
 export class NftModule {}

@@ -21,9 +21,11 @@ import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
 import { PayoutApprovalService } from './payout-approval.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import { ConfigService } from '../config/config.service';
+import { EarningsModule } from '../earnings/earnings.module';
 import { BalanceService } from './balance.service';
 import { PayoutStateMachineService } from './payout-state-machine.service';
 import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
@@ -33,6 +35,7 @@ import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
     EncryptionModule,
     MetricsModule,
     EarningsModule,
+    CommonModule,
     BullModule.registerQueue({
       name: PAYOUT_RETRY_QUEUE,
       defaultJobOptions: { priority: PAYOUT_RETRY_QUEUE_PRIORITY },
@@ -62,8 +65,13 @@ import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
     PayoutStateMachineService,
     PayoutRetryStrategyService,
   ],
-  exports: [PayoutsService, FeeService, PayoutMethodService, PayoutLimitsService],
-  exports: [PayoutsService, FeeService, PayoutMethodService, BalanceService],
-  exports: [PayoutsService, FeeService, PayoutMethodService, SoftDeleteService],
+  exports: [
+    PayoutsService,
+    FeeService,
+    PayoutMethodService,
+    PayoutLimitsService,
+    BalanceService,
+    SoftDeleteService,
+  ],
 })
 export class PayoutsModule {}
