@@ -21,6 +21,7 @@ import { STELLAR_CONFIRMATION_QUEUE } from './stellar-confirmation.queue';
 import { PayoutApprovalService } from './payout-approval.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import { ConfigService } from '../config/config.service';
+import { EarningsModule } from '../earnings/earnings.module';
 import { BalanceService } from './balance.service';
 import { PayoutStateMachineService } from './payout-state-machine.service';
 import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
@@ -32,6 +33,7 @@ import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
     AuthModule,
     EncryptionModule,
     MetricsModule,
+    EarningsModule,
     BullModule.registerQueue({
       name: PAYOUT_RETRY_QUEUE,
       defaultJobOptions: { priority: PAYOUT_RETRY_QUEUE_PRIORITY },

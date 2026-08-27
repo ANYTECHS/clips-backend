@@ -2,6 +2,22 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
+
+export interface UserEarningsSummary {
+  totalEarned: number;
+  totalPaidOut: number;
+  availableBalance: number;
+  currency: string;
+}
+
+export interface EarningRecord {
+  id: number;
+  amount: number;
+  currency: string;
+  date: Date;
+  source: string | null;
+  clipId: number;
+}
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CurrencyService } from '../common/services/currency.service';
 import { RedisService } from '../redis/redis.service';
@@ -18,6 +34,20 @@ export class EarningsService {
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
+  ) {}
+
+  async getUserTotalEarnings(userId: number, tx?: any): Promise<UserEarningsSummary> {
+    const cacheKey = `earnings:total:${userId}`;
+    if (!tx) {
+      const cached = await this.redis.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    }
+
+    const client = tx ?? this.prisma;
+
+    const totalEarnings = await client.earning.aggregate({
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
@@ -38,6 +68,7 @@ export class EarningsService {
       _sum: { amount: true },
     });
 
+    const totalPaidOut = await client.payout.aggregate({
     const totalPaidOut = await this.prisma.payout.aggregate({
       where: { userId, status: { in: ['completed', 'processing'] } },
       _sum: { amount: true },
@@ -50,6 +81,16 @@ export class EarningsService {
       totalEarned,
       totalPaidOut: paid,
       availableBalance: totalEarned - paid,
+      currency: 'USD' as const,
+    };
+
+    if (!tx) {
+      await this.redis.setex(
+        cacheKey,
+        this.config.earningsCacheTtlSeconds,
+        JSON.stringify(result),
+      );
+    }
       currency: 'USD',
     };
 
@@ -66,6 +107,7 @@ export class EarningsService {
     userId: number,
     startDate: Date,
     endDate: Date,
+  ): Promise<EarningRecord[]> {
   ): Promise<Array<{
     id: number;
     amount: number;
@@ -93,6 +135,8 @@ export class EarningsService {
     });
   }
 
+  async refreshEarningsCache(userId: number): Promise<void> {
+    const cacheKey = `earnings:total:${userId}`;
   async getMonthlyEarnings(userId: number, year: number, month: number) {
     return this.prisma.monthlyEarning.findUnique({
       where: { userId_year_month: { userId, year, month } },
@@ -103,6 +147,11 @@ export class EarningsService {
     const cacheKey = earnings:total:;
     await this.redis.del(cacheKey);
     await this.getUserTotalEarnings(userId);
+  }
+
+  async getAvailableBalance(userId: number): Promise<number> {
+    const summary = await this.getUserTotalEarnings(userId);
+    return summary.availableBalance;
   }
 
   async createEarning(data: {

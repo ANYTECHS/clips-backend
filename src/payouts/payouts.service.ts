@@ -190,6 +190,7 @@ export class PayoutsService {
         stellarXdr,
         externalTransactionId: transactionId,
         onChainTxHash: transactionId,
+        lastAttemptAt: new Date(),
       },
     });
 
@@ -304,18 +305,8 @@ export class PayoutsService {
     this.assertMinimumPayout(amount);
     this.assertPayoutLimits(amount, currency);
 
-    const totalEarnings = await this.prisma.earning.aggregate({
-      where: { clip: { video: { userId } }, deletedAt: null },
-      _sum: { amount: true },
-    });
-
-    const totalPaidOut = await this.prisma.payout.aggregate({
-      where: { userId, status: { in: ['completed', 'processing'] } },
-      _sum: { amount: true },
-    });
-
-    const availableBalance =
-      (totalEarnings._sum.amount ?? 0) - (totalPaidOut._sum.amount ?? 0);
+    const earningsSummary = await this.earningsService.getUserTotalEarnings(userId);
+    const availableBalance = earningsSummary.availableBalance;
 
     if (amount > availableBalance) {
       throw new BadRequestException(

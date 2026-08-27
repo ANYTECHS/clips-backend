@@ -10,6 +10,10 @@ import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [PrismaModule, RedisModule, ConfigModule],
+  providers: [EarningsService],
+  exports: [EarningsService],
+})
+export class EarningsModule {}
   providers: [EarningsService, AnomalyDetectionService, AnomalyDetectionProcessor],
   exports: [EarningsService, AnomalyDetectionService],
 })
