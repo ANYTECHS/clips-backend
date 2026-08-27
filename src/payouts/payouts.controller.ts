@@ -208,6 +208,40 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
+      dto.destinations,
+    );
+  }
+
+  @Post('split')
+  @ApiOperation({
+    summary: 'Request a split payout with fiat and crypto destinations',
+    description:
+      'Initiates a creator payout split between fiat (bank) and crypto (Stellar) wallets. ' +
+      'The request amount is divided among specified destinations based on percentages. ' +
+      'Each destination must have a percentage that sums to 100%.',
+  })
+  @ApiBody({
+    type: CreatePayoutDto,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Split payout requests created successfully',
+    type: [PayoutResponseDto],
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid request, insufficient balance, percentages do not sum to 100, or minimum payout not met',
+  })
+  async requestSplitPayout(
+    @Req() req: RequestWithUser,
+    @Body() dto: CreatePayoutDto,
+  ) {
+    return this.payoutsService.requestPayoutWithDetails(
+      req.user.userId,
+      dto.amount,
+      dto.currency,
+      dto.method,
+      dto.destinations,
     );
   }
 
