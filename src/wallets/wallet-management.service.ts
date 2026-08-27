@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectWalletDto } from './dto/connect-wallet.dto';
@@ -123,7 +124,6 @@ export class WalletManagementService {
         },
       },
       update: {
-        userId,
         type: dto.type,
         deletedAt: null,
         updatedAt: new Date(),
