@@ -6,6 +6,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  isClipPosted,
+  POSTED_CLIP_MINT_ERROR,
+} from './clip-post-status.util';
 
 const NFT_STATUSES = {
   NONE: 'none',
@@ -95,6 +99,40 @@ export class ClipsService {
       throw new ConflictException(
         `Clip ${clipId} is currently being minted. Please wait.`,
       );
+    }
+
+    await this.preventPostedMint(clipId);
+  }
+
+  /**
+   * Business rule (Issue #764): a clip that has already been auto-posted to a
+   * social platform cannot be minted as an NFT.
+   *
+   * `NftMintGuard` enforces this at the HTTP edge for single-clip endpoints,
+   * but the guard resolves exactly one `clipId` and so never runs for
+   * `POST /nfts/batch-mint`. Enforcing it here as well means every mint path —
+   * single, batch, or queued — goes through the same check.
+   *
+   * Throws `BadRequestException` (HTTP 400), per the issue's acceptance
+   * criteria, rather than the 409 used for double-mint attempts: a posted clip
+   * is permanently ineligible, not a transient conflict to retry.
+   */
+  async preventPostedMint(clipId: number): Promise<void> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      select: {
+        postStatus: true,
+        postedAt: true,
+        clipPosts: { select: { status: true } },
+      },
+    });
+
+    if (!clip) {
+      throw new NotFoundException(`Clip with ID ${clipId} not found`);
+    }
+
+    if (isClipPosted(clip)) {
+      throw new BadRequestException(POSTED_CLIP_MINT_ERROR);
     }
   }
 

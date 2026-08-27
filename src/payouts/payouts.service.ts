@@ -19,13 +19,8 @@ import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
 import { PayoutLimitsService } from './payout-limits.service';
+import { CurrencyService } from '../common/services/currency.service';
 
-const OPEN_PAYOUT_STATUSES = [
-  'pending',
-  'pending_approval',
-  'approved',
-  'processing',
-] as const;
 import { OPEN_PAYOUT_STATUSES } from './payouts.constants';
 
 @Injectable()
@@ -44,16 +39,77 @@ export class PayoutsService {
     private payoutApprovalService: PayoutApprovalService,
     private readonly config: ConfigService,
     payoutLimitsService: PayoutLimitsService,
+    private readonly currencyService: CurrencyService,
     @InjectQueue(PAYOUT_RETRY_QUEUE) private payoutRetryQueue: Queue,
   ) {
     this.payoutLimitsService = payoutLimitsService;
   }
 
-  private assertMinimumPayout(amount: number): void {
-    if (amount < this.config.minStellarPayout) {
+  /**
+   * Enforce the minimum Stellar payout threshold (Issue #766).
+   *
+   * `MIN_STELLAR_PAYOUT` (default 5) is expressed as a *USD equivalent*, so a
+   * payout denominated in another currency is converted before comparison —
+   * otherwise 5 units of a weaker currency would clear a "5 USD" floor and the
+   * micro-payout this threshold exists to prevent would go through anyway.
+   */
+  private async assertMinimumPayout(
+    amount: number,
+    currency?: string,
+  ): Promise<void> {
+    const minimum = this.config.minStellarPayout;
+    const payoutCurrency = (
+      currency ?? this.defaultPayoutCurrency
+    ).toUpperCase();
+    const usdEquivalent = await this.toUsdEquivalent(amount, payoutCurrency);
+
+    if (usdEquivalent < minimum) {
+      const requested =
+        payoutCurrency === 'USD'
+          ? `${amount} USD`
+          : `${amount} ${payoutCurrency} (~${usdEquivalent.toFixed(2)} USD)`;
+
       throw new BadRequestException(
-        `Minimum payout amount is ${this.config.minStellarPayout} USD equivalent.`,
+        `Minimum payout amount is ${minimum} USD equivalent. Requested: ${requested}.`,
       );
+    }
+  }
+
+  /**
+   * Convert a payout amount to its USD equivalent for the minimum-payout check.
+   *
+   * Falls back to the raw amount when no rate is available (unsupported
+   * currency, rate provider unreachable) and logs a warning: blocking every
+   * payout because an external FX API is down is worse than occasionally
+   * applying the threshold in the payout's own currency.
+   */
+  private async toUsdEquivalent(
+    amount: number,
+    currency: string,
+  ): Promise<number> {
+    if (currency === 'USD') {
+      return amount;
+    }
+
+    try {
+      const { amount: converted, rate } = await this.currencyService.convert(
+        amount,
+        currency,
+        'USD',
+      );
+
+      if (!Number.isFinite(rate) || rate <= 0) {
+        throw new Error(`no usable ${currency}->USD rate`);
+      }
+
+      return converted;
+    } catch (error) {
+      this.logger.warn(
+        `Could not convert ${amount} ${currency} to USD for the minimum-payout ` +
+          `check (${error instanceof Error ? error.message : String(error)}); ` +
+          `comparing the raw amount against the threshold instead.`,
+      );
+      return amount;
     }
   }
 
@@ -117,7 +173,7 @@ export class PayoutsService {
       throw new BadRequestException('Requested amount does not match payout amount');
     }
 
-    this.assertMinimumPayout(amount);
+    await this.assertMinimumPayout(amount, payout.currency);
 
     const existingPending = await this.prisma.payout.findFirst({
       where: {
@@ -247,7 +303,7 @@ export class PayoutsService {
       const availableBalance =
         (totalEarnings._sum.amount ?? 0) - (totalPaidOut._sum.amount ?? 0);
 
-      this.assertMinimumPayout(availableBalance);
+      await this.assertMinimumPayout(availableBalance, currency);
 
       const fee = await this.feeService.calculateFee(availableBalance, 'stellar');
       const status = this.payoutApprovalService.resolveInitialStatus(availableBalance);
@@ -302,7 +358,7 @@ export class PayoutsService {
       );
     }
 
-    this.assertMinimumPayout(amount);
+    await this.assertMinimumPayout(amount, currency);
     this.assertPayoutLimits(amount, currency);
 
     const earningsSummary = await this.earningsService.getUserTotalEarnings(userId);
@@ -563,7 +619,7 @@ export class PayoutsService {
       throw new BadRequestException('No wallet associated with this payout');
     }
 
-    this.assertMinimumPayout(payout.amount);
+    await this.assertMinimumPayout(payout.amount, payout.currency);
 
     const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
     if (!platformSecret) {
@@ -835,7 +891,7 @@ export class PayoutsService {
             );
           }
 
-          this.assertMinimumPayout(payout.amount);
+          await this.assertMinimumPayout(payout.amount, payout.currency);
 
           const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
           if (!platformSecret) {
