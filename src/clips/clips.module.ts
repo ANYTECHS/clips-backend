@@ -8,6 +8,21 @@ import { NftMetadataService } from '../nft/nft-metadata.service';
 import { RoyaltyConfigurationService } from '../nft/royalty-configuration.service';
 import { CloudinaryService } from './cloudinary.service';
 import { NftMintService } from './nft-mint.service';
+import { ClipsService } from './clips.service';
+import { ClipsController } from './clips.controller';
+
+@Module({
+  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule],
+  providers: [
+    CloudinaryService,
+    NftConfig,
+    RoyaltyConfigurationService,
+    NftMetadataService,
+    NftMintService,
+    ClipsService,
+  ],
+  controllers: [ClipsController],
+  exports: [CloudinaryService, NftMintService, ClipsService],
 
 @Module({
   imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule],
