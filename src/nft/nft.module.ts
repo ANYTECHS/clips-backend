@@ -13,6 +13,7 @@ import { BatchRoyaltyController } from './batch-royalty.controller';
 import { ClipRoyaltyService } from './clip-royalty.service';
 import { ClipRoyaltyController } from './clip-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
+import { ClipsModule } from '../clips/clips.module';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
@@ -23,6 +24,7 @@ import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.
 import { GasMetricsService } from './gas-metrics.service';
 
 @Module({
+  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
   imports: [
     PrismaModule,
     StellarModule,
@@ -30,41 +32,18 @@ import { GasMetricsService } from './gas-metrics.service';
     IpfsUploadModule,
     NftOwnershipModule,
     RedisModule,
+    ClipsModule,
   ],
   providers: [
-    NftConfig,
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    NftMintGuard,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
-    AdminContractService,
+    NftConfig, NftService, GasMetricsService, NftMintService, NftMetadataService,
+    RoyaltyQueryService, PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    NftMintGuard, RoyaltyConfigurationService, MintSignatureVerificationService, AdminContractService,
   ],
-  controllers: [
-    NftController,
-    PlatformRevenueController,
-    BatchRoyaltyController,
-    ClipRoyaltyController,
-  ],
+  controllers: [NftController, PlatformRevenueController, BatchRoyaltyController, ClipRoyaltyController],
   exports: [
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    IpfsUploadModule,
-    NftOwnershipModule,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
+    NftService, GasMetricsService, NftMintService, NftMetadataService, RoyaltyQueryService,
+    PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    IpfsUploadModule, NftOwnershipModule, RoyaltyConfigurationService, MintSignatureVerificationService,
   ],
 })
 export class NftModule {}
