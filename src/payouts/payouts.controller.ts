@@ -28,6 +28,7 @@ import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
+import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
 import {
   PayoutProcessResponseDto,
   PayoutResponseDto,
@@ -35,6 +36,7 @@ import {
 } from './dto/payout-responses.dto';
 import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import { PayoutsService } from './payouts.service';
+import { BalanceService } from './balance.service';
 
 interface RequestWithUser extends Request {
   user: { userId: number };
@@ -63,7 +65,104 @@ const validationErrorSchema = {
 @Controller('payouts')
 @Auth()
 export class PayoutsController {
-  constructor(private readonly payoutsService: PayoutsService) {}
+  constructor(
+    private readonly payoutsService: PayoutsService,
+    private readonly balanceService: BalanceService,
+  ) {}
+
+  @Get('balance')
+  @ApiOperation({
+    summary: 'Get available balance for payout',
+    description:
+      'Returns the available balance that can be withdrawn. ' +
+      'Formula: Total Earnings - Total Paid Out - Total Pending Payouts.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Available balance information',
+    schema: {
+      type: 'object',
+      properties: {
+        totalEarnings: { type: 'number', example: 500 },
+        totalPaidOut: { type: 'number', example: 100 },
+        totalPending: { type: 'number', example: 50 },
+        availableBalance: { type: 'number', example: 350 },
+      },
+    },
+  })
+  async getBalance(@Req() req: RequestWithUser) {
+    return this.balanceService.getAvailableBalance(req.user.userId);
+  }
+
+  @Post('request-partial')
+  @ApiOperation({
+    summary: 'Request a partial payout (withdraw specific amount)',
+    description:
+      'Request to withdraw a specific amount up to the available balance. ' +
+      'Amount must be positive and not exceed available balance. ' +
+      'Payout status is determined by amount: ' +
+      'below approval threshold → approved, above → pending_review.',
+  })
+  @ApiBody({
+    type: CreatePayoutRequestDto,
+    examples: {
+      stellarPartial: {
+        summary: 'Withdraw $200 to Stellar wallet',
+        value: {
+          amount: 200,
+          walletId: 1,
+          reason: 'Monthly withdrawal',
+        },
+      },
+      bankTransfer: {
+        summary: 'Withdraw $150 via bank transfer',
+        value: {
+          amount: 150,
+          payoutMethodId: 1,
+          reason: 'Quarterly payout',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Partial payout request created successfully',
+    type: PayoutResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid amount, insufficient balance, or validation failed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message:
+          'Requested amount $300 exceeds available balance $250. ' +
+          'Total earnings: $500, Total paid out: $100, Pending payouts: $150.',
+        error: 'Bad Request',
+      },
+    },
+  })
+  async requestPartialPayout(
+    @Req() req: RequestWithUser,
+    @Body() dto: CreatePayoutRequestDto,
+  ) {
+    // Validate amount first
+    await this.balanceService.validatePayoutAmount(
+      req.user.userId,
+      dto.amount,
+    );
+
+    // Reserve balance atomically
+    const payoutId = await this.balanceService.reserveBalance(
+      req.user.userId,
+      dto.amount,
+      dto.payoutMethodId,
+      dto.walletId,
+    );
+
+    // Return created payout
+    return this.payoutsService.getPayoutById(req.user.userId, payoutId);
+  }
 
   @Post('request')
   @ApiOperation({
@@ -94,7 +193,7 @@ export class PayoutsController {
     schema: {
       example: {
         statusCode: 400,
-        message: 'Minimum payout amount is 5 USD equivalent.',
+        message: ['Minimum payout for USD is 5. Requested amount: 3.', 'Maximum payout for USD is 10000.'],
         error: 'Bad Request',
       },
     },
@@ -109,6 +208,40 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
+      dto.destinations,
+    );
+  }
+
+  @Post('split')
+  @ApiOperation({
+    summary: 'Request a split payout with fiat and crypto destinations',
+    description:
+      'Initiates a creator payout split between fiat (bank) and crypto (Stellar) wallets. ' +
+      'The request amount is divided among specified destinations based on percentages. ' +
+      'Each destination must have a percentage that sums to 100%.',
+  })
+  @ApiBody({
+    type: CreatePayoutDto,
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Split payout requests created successfully',
+    type: [PayoutResponseDto],
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid request, insufficient balance, percentages do not sum to 100, or minimum payout not met',
+  })
+  async requestSplitPayout(
+    @Req() req: RequestWithUser,
+    @Body() dto: CreatePayoutDto,
+  ) {
+    return this.payoutsService.requestPayoutWithDetails(
+      req.user.userId,
+      dto.amount,
+      dto.currency,
+      dto.method,
+      dto.destinations,
     );
   }
 
@@ -161,6 +294,7 @@ export class PayoutsController {
     description: 'Filter by payout status',
     enum: [
       'pending',
+      'pending_review',
       'pending_approval',
       'approved',
       'processing',
@@ -203,6 +337,28 @@ export class PayoutsController {
     @Param('id', ParseIntPipe) id: number,
   ) {
     return this.payoutsService.getPayoutById(req.user.userId, id);
+  }
+
+  @Get(':id/on-chain-status')
+  @ApiOperation({
+    summary: 'Get real-time on-chain status for a Stellar payout',
+    description:
+      'Queries Horizon directly for the live on-chain confirmation status of a Stellar payout transaction. ' +
+      'Returns the DB record enriched with real-time data from the Stellar network, including whether the ' +
+      'transaction was found, succeeded, and when it was confirmed.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+  })
+  @ApiNotFoundResponse({ description: 'Payout not found' })
+  async getOnChainStatus(
+    @Req() req: RequestWithUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.payoutsService.getOnChainStatus(req.user.userId, id);
   }
 
   @Post(':id/process')
