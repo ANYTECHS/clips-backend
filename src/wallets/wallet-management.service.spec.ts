@@ -30,6 +30,7 @@ const mockPrisma = {
 const mockWalletValidationService = {
   validateStellarAddress: jest.fn(),
   validateAddressForChain: jest.fn(),
+  verifySignatureOwnership: jest.fn(),
 };
 
 const baseWallet = {
@@ -131,6 +132,10 @@ describe('WalletManagementService.connect', () => {
     mockWalletValidationService.validateAddressForChain.mockImplementation(
       () => undefined,
     );
+    mockWalletValidationService.verifySignatureOwnership.mockImplementation(
+      () => undefined,
+    );
+    mockPrisma.wallet.findUnique.mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WalletManagementService,
@@ -148,6 +153,9 @@ describe('WalletManagementService.connect', () => {
     address: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
     chain: 'stellar' as const,
     type: 'freighter',
+    publicKey: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+    signature: 'sig-base64',
+    signedMessage: 'Connect ClipCash wallet 1719266696836',
   };
 
   it('rejects unsupported chain values before touching the database', async () => {
@@ -168,6 +176,9 @@ describe('WalletManagementService.connect', () => {
     const dtoWithoutChain = {
       address: stellarDto.address,
       type: stellarDto.type,
+      publicKey: stellarDto.publicKey,
+      signature: stellarDto.signature,
+      signedMessage: stellarDto.signedMessage,
     };
     mockPrisma.wallet.upsert.mockResolvedValue({
       id: 1,
@@ -233,7 +244,6 @@ describe('WalletManagementService.connect', () => {
         },
       },
       update: expect.objectContaining({
-        userId: 42,
         type: stellarDto.type,
         deletedAt: null,
       }),
@@ -247,10 +257,83 @@ describe('WalletManagementService.connect', () => {
     expect(result.id).toBe(1);
   });
 
+  it('verifies the signature and requires publicKey to match address for stellar', async () => {
+    mockPrisma.wallet.upsert.mockResolvedValue({
+      id: 1,
+      userId: 42,
+      ...stellarDto,
+    });
+
+    await service.connect(42, stellarDto);
+
+    expect(
+      mockWalletValidationService.verifySignatureOwnership,
+    ).toHaveBeenCalledWith(
+      stellarDto.publicKey,
+      stellarDto.signature,
+      stellarDto.signedMessage,
+    );
+  });
+
+  it('rejects a stellar connect when publicKey does not match address', async () => {
+    await expect(
+      service.connect(42, { ...stellarDto, publicKey: 'GDIFFERENTKEY' }),
+    ).rejects.toThrow(BadRequestException);
+    expect(mockPrisma.wallet.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects when signature verification fails', async () => {
+    mockWalletValidationService.verifySignatureOwnership.mockImplementation(
+      () => {
+        throw new BadRequestException('Signature verification failed');
+      },
+    );
+    await expect(service.connect(42, stellarDto)).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(mockPrisma.wallet.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects connecting a wallet address already owned by another user', async () => {
+    mockPrisma.wallet.findUnique.mockResolvedValue({
+      ...baseWallet,
+      address: stellarDto.address,
+      userId: 99,
+    });
+
+    await expect(service.connect(42, stellarDto)).rejects.toThrow(
+      ConflictException,
+    );
+    expect(mockPrisma.wallet.upsert).not.toHaveBeenCalled();
+  });
+
+  it('allows the same user to reconnect their own wallet', async () => {
+    mockPrisma.wallet.findUnique.mockResolvedValue({
+      ...baseWallet,
+      address: stellarDto.address,
+      userId: 42,
+    });
+    mockPrisma.wallet.upsert.mockResolvedValue({
+      id: 1,
+      userId: 42,
+      ...stellarDto,
+    });
+
+    await expect(service.connect(42, stellarDto)).resolves.toBeDefined();
+    expect(mockPrisma.wallet.upsert).toHaveBeenCalled();
+  });
+
   it.each(SUPPORTED_CHAINS)(
     'upserts a wallet for each supported chain "%s"',
     async (chain) => {
-      const dto = { address: stellarDto.address, chain, type: 'freighter' };
+      const dto = {
+        address: stellarDto.address,
+        chain,
+        type: 'freighter',
+        publicKey: stellarDto.address,
+        signature: stellarDto.signature,
+        signedMessage: stellarDto.signedMessage,
+      };
       mockPrisma.wallet.upsert.mockResolvedValue({ id: 1, userId: 42, ...dto });
 
       await service.connect(42, dto);
@@ -277,6 +360,7 @@ describe('WalletManagementService.connect', () => {
     const result = await service.connect(42, {
       ...stellarDto,
       address: fullAddress,
+      publicKey: fullAddress,
     });
 
     expect(result.address).not.toBe(fullAddress);

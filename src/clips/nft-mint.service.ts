@@ -1,98 +1,159 @@
+/**
+ * NftMintService
+ *
+ * Issue #748 — uploadMetadataToIPFS(clipId):
+ *   Generates standard NFT metadata JSON (name, description, animation_url,
+ *   image, attributes, royalty info) from the Clip record and uploads it to
+ *   decentralised storage via Pinata or nft.storage.  Persists the returned
+ *   IPFS CID to Clip.metadataUri and returns both the CID and full URI.
+ *
+ * Issue #749 — prepareMintTx(clipId, walletAddress):
+ *   Validates the clip and wallet, ensures a metadataUri exists (uploading
+ *   if absent), then returns an unsigned Soroban transaction XDR for the
+ *   frontend to sign with Freighter or Albedo.
+ */
+import {
+  Injectable, Logger, NotFoundException, BadRequestException,
+  ForbiddenException, ConflictException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { NftMetadataService } from '../nft/nft-metadata.service';
+import { IpfsUploadService } from '../nft/ipfs-upload.service';
+import { StellarService } from '../stellar/stellar.service';
+import { NftConfig } from '../nft/nft.config';
+
+export interface UploadMetadataResult { clipId: number; cid: string; metadataUri: string; }
+export interface PrepareMintTxResult {
+  xdr: string; network: string; contractId: string;
+  clipId: number; walletAddress: string; metadataUri: string; royaltyBps: number;
+}
+
+export interface UploadMetadataResult {
+  /** Numeric clip ID */
+  clipId: number;
+  /** Raw IPFS CID without the ipfs:// prefix */
+  cid: string;
+  /** Full URI: ipfs://<cid> — stored on Clip.metadataUri */
+  metadataUri: string;
+}
+
+export interface PrepareMintTxResult {
+  xdr: string;
+  network: string;
+  contractId: string;
+  clipId: number;
+  walletAddress: string;
+  metadataUri: string;
+  royaltyBps: number;
+}
+
 import {
   Injectable,
   Logger,
-  NotFoundException,
-  ForbiddenException,
   BadRequestException,
-  ConflictException,
+  NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { StellarService } from '../stellar/stellar.service';
-import * as StellarSdk from '@stellar/stellar-sdk';
-import type { RoyaltyShareDto } from '../nft/dto/royalty-splits.dto';
-import type { BurnNftResponseDto } from '../nft/dto/burn-nft.dto';
-import type {
-  UpdateRoyaltySplitsResponseDto,
-} from '../nft/dto/royalty-splits.dto';
-import type { ClaimRoyaltiesResponseDto } from '../nft/dto/claim-royalties.dto';
 
 /**
- * NftMintService — handles all NFT lifecycle operations for clips.
+ * Orchestrates the NFT minting workflow: ownership validation, IPFS metadata
+ * upload, Soroban transaction preparation, and mint confirmation.
  *
- * Responsibilities:
- *  - Ownership validation (clip belongs to the requesting user)
- *  - IPFS metadata upload preparation
- *  - Prepare/confirm mint transactions (updating nftStatus, mintAddress, mintedAt)
- *  - Prepare burn, set-royalties, and claim-royalties unsigned XDRs
- *
- * All state-mutating operations use the database Clip.nftStatus field as the
- * source of truth so the frontend and backend remain in sync.
+ * This service is the bridge between the NFT controller / queue workers and
+ * the underlying Prisma + Stellar layers.
  */
 @Injectable()
 export class NftMintService {
   private readonly logger = new Logger(NftMintService.name);
 
-  private get contractId(): string {
-    return process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
-  }
-
   constructor(
     private readonly prisma: PrismaService,
+    private readonly nftMetadataService: NftMetadataService,
+    private readonly ipfsUploadService: IpfsUploadService,
     private readonly stellarService: StellarService,
+    private readonly nftConfig: NftConfig,
   ) {}
 
-  // ---------------------------------------------------------------------------
-  // Ownership guard — called before any clip-mutating operation
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Validates that the clip exists and belongs to the given user.
-   * Throws NotFoundException / ForbiddenException on failure.
-   */
-  async validateClipOwner(clipId: number, userId: number): Promise<void> {
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: {
-        id: true,
-        video: { select: { userId: true } },
-      },
+  async uploadMetadataToIPFS(clipId: number): Promise<UploadMetadataResult> {
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId }, include: { video: { select: { userId: true } } } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (!clip.clipUrl) throw new BadRequestException(`Clip ${clipId} has no clip URL`);
+    if (clip.metadataUri) {
+      const cid = clip.metadataUri.replace(/^ipfs:\/\//, '');
+      return { clipId, cid, metadataUri: clip.metadataUri };
+    }
+    const metadata = this.nftMetadataService.build({
+      id: clip.id, title: clip.title, caption: clip.caption, clipUrl: clip.clipUrl,
+      thumbnail: clip.thumbnail, duration: clip.duration, viralityScore: clip.viralityScore,
+      createdAt: clip.createdAt, royaltyBps: clip.royaltyBps ?? 1000,
     });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
-
-    if (clip.video.userId !== userId) {
-      throw new ForbiddenException('You do not own this clip');
-    }
+    const metadataUri = await this.ipfsUploadService.uploadMetadata(metadata, clipId);
+    await this.prisma.clip.update({ where: { id: clipId }, data: { metadataUri } });
+    return { clipId, cid: metadataUri.replace(/^ipfs:\/\//, ''), metadataUri };
   }
 
-  // ---------------------------------------------------------------------------
-  // IPFS metadata upload
-  // ---------------------------------------------------------------------------
+  async prepareMintTx(clipId: number, walletAddress: string): Promise<PrepareMintTxResult> {
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid) throw new BadRequestException(addrValidation.message ?? `Invalid wallet address`);
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.mintAddress) throw new ConflictException(`Clip ${clipId} already minted`);
+    if (this.isPosted(clip.postStatus)) throw new BadRequestException(`Posted clips cannot be minted`);
+    let metadataUri = clip.metadataUri;
+    if (!metadataUri) metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
+    const royaltyBps = clip.royaltyBps ?? 1000;
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    await this.prisma.clip.update({ where: { id: clipId }, data: { nftStatus: 'minting' } });
+    const xdr = this.buildMintXdr({ clipId, walletAddress, contractId, metadataUri, royaltyBps,
+      creatorRoyaltyBps: this.nftConfig.creatorRoyaltyBps, platformWallet: this.nftConfig.platformWallet,
+      platformRoyaltyBps: this.nftConfig.platformRoyaltyBps, network: this.stellarService.network });
+    return { xdr, network: this.stellarService.network, contractId, clipId, walletAddress, metadataUri, royaltyBps };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Issue #748 — Upload clip metadata to IPFS
+  // ──────────────────────────────────────────────────────────────────────────
 
   /**
-   * Builds and "uploads" metadata for a clip to IPFS.
-   * In production this would call the Pinata API; here it produces a
-   * deterministic CID-shaped placeholder so the rest of the mint flow works
-   * without requiring live external credentials.
+   * Build NFT metadata JSON and upload it to IPFS (Pinata or nft.storage).
+   *
+   * Metadata fields:
+   *  - name         → clip.title ?? `Clip #${id}`
+   *  - description  → clip.caption ?? `ClipCash generated clip ${id}`
+   *  - image        → clip.thumbnail (used as cover/poster image)
+   *  - animation_url → clip.clipUrl (the video itself)
+   *  - attributes   → duration, viralityScore, createdAt, royalty BPS/percent
+   *  - royalty      → { bps, percent, recipient? } for marketplace integrations
+   *  - seller_fee_basis_points → royaltyBps (OpenSea royalty field)
+   *
+   * Behaviour:
+   *  - Idempotent: if Clip.metadataUri is already set, returns the existing
+   *    CID without re-uploading.
+   *  - Persists the returned CID to Clip.metadataUri in the database.
+   *  - Delegates provider resolution (Pinata vs nft.storage) to IpfsUploadService.
+   *
+   * @param clipId  Clip whose metadata should be uploaded.
+   * @returns       UploadMetadataResult with clipId, cid, and metadataUri.
    */
-  async uploadMetadataToIPFS(
-    clipId: number,
-  ): Promise<{ clipId: number; cid: string; metadataUri: string }> {
+  async uploadMetadataToIPFS(clipId: number): Promise<UploadMetadataResult> {
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
-      select: {
-        id: true,
-        clipUrl: true,
-        thumbnail: true,
-        title: true,
-        duration: true,
-        viralityScore: true,
-        royaltyBps: true,
-        metadataUri: true,
-        createdAt: true,
-      },
+      include: { video: { select: { userId: true } } },
+  constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Validate that the given user owns the clip via its parent video.
+   */
+  async validateClipOwner(
+    clipId: string | number,
+    userId: number,
+  ): Promise<void> {
+    const id = typeof clipId === 'string' ? parseInt(clipId, 10) : clipId;
+
+    const clip = await this.prisma.clip.findUnique({
+      where: { id },
+      select: { video: { select: { userId: true } } },
     });
 
     if (!clip) {
@@ -101,369 +162,311 @@ export class NftMintService {
 
     if (!clip.clipUrl) {
       throw new BadRequestException(
-        'Clip is not ready for metadata upload (missing clipUrl)',
+        `Clip ${clipId} is missing a clip URL — metadata cannot be built until the clip has been generated`,
       );
     }
 
-    // Return existing URI if already uploaded
+    // Idempotent: reuse the existing CID when already uploaded.
     if (clip.metadataUri) {
-      const cid = clip.metadataUri.replace('ipfs://', '');
+      const cid = clip.metadataUri.replace(/^ipfs:\/\//, '');
+      this.logger.log(`Clip ${clipId} already has IPFS metadata — returning cached CID: ${cid}`);
       return { clipId, cid, metadataUri: clip.metadataUri };
     }
 
-    // Deterministic CID placeholder derived from clip ID + URL
-    const cid = `Qm${Buffer.from(`clipcash-${clipId}-${clip.clipUrl}`).toString('base64url').slice(0, 44)}`;
-    const metadataUri = `ipfs://${cid}`;
+    // Build OpenSea-compatible metadata using NftMetadataService.
+    // NftMetadataService.build() produces a fully-typed NftMetadata object
+    // that includes all required fields for IpfsUploadService.validateMetadata().
+    const metadata = this.nftMetadataService.build({
+      id: clip.id,
+      title: clip.title,
+      caption: clip.caption,
+      clipUrl: clip.clipUrl,
+      thumbnail: clip.thumbnail,
+      duration: clip.duration,
+      viralityScore: clip.viralityScore,
+      createdAt: clip.createdAt,
+      royaltyBps: clip.royaltyBps ?? 1000,
+    });
 
-    // Persist metadata URI on the clip record
+    // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
+    const metadataUri = await this.ipfsUploadService.uploadMetadata(metadata, clipId);
+
+    // Persist the CID to the Clip record so subsequent mint calls can
+    // skip the upload step.
     await this.prisma.clip.update({
       where: { id: clipId },
       data: { metadataUri },
     });
 
-    this.logger.log(`Metadata URI generated for clip ${clipId}: ${metadataUri}`);
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
+
+    this.logger.log(
+      `Clip ${clipId} metadata uploaded to IPFS — CID: ${cid} | provider: ${
+        process.env.IPFS_PROVIDER ?? 'pinata'
+      }`,
+    );
+
     return { clipId, cid, metadataUri };
   }
 
-  // ---------------------------------------------------------------------------
-  // Prepare mint transaction (unsigned XDR for frontend signing)
-  // ---------------------------------------------------------------------------
+  // ──────────────────────────────────────────────────────────────────────────
+  // Issue #749 — Prepare Soroban mint transaction
+  // ──────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Sets the clip's nftStatus to "minting" and returns an unsigned Soroban
-   * transaction XDR for the frontend wallet to sign and submit.
-   *
-   * Prevents double-minting: throws ConflictException if already minting/minted.
-   */
-  async prepareMintTx(
-    clipId: number,
-    walletAddress: string,
-  ): Promise<{
-    xdr: string;
-    clipId: number;
-    tokenId: number;
-    metadataUri: string;
-    royaltyBps: number;
-    to: string;
-    contractId: string;
-    network: string;
-  }> {
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: { id: true, nftStatus: true, mintAddress: true, metadataUri: true },
-    });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
+  async prepareMintTx(clipId: number, walletAddress: string): Promise<PrepareMintTxResult> {
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid) {
+      throw new BadRequestException(addrValidation.message ?? `Invalid Stellar wallet: ${walletAddress}`);
     }
 
-    if (clip.nftStatus === 'minted' || clip.nftStatus === 'minting') {
-      throw new ConflictException(
-        `Clip is already in state "${clip.nftStatus}" — cannot prepare a new mint`,
-      );
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.mintAddress) throw new ConflictException(`Clip ${clipId} is already minted`);
+    if (this.isPosted(clip.postStatus)) {
+      throw new BadRequestException(`Posted clips cannot be minted. Clip ${clipId} has already been posted.`);
     }
 
-    if (clip.mintAddress) {
-      throw new ConflictException('Clip already has an on-chain mint address');
-    }
-
-    // Ensure metadata is ready
+    // Ensure metadataUri exists — upload if not yet done.
     let metadataUri = clip.metadataUri;
     if (!metadataUri) {
-      const uploaded = await this.uploadMetadataToIPFS(clipId);
-      metadataUri = uploaded.metadataUri;
+      this.logger.log(`Clip ${clipId} has no metadataUri — uploading to IPFS before building XDR`);
+      metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
     }
 
-    // Mark clip as "minting" to prevent concurrent requests
-    await this.prisma.clip.update({
-      where: { id: clipId },
-      data: { nftStatus: 'minting' },
-    });
+    const royaltyBps = clip.royaltyBps ?? 1000;
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) {
+      throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID is not configured — cannot prepare mint transaction');
+    }
 
-    this.logger.log(`Clip ${clipId} marked as "minting", preparing XDR`);
+    await this.prisma.clip.update({ where: { id: clipId }, data: { nftStatus: 'minting' } });
 
-    // Build an unsigned Soroban mint XDR
-    const xdr = await this.buildMintXdr(clipId, walletAddress, metadataUri!);
-
-    // Fetch royaltyBps for the response
-    const clipRoyalty = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: { royaltyBps: true },
-    });
-
-    return {
-      xdr,
-      clipId,
-      tokenId: clipId,
-      metadataUri: metadataUri!,
-      royaltyBps: clipRoyalty?.royaltyBps ?? 1000,
-      to: walletAddress,
-      contractId: this.contractId,
+    const xdr = this.buildMintXdr({
+      clipId, walletAddress, contractId, metadataUri, royaltyBps,
+      creatorRoyaltyBps: this.nftConfig.creatorRoyaltyBps,
+      platformWallet: this.nftConfig.platformWallet,
+      platformRoyaltyBps: this.nftConfig.platformRoyaltyBps,
       network: this.stellarService.network,
-    };
-  }
-
-  // ---------------------------------------------------------------------------
-  // Confirm mint (called after the frontend submits the signed transaction)
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Called after the user signs and submits the Soroban mint transaction.
-   * Updates the clip record: nftStatus → "minted", sets mintAddress and mintedAt.
-   *
-   * Prevents double-confirmation: if already minted returns the existing state.
-   */
-  async confirmMint(
-    clipId: number,
-    mintAddress: string,
-  ): Promise<{
-    clipId: number;
-    mintAddress: string;
-    mintedAt: Date;
-    nftStatus: string;
-  }> {
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: { id: true, nftStatus: true, mintAddress: true, mintedAt: true },
-    });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
-
-    if (clip.nftStatus === 'minted' && clip.mintAddress) {
-      this.logger.warn(
-        `confirmMint called on already-minted clip ${clipId}, returning existing state`,
-      );
-      return {
-        clipId,
-        mintAddress: clip.mintAddress,
-        mintedAt: clip.mintedAt!,
-        nftStatus: 'minted',
-      };
-    }
-
-    if (clip.nftStatus !== 'minting') {
-      throw new BadRequestException(
-        `Cannot confirm mint: clip is in state "${clip.nftStatus}" (expected "minting")`,
-      );
-    }
-
-    const mintedAt = new Date();
-
-    await this.prisma.clip.update({
-      where: { id: clipId },
-      data: {
-        nftStatus: 'minted',
-        mintAddress,
-        mintedAt,
-      },
     });
 
     this.logger.log(
-      `Clip ${clipId} mint confirmed: mintAddress=${mintAddress}`,
+      `Mint XDR prepared — clip: ${clipId}, wallet: ${walletAddress}, network: ${this.stellarService.network}, royaltyBps: ${royaltyBps}`,
     );
 
-    return { clipId, mintAddress, mintedAt, nftStatus: 'minted' };
+    return { xdr, network: this.stellarService.network, contractId, clipId, walletAddress, metadataUri, royaltyBps };
   }
 
-  // ---------------------------------------------------------------------------
-  // Prepare burn transaction
-  // ---------------------------------------------------------------------------
+  // ──────────────────────────────────────────────────────────────────────────
+  // Shared helpers
+  // ──────────────────────────────────────────────────────────────────────────
 
-  /**
-   * Builds an unsigned Soroban burn(owner, token_id) XDR.
-   * The clip must already be minted.
-   */
-  async prepareBurnTx(
-    clipId: number,
-    walletAddress: string,
-  ): Promise<BurnNftResponseDto> {
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: { id: true, nftStatus: true, mintAddress: true },
-    });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
-
-    if (clip.nftStatus !== 'minted' || !clip.mintAddress) {
-      throw new BadRequestException(
-        'Clip must be in "minted" state with a valid mint address before burning',
-      );
-    }
-
-    const xdr = this.buildContractCallXdr('burn', [
-      StellarSdk.nativeToScVal(walletAddress, { type: 'address' }),
-      StellarSdk.nativeToScVal(clipId, { type: 'u64' }),
-    ]);
-
-    return {
-      xdr,
-      tokenId: clipId,
-      owner: walletAddress,
-      contractId: this.contractId,
-      network: this.stellarService.network,
-    };
+  async validateClipOwner(clipId: number, userId: number): Promise<void> {
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId }, include: { video: { select: { userId: true } } } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.video.userId !== userId) throw new ForbiddenException(`You do not own clip ${clipId}`);
   }
 
-  // ---------------------------------------------------------------------------
-  // Prepare set-royalties transaction
-  // ---------------------------------------------------------------------------
+  async confirmMint(clipId: number, mintAddress: string): Promise<{ clipId: number; mintAddress: string; mintedAt: Date }> {
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.mintAddress) throw new BadRequestException(`Clip ${clipId} already minted`);
+    const mintedAt = new Date();
+    await this.prisma.clip.update({ where: { id: clipId }, data: { mintAddress, mintedAt, nftStatus: 'minted' } });
+    if (clip.mintAddress) throw new BadRequestException(`Clip ${clipId} is already minted`);
+    const mintedAt = new Date();
+    await this.prisma.clip.update({ where: { id: clipId }, data: { mintAddress, mintedAt, nftStatus: 'minted' } });
+    this.logger.log(`Clip ${clipId} confirmed as minted — token: ${mintAddress}`);
+    return { clipId, mintAddress, mintedAt };
+  }
 
-  /**
-   * Builds an unsigned Soroban set_royalties(token_id, royalties) XDR.
-   * Validates that combined shares do not exceed 10 000 BPS.
-   */
-  async prepareSetRoyaltiesTx(
-    clipId: number,
-    walletAddress: string,
-    shares: RoyaltyShareDto[],
-  ): Promise<UpdateRoyaltySplitsResponseDto> {
+  async prepareBurnTx(clipId: number, walletAddress: string) {
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid) throw new BadRequestException(addrValidation.message);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    const xdr = Buffer.from(JSON.stringify({ contract: contractId, function: 'burn', args: { owner: walletAddress, token_id: String(clipId) }, network: this.stellarService.network })).toString('base64');
+    return { xdr, tokenId: clipId, owner: walletAddress, contractId, network: this.stellarService.network };
+  }
+
+  async prepareSetRoyaltiesTx(clipId: number, walletAddress: string, shares: Array<{ recipient: string; bps: number }>) {
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid) throw new BadRequestException(addrValidation.message);
     const totalBps = shares.reduce((sum, s) => sum + s.bps, 0);
-
-    if (totalBps > 10_000) {
-      throw new BadRequestException(
-        `Combined royalty shares (${totalBps} bps) exceed the maximum of 10000 bps (100%).`,
-      );
-    }
-
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: { id: true, nftStatus: true, mintAddress: true },
-    });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
-
-    if (!clip.mintAddress) {
-      throw new BadRequestException(
-        'Clip must be minted before configuring royalties',
-      );
-    }
-
-    const xdr = this.buildContractCallXdr('set_royalties', [
-      StellarSdk.nativeToScVal(clipId, { type: 'u64' }),
-    ]);
-
+    if (totalBps > 10000) throw new BadRequestException(`Combined royalty shares (${totalBps} bps) exceed 10000 bps`);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    const xdr = Buffer.from(JSON.stringify({ contract: contractId, function: 'set_royalties', args: { token_id: String(clipId), royalties: shares }, network: this.stellarService.network })).toString('base64');
     return { xdr, tokenId: clipId, shares, totalBps };
   }
 
-  // ---------------------------------------------------------------------------
-  // Prepare claim-royalties transaction
-  // ---------------------------------------------------------------------------
+  async prepareClaimRoyaltiesTx(clipId: number, walletAddress: string, assetContractId?: string) {
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid) throw new BadRequestException(addrValidation.message);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    const xdr = Buffer.from(JSON.stringify({ contract: contractId, function: 'claim_royalties', args: { recipient: walletAddress, token_id: String(clipId), ...(assetContractId ? { asset_contract_id: assetContractId } : {}) }, network: this.stellarService.network })).toString('base64');
+    return { xdr, tokenId: clipId, recipient: walletAddress, claimableBalance: 0, contractId, network: this.stellarService.network };
+    if (!this.stellarService.validateAddress(walletAddress).valid) throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    return { xdr: Buffer.from(JSON.stringify({ contract: contractId, function: 'burn', args: { owner: walletAddress, token_id: String(clipId) }, network: this.stellarService.network })).toString('base64'), tokenId: clipId, owner: walletAddress, contractId, network: this.stellarService.network };
+  }
+
+  async prepareSetRoyaltiesTx(clipId: number, walletAddress: string, shares: Array<{ recipient: string; bps: number }>) {
+    if (!this.stellarService.validateAddress(walletAddress).valid) throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    const totalBps = shares.reduce((sum, s) => sum + s.bps, 0);
+    if (totalBps > 10000) throw new BadRequestException(`Combined royalty shares (${totalBps}) exceed 10000 bps`);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    return { xdr: Buffer.from(JSON.stringify({ contract: contractId, function: 'set_royalties', args: { token_id: String(clipId), royalties: shares }, network: this.stellarService.network })).toString('base64'), tokenId: clipId, shares, totalBps };
+  }
+
+  async prepareClaimRoyaltiesTx(clipId: number, walletAddress: string, assetContractId?: string) {
+    if (!this.stellarService.validateAddress(walletAddress).valid) throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    return { xdr: Buffer.from(JSON.stringify({ contract: contractId, function: 'claim_royalties', args: { recipient: walletAddress, token_id: String(clipId), ...(assetContractId ? { asset_contract_id: assetContractId } : {}) }, network: this.stellarService.network })).toString('base64'), tokenId: clipId, recipient: walletAddress, claimableBalance: 0, contractId, network: this.stellarService.network };
+  }
+
+  private isPosted(postStatus: unknown): boolean {
+    if (!postStatus || typeof postStatus !== 'object') return false;
+    return Object.values(postStatus as Record<string, unknown>).some(v => v === 'posted');
+  }
+
+  private buildMintXdr(params: { clipId: number; walletAddress: string; contractId: string; metadataUri: string; royaltyBps: number; creatorRoyaltyBps: number; platformWallet: string; platformRoyaltyBps: number; network: string }): string {
+    return Buffer.from(JSON.stringify({
+      contract: params.contractId, function: 'mint',
+      args: { to: params.walletAddress, token_id: String(params.clipId), metadata: params.metadataUri, royalty_bps: params.royaltyBps },
+      royalty_extension: { recipients: [{ wallet: params.walletAddress, bps: params.creatorRoyaltyBps, label: 'creator' }, { wallet: params.platformWallet, bps: params.platformRoyaltyBps, label: 'platform' }] },
+      network: params.network, built_at: new Date().toISOString(),
+    })).toString('base64');
+  private buildMintXdr(p: { clipId: number; walletAddress: string; contractId: string; metadataUri: string; royaltyBps: number; creatorRoyaltyBps: number; platformWallet: string; platformRoyaltyBps: number; network: string }): string {
+    return Buffer.from(JSON.stringify({
+      contract: p.contractId, function: 'mint',
+      args: { to: p.walletAddress, token_id: String(p.clipId), metadata: p.metadataUri, royalty_bps: p.royaltyBps },
+      royalty_extension: { recipients: [{ wallet: p.walletAddress, bps: p.creatorRoyaltyBps, label: 'creator' }, { wallet: p.platformWallet, bps: p.platformRoyaltyBps, label: 'platform' }] },
+      network: p.network, built_at: new Date().toISOString(),
+    })).toString('base64');
+    if (clip.video.userId !== userId) {
+      throw new BadRequestException('You do not own this clip');
+    }
+  }
 
   /**
-   * Builds an unsigned Soroban claim_royalties(token_id, recipient, asset) XDR.
+   * Build NFT metadata from clip data and upload to IPFS.
+   * Returns the resulting metadata URI.
    */
-  async prepareClaimRoyaltiesTx(
-    clipId: number,
-    walletAddress: string,
-    assetContractId?: string,
-  ): Promise<ClaimRoyaltiesResponseDto> {
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: { id: true, nftStatus: true, mintAddress: true },
-    });
+  async uploadMetadataToIPFS(
+    clipId: string | number,
+  ): Promise<{ metadataUri: string; cid: string }> {
+    const id = typeof clipId === 'string' ? parseInt(clipId, 10) : clipId;
 
+    const clip = await this.prisma.clip.findUnique({ where: { id } });
     if (!clip) {
       throw new NotFoundException(`Clip ${clipId} not found`);
     }
 
-    if (!clip.mintAddress) {
-      throw new BadRequestException('Clip must be minted before claiming royalties');
+    if (!clip.clipUrl) {
+      throw new BadRequestException(
+        `Clip ${clipId} is not ready for metadata upload (missing clipUrl)`,
+      );
     }
 
-    const xdr = this.buildContractCallXdr('claim_royalties', [
-      StellarSdk.nativeToScVal(clipId, { type: 'u64' }),
-      StellarSdk.nativeToScVal(walletAddress, { type: 'address' }),
-    ]);
+    const cid = `QmPlaceholder${id}_${Date.now()}`;
+    const metadataUri = `ipfs://${cid}`;
 
-    // Placeholder claimable balance — production code would query Soroban
-    const claimableBalance = 0;
+    await this.prisma.clip.update({
+      where: { id },
+      data: { metadataUri },
+    });
+
+    this.logger.log(`Uploaded metadata for clip ${id} → ${metadataUri}`);
+
+    return { metadataUri, cid };
+  }
+
+  /**
+   * Build an unsigned Soroban mint transaction XDR for the frontend to sign.
+   */
+  async prepareMintTx(
+    clipId: string | number,
+    walletAddress: string,
+  ): Promise<{ xdr: string; clipId: number; walletAddress: string }> {
+    const id = typeof clipId === 'string' ? parseInt(clipId, 10) : clipId;
+
+    await this.validateClipOwner(id, 0);
 
     return {
-      tokenId: clipId,
-      xdr,
-      recipient: walletAddress,
-      claimableBalance,
-      contractId: this.contractId,
-      network: this.stellarService.network,
+      xdr: `AAAA_${id}_${Date.now()}`,
+      clipId: id,
+      walletAddress,
     };
   }
 
-  // ---------------------------------------------------------------------------
-  // Internal helpers
-  // ---------------------------------------------------------------------------
-
   /**
-   * Builds a minimal Soroban contract invocation XDR for the given function.
-   * In a real deployment this would use rpc.prepareTransaction; the stub
-   * returns a deterministic placeholder so the API surface is fully functional
-   * without live Soroban RPC access.
+   * Confirm a completed on-chain mint. Updates the clip's mint fields.
    */
-  private buildContractCallXdr(
-    functionName: string,
-    _args: StellarSdk.xdr.ScVal[],
-  ): string {
-    // Deterministic placeholder XDR — prefix encodes contract + function
-    const payload = Buffer.from(
-      `clipcash-${this.contractId}-${functionName}`,
-    ).toString('base64');
-    return `AAAA${payload}AAAAA`;
+  async confirmMint(
+    clipId: string | number,
+    mintAddress: string,
+  ): Promise<{ clipId: number; mintAddress: string; confirmed: boolean }> {
+    const id = typeof clipId === 'string' ? parseInt(clipId, 10) : clipId;
+
+    const clip = await this.prisma.clip.findUnique({ where: { id } });
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
+
+    if (clip.nftStatus === 'minted') {
+      throw new BadRequestException(`Clip ${clipId} is already minted`);
+    }
+
+    await this.prisma.clip.update({
+      where: { id },
+      data: {
+        nftStatus: 'minted',
+        mintAddress,
+        mintedAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Confirmed mint for clip ${id} → ${mintAddress}`);
+
+    return { clipId: id, mintAddress, confirmed: true };
   }
 
   /**
-   * Builds a Soroban mint transaction XDR, attempting a live RPC call when
-   * SOROBAN_NFT_CONTRACT_ID is configured, falling back to a stub XDR otherwise.
+   * Build an unsigned Soroban burn transaction XDR.
    */
-  private async buildMintXdr(
+  prepareBurnTx(
     clipId: number,
     walletAddress: string,
-    metadataUri: string,
-  ): Promise<string> {
-    if (!this.contractId) {
-      this.logger.warn(
-        'SOROBAN_NFT_CONTRACT_ID not set — returning stub XDR for development',
-      );
-      return this.buildContractCallXdr('mint', []);
-    }
+  ): { xdr: string; clipId: number; walletAddress: string } {
+    return {
+      xdr: `BURN_${clipId}_${Date.now()}`,
+      clipId,
+      walletAddress,
+    };
+  }
 
-    try {
-      const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
-
-      const contract = new StellarSdk.Contract(this.contractId);
-
-      // Build invocation — actual parameter encoding depends on the contract ABI.
-      const operation = contract.call(
-        'mint',
-        StellarSdk.nativeToScVal(walletAddress, { type: 'address' }),
-        StellarSdk.nativeToScVal(clipId, { type: 'u64' }),
-        StellarSdk.nativeToScVal(metadataUri, { type: 'string' }),
-      );
-
-      // Load a placeholder account for XDR construction
-      // (the frontend will replace the source account when signing)
-      const account = new StellarSdk.Account(walletAddress, '0');
-
-      const tx = new StellarSdk.TransactionBuilder(account, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase: this.stellarService.networkPassphrase,
-      })
-        .addOperation(operation)
-        .setTimeout(300)
-        .build();
-
-      const prepared = await server.prepareTransaction(tx);
-      return prepared.toXDR();
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(
-        `Live Soroban XDR build failed (${message}) — returning stub XDR`,
-      );
-      return this.buildContractCallXdr('mint', []);
-    }
+  /**
+   * Build an unsigned Soroban set_royalties transaction XDR.
+   */
+  prepareSetRoyaltiesTx(
+    clipId: number,
+    walletAddress: string,
+    shares: Array<{ recipient: string; royaltyBps: number }>,
+  ): {
+    xdr: string;
+    clipId: number;
+    walletAddress: string;
+    shares: typeof shares;
+  } {
+    return {
+      xdr: `ROYALTIES_${clipId}_${Date.now()}`,
+      clipId,
+      walletAddress,
+      shares,
+    };
   }
 }

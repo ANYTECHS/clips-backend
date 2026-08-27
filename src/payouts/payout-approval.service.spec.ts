@@ -27,10 +27,10 @@ describe('PayoutApprovalService', () => {
     expect(service.resolveInitialStatus(120)).toBe('approved');
   });
 
-  it('marks large payouts as pending approval', () => {
+  it('marks large payouts as pending review', () => {
     process.env.PAYOUT_APPROVAL_THRESHOLD = '500';
     const service = new PayoutApprovalService();
 
-    expect(service.resolveInitialStatus(500)).toBe('pending_approval');
+    expect(service.resolveInitialStatus(500)).toBe('pending_review');
   });
 });

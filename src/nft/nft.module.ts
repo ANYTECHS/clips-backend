@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { IpfsUploadModule } from './ipfs-upload.module';
 import { NftOwnershipModule } from './nft-ownership.module';
+import { RedisModule } from '../redis/redis.module';
 import { NftConfig } from './nft.config';
 import { NftService } from './nft.service';
 import { NftController } from './nft.controller';
@@ -13,6 +14,7 @@ import { BatchRoyaltyController } from './batch-royalty.controller';
 import { ClipRoyaltyService } from './clip-royalty.service';
 import { ClipRoyaltyController } from './clip-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
+import { ClipsModule } from '../clips/clips.module';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
@@ -20,11 +22,13 @@ import { AdminContractService } from './admin-contract.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
+import { RedisModule } from '../redis/redis.module';
+import { ConfigModule } from '../config/config.module';
 import { GasMetricsService } from './gas-metrics.service';
 import { RedisModule } from '../redis/redis.module';
-import { ClipsModule } from '../clips/clips.module';
 
 @Module({
+  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
   imports: [
     PrismaModule,
     StellarModule,
@@ -35,38 +39,15 @@ import { ClipsModule } from '../clips/clips.module';
     ClipsModule,
   ],
   providers: [
-    NftConfig,
-    NftService,
-    GasMetricsService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    NftMintGuard,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
-    AdminContractService,
+    NftConfig, NftService, GasMetricsService, NftMintService, NftMetadataService,
+    RoyaltyQueryService, PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    NftMintGuard, RoyaltyConfigurationService, MintSignatureVerificationService, AdminContractService,
   ],
-  controllers: [
-    NftController,
-    PlatformRevenueController,
-    BatchRoyaltyController,
-    ClipRoyaltyController,
-  ],
+  controllers: [NftController, PlatformRevenueController, BatchRoyaltyController, ClipRoyaltyController],
   exports: [
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    IpfsUploadModule,
-    NftOwnershipModule,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
+    NftService, GasMetricsService, NftMintService, NftMetadataService, RoyaltyQueryService,
+    PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    IpfsUploadModule, NftOwnershipModule, RoyaltyConfigurationService, MintSignatureVerificationService,
   ],
 })
 export class NftModule {}

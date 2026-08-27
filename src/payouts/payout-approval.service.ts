@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-export type PayoutApprovalStatus = 'approved' | 'pending_approval';
+export type PayoutApprovalStatus = 'approved' | 'pending_approval' | 'pending_review';
 
 @Injectable()
 export class PayoutApprovalService {
@@ -21,8 +21,17 @@ export class PayoutApprovalService {
   }
 
   resolveInitialStatus(amount: number): PayoutApprovalStatus {
-    return this.requiresManualApproval(amount)
-      ? 'pending_approval'
-      : 'approved';
+    if (!this.requiresManualApproval(amount)) {
+      return 'approved';
+    }
+    return 'pending_review';
+  }
+
+  canApprove(status: string): boolean {
+    return ['pending', 'pending_review', 'pending_approval'].includes(status);
+  }
+
+  canReject(status: string): boolean {
+    return ['pending', 'pending_review', 'pending_approval', 'approved'].includes(status);
   }
 }
