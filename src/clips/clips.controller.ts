@@ -100,6 +100,8 @@ export class ClipsController {
 
   /**
    * POST /clips/bulk-delete
+   * Deletes a batch of clips owned by the authenticated user and removes their
+   * Cloudinary assets.
    * Deletes a batch of clips owned by the authenticated user.
    * Also removes the associated Cloudinary assets.
    *
@@ -111,11 +113,13 @@ export class ClipsController {
     summary: 'Bulk delete rejected/unwanted clips',
     description:
       'Permanently deletes the specified clips (and their Cloudinary assets) ' +
+      'after verifying ownership. Clips not owned by the caller are skipped.',
       'after verifying ownership. Clips not owned by the caller are silently skipped.',
   })
   @ApiResponse({
     status: 200,
     description: 'Deletion summary',
+    schema: { example: { deleted: 3, skipped: 0, skippedIds: [] } },
     schema: {
       example: { deleted: 3, skipped: 0, skippedIds: [] },
     },
@@ -132,6 +136,8 @@ export class ClipsController {
 
   /**
    * POST /clips/:id/regenerate
+   * Re-cuts a single clip using its original timestamps and uploads a fresh
+   * version to Cloudinary. Preserves viralityScore and title.
    * Re-cuts a single clip using its original start/end timestamps and
    * uploads a fresh version to Cloudinary. Preserves viralityScore and title.
    *
@@ -146,6 +152,7 @@ export class ClipsController {
       'Cloudinary and updates clipUrl + thumbnail. viralityScore and title are preserved.',
   })
   @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiResponse({ status: 200, description: 'Updated clip record' })
   @ApiResponse({
     status: 200,
     description: 'Updated clip record',

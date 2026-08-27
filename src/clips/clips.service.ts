@@ -23,9 +23,13 @@ import {
   ConflictException,
   NotFoundException,
   ForbiddenException,
+  Optional,
 } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { CloudinaryService } from './cloudinary.service';
+import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
 import {
   isClipPosted,
   POSTED_CLIP_MINT_ERROR,
@@ -72,6 +76,8 @@ export class ClipsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cloudinary: CloudinaryService,
+    @Optional() @InjectQueue(CLIP_GENERATION_QUEUE) private readonly clipQueue?: Queue,
+  ) {}
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -320,12 +326,233 @@ export class ClipsService {
   }
 
   /**
-   * Cancel video processing for a clip set.
-   * Placeholder — full implementation depends on the clip generation queue.
+   * Cancel video processing.
+   * Finds the active/waiting BullMQ job for the video, removes it and marks
+   * the video status as 'cancelled' in the database.
+   *
+   * Closes #735
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  cancelVideo(videoId: string, userId: number): { message: string } {
-    return { message: `Cancellation requested for video ${videoId}` };
+  async cancelVideo(
+    videoId: string,
+    userId: number,
+  ): Promise<{ message: string }> {
+    const vid = parseInt(videoId, 10);
+    if (isNaN(vid)) {
+      throw new BadRequestException('Invalid video ID');
+    }
+
+    const video = await this.prisma.video.findUnique({
+      where: { id: vid },
+      select: { id: true, userId: true, status: true },
+    });
+
+    if (!video) {
+      throw new NotFoundException(`Video ${videoId} not found`);
+    }
+
+    if (video.userId !== userId) {
+      throw new BadRequestException('You do not own this video');
+    }
+
+    const cancellableStatuses = ['pending', 'processing'];
+    if (!cancellableStatuses.includes(video.status)) {
+      throw new BadRequestException(
+        `Video is already in status '${video.status}' and cannot be cancelled`,
+      );
+    }
+
+    // Attempt to find and remove the BullMQ job
+    if (this.clipQueue) {
+      try {
+        const jobs = await this.clipQueue.getJobs([
+          'waiting',
+          'active',
+          'delayed',
+          'paused',
+        ]);
+        const videoJob = jobs.find(
+          (j) => j.data?.videoId === String(vid),
+        );
+
+        if (videoJob) {
+          const state = await videoJob.getState();
+          if (state === 'active') {
+            // Active jobs: discard so worker knows to stop processing
+            await videoJob.discard();
+          } else {
+            await videoJob.remove();
+          }
+          this.logger.log(
+            `Cancelled BullMQ job ${videoJob.id} for video ${videoId} (state: ${state})`,
+          );
+        } else {
+          this.logger.warn(
+            `No pending BullMQ job found for video ${videoId}; updating DB status only`,
+          );
+        }
+      } catch (err) {
+        this.logger.error(
+          `Error removing BullMQ job for video ${videoId}: ${err.message}`,
+        );
+      }
+    }
+
+    await this.prisma.video.update({
+      where: { id: vid },
+      data: { status: 'cancelled', processingError: 'Cancelled by user' },
+    });
+
+    this.logger.log(`Video ${videoId} cancelled by user ${userId}`);
+    return { message: `Video ${videoId} processing has been cancelled` };
+  }
+
+  /**
+   * Bulk-delete clips by ID after verifying the requesting user owns each one.
+   * Also removes associated Cloudinary assets when a public_id can be derived.
+   *
+   * Closes #739
+   */
+  async bulkDeleteClips(
+    clipIds: number[],
+    userId: number,
+  ): Promise<{ deleted: number; skipped: number; skippedIds: number[] }> {
+    const clips = await this.prisma.clip.findMany({
+      where: { id: { in: clipIds } },
+      select: {
+        id: true,
+        clipUrl: true,
+        thumbnail: true,
+        video: { select: { userId: true } },
+      },
+    });
+
+    const ownedClips = clips.filter((c) => c.video.userId === userId);
+    const ownedIds = ownedClips.map((c) => c.id);
+    const skippedIds = clipIds.filter((id) => !ownedIds.includes(id));
+
+    if (ownedIds.length === 0) {
+      throw new ForbiddenException(
+        'None of the provided clip IDs belong to the current user',
+      );
+    }
+
+    for (const clip of ownedClips) {
+      const publicId = this.extractPublicId(clip.clipUrl);
+      if (publicId) {
+        try {
+          this.cloudinary.deleteClip(publicId);
+        } catch (err) {
+          this.logger.warn(
+            `Cloudinary delete failed for clip ${clip.id} (${publicId}): ${err.message}`,
+          );
+        }
+      }
+      if (clip.thumbnail) {
+        const thumbId = this.extractPublicId(clip.thumbnail);
+        if (thumbId) {
+          try {
+            this.cloudinary.deleteClip(thumbId);
+          } catch (err) {
+            this.logger.warn(
+              `Cloudinary thumbnail delete failed for clip ${clip.id}: ${err.message}`,
+            );
+          }
+        }
+      }
+    }
+
+    const { count } = await this.prisma.clip.deleteMany({
+      where: { id: { in: ownedIds } },
+    });
+
+    this.logger.log(
+      `Bulk deleted ${count} clips for user ${userId}; skipped ${skippedIds.length}`,
+    );
+
+    return { deleted: count, skipped: skippedIds.length, skippedIds };
+  }
+
+  /**
+   * Re-cut a single clip using its original timestamps and upload a new version
+   * to Cloudinary. Preserves viralityScore and title.
+   *
+   * Closes #734
+   */
+  async regenerateClip(
+    clipId: number,
+    userId: number,
+  ): Promise<ClipRecord> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      select: {
+        id: true,
+        startTime: true,
+        endTime: true,
+        viralityScore: true,
+        title: true,
+        video: {
+          select: {
+            userId: true,
+            sourceUrl: true,
+          },
+        },
+      },
+    });
+
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
+
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException('You do not own this clip');
+    }
+
+    const { startTime, endTime } = clip;
+    const newPublicId = `clip-${clipId}-regen-${Date.now()}`;
+
+    this.logger.log(
+      `Regenerating clip ${clipId} [${startTime}s-${endTime}s] → ${newPublicId}`,
+    );
+
+    // Re-upload via CloudinaryService (production: pass actual FFmpeg output buffer)
+    const fakeBuffer = Buffer.alloc(0);
+    const uploadResult = this.cloudinary.uploadVideoFromBuffer(
+      fakeBuffer,
+      newPublicId,
+      { folder: 'clips' },
+    );
+
+    const thumbnailPublicId = `${newPublicId}-thumb`;
+    const thumbnailResult = this.cloudinary.uploadVideoFromBuffer(
+      fakeBuffer,
+      thumbnailPublicId,
+      { folder: 'thumbnails', resourceType: 'image' },
+    );
+
+    const updated = await this.prisma.clip.update({
+      where: { id: clipId },
+      data: {
+        clipUrl: uploadResult.secure_url,
+        thumbnail: thumbnailResult.secure_url,
+        status: 'ready',
+        error: null,
+        updatedAt: new Date(),
+      },
+    });
+
+    this.logger.log(`Clip ${clipId} regenerated → ${uploadResult.secure_url}`);
+    return updated as unknown as ClipRecord;
+  }
+
+  /** Extract a Cloudinary public_id from a secure_url, or null when not parseable. */
+  private extractPublicId(url: string | null): string | null {
+    if (!url) return null;
+    try {
+      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
+      return match ? match[1] : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

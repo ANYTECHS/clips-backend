@@ -206,8 +206,9 @@ export class VideoUploadService {
         },
       });
 
-      // Enqueue clip generation job
+      // Enqueue clip generation job with 30-minute timeout (Issue #735)
       const jobId = `video-upload-${video.id}-${crypto.randomUUID()}`;
+      const JOB_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
       const job = await this.clipQueue.add(
         'process-uploaded-video',
         {
@@ -224,6 +225,7 @@ export class VideoUploadService {
             type: 'exponential',
             delay: 5000,
           },
+          timeout: JOB_TIMEOUT_MS,
         },
       );
 
