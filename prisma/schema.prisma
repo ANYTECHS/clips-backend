@@ -21,6 +21,7 @@ model User {
   walletType             String?
   encryptedStellarSecret String?
   role                   String         @default("user")
+  showOnLeaderboard      Boolean        @default(false)
   createdAt              DateTime       @default(now())
   updatedAt              DateTime       @updatedAt
   videos                 Video[]
@@ -35,6 +36,8 @@ model User {
   passwordResetTokens    PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
   earningsAuditLogs       EarningsAuditLog[]
+  dailyEarnings           DailyEarning[]
+  earningsSummary         UserEarningsSummary?
 
   @@unique([provider, providerId])
 }
@@ -51,7 +54,7 @@ model Video {
   fileSize         BigInt?
   status           String   @default("pending")
   processingError  String?
-  // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, errorDetails?: string }
+  // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, avgDurationSec?: number, errorDetails?: string }
   processingStats  Json?
   // Schema: { duration: number, width: number, height: number, format: string, fps: number, bitrate: number }
   metadata         Json?
@@ -128,17 +131,19 @@ model ClipPost {
 }
 
 model Earning {
-  id              Int       @id @default(autoincrement())
-  clipId          Int
-  amount          Float
-  currency        String    @default("USD")
-  date            DateTime
-  source          String?
-  isAnomaly       Boolean   @default(false)
-  anomalyReason   String?
-  createdAt       DateTime  @default(now())
-  deletedAt       DateTime?
-  clip            Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  id                    Int       @id @default(autoincrement())
+  clipId                Int
+  amount                Float
+  currency              String    @default("USD")
+  amountInBaseCurrency  Float?
+  exchangeRate          Float?
+  date                  DateTime
+  source                String?
+  isAnomaly             Boolean   @default(false)
+  anomalyReason         String?
+  createdAt             DateTime  @default(now())
+  deletedAt             DateTime?
+  clip                  Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
 }
 
 model UserPlatform {
@@ -177,7 +182,7 @@ model Payout {
   amount           Float
   currency         String        @default("USD")
   method           String
-  status           String
+  status           String        @default("pending")
   transactionId    String?
   externalTransactionId String?
   stellarXdr       String?
@@ -185,6 +190,8 @@ model Payout {
   confirmedAt      DateTime?
   paidAt           DateTime?
   approvedAt       DateTime?
+  approvedBy       Int?
+  reviewedAt       DateTime?
   rejectedAt       DateTime?
   rejectionReason  String?
   feeAmount        Float?
@@ -192,6 +199,8 @@ model Payout {
   finalAmount      Float?
   retryCount       Int           @default(0)
   lastAttemptAt    DateTime?
+  nextRetryAt      DateTime?
+  failureReason    String?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
   deletedAt        DateTime?
@@ -202,6 +211,8 @@ model Payout {
 
   @@index([payoutMethodId])
   @@index([status])
+  @@index([userId])
+  @@index([nextRetryAt])
   @@index([deletedAt])
   @@index([userId, deletedAt])
 }
@@ -331,17 +342,20 @@ model PayoutFeeConfig {
 }
 
 model PlatformWebhookLog {
-  id          Int      @id @default(autoincrement())
-  platform    String
-  eventType   String
-  payload     String
-  signature   String?
-  isValid     Boolean  @default(false)
-  processedAt DateTime @default(now())
-  error       String?
+  id           Int      @id @default(autoincrement())
+  platform     String
+  eventType    String
+  eventId      String?
+  payload      String
+  signature    String?
+  isValid      Boolean  @default(false)
+  processedAt  DateTime @default(now())
+  error        String?
 
+  @@unique([platform, eventId])
   @@index([platform])
   @@index([processedAt])
+  @@index([eventId])
 }
 
 model AnomalyAlert {
@@ -425,4 +439,44 @@ model SubscriptionRevenue {
 
   @@index([subscriptionId])
   @@index([processedAt])
+}
+
+/// Daily roll-up of a user's earnings, produced by the midnight aggregation
+/// job (Issue #767). One row per user per UTC day per currency, so dashboards
+/// and reports can read totals without scanning the Earning table.
+model DailyEarning {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  /// Midnight (00:00:00.000) UTC of the day being summarised.
+  date         DateTime
+  currency     String   @default("USD")
+  totalAmount  Float    @default(0)
+  /// Total converted into the platform base currency, when exchange rates were recorded.
+  totalInBaseCurrency Float?
+  /// Number of Earning rows folded into this total.
+  earningCount Int      @default(0)
+  /// Number of distinct clips that earned on this day.
+  clipCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date, currency])
+  @@index([userId])
+  @@index([date])
+  @@index([userId, date])
+}
+
+/// Denormalised lifetime earnings summary per user, refreshed by the daily
+/// aggregation job (Issue #767) so the dashboard does not recompute it.
+model UserEarningsSummary {
+  userId           Int      @id
+  totalEarned      Float    @default(0)
+  totalPaidOut     Float    @default(0)
+  availableBalance Float    @default(0)
+  currency         String   @default("USD")
+  lastAggregatedAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

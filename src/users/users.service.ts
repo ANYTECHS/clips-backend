@@ -47,6 +47,7 @@ export class UsersService {
         emailVerified: true,
         stellarPublicKey: true,
         walletType: true,
+        showOnLeaderboard: true,
         createdAt: true,
       },
     });

@@ -13,5 +13,12 @@ import { NftMintService } from './nft-mint.service';
   imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule],
   providers: [CloudinaryService, NftConfig, RoyaltyConfigurationService, NftMetadataService, NftMintService],
   exports: [CloudinaryService, NftMintService],
+import { ClipsService } from './clips.service';
+import { PrismaModule } from '../prisma/prisma.module';
+
+@Module({
+  imports: [PrismaModule],
+  providers: [ClipsService],
+  exports: [ClipsService],
 })
 export class ClipsModule {}
