@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { IpfsUploadModule } from './ipfs-upload.module';
 import { NftOwnershipModule } from './nft-ownership.module';
+import { RedisModule } from '../redis/redis.module';
 import { NftConfig } from './nft.config';
 import { NftService } from './nft.service';
 import { NftController } from './nft.controller';
