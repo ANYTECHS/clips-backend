@@ -195,6 +195,10 @@ export class VideoUploadService {
             momentsFound: 0,
             inputQuality: `${validation.metadata!.height}p`,
             durationSec: validation.metadata!.duration,
+            // Issue #745: store originalDuration and resolution for downstream
+            // clip-generation workers and analytics.
+            originalDuration: validation.metadata!.duration,
+            resolution: `${validation.metadata!.width}x${validation.metadata!.height}`,
             clipsGenerated: 0,
             timeTakenMs: 0,
             uploadStarted: new Date().toISOString(),
