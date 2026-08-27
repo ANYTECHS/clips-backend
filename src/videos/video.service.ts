@@ -41,6 +41,14 @@ export class VideoService {
       momentsFound = moments.length;
       const normalized = this.normalizeMoments(moments, durationSec);
       clipsGenerated = normalized.length;
+      const avgDurationSec =
+        clipsGenerated > 0
+          ? Math.round(
+              (normalized.reduce((acc, m) => acc + (m.end - m.start), 0) /
+                clipsGenerated) *
+                100,
+            ) / 100
+          : 0;
 
       const timeTakenMs = Date.now() - startTime;
 
@@ -50,6 +58,7 @@ export class VideoService {
         durationSec,
         clipsGenerated,
         timeTakenMs,
+        avgDurationSec,
         error,
         moments: normalized,
       });
@@ -216,6 +225,7 @@ export class VideoService {
       durationSec: number;
       clipsGenerated: number;
       timeTakenMs: number;
+      avgDurationSec?: number;
       error?: string;
       moments?: any[]; // optional array of viral moments
     },
@@ -229,6 +239,9 @@ export class VideoService {
           durationSec: stats.durationSec,
           clipsGenerated: stats.clipsGenerated,
           timeTakenMs: stats.timeTakenMs,
+          ...(stats.avgDurationSec !== undefined
+            ? { avgDurationSec: stats.avgDurationSec }
+            : {}),
           ...(stats.error ? { errorDetails: stats.error } : {}),
           ...(stats.moments ? { moments: stats.moments } : {}),
         },

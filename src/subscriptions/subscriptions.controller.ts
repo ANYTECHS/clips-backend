@@ -9,7 +9,6 @@ import {
   HttpStatus,
   Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
 import {
   ApiOperation,
   ApiResponse,

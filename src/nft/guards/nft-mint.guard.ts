@@ -9,6 +9,10 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StellarService, LOW_BALANCE_THRESHOLD_XLM } from '../../stellar/stellar.service';
+import {
+  isClipPosted,
+  POSTED_CLIP_MINT_ERROR,
+} from '../../clips/clip-post-status.util';
 
 /**
  * Prevents minting clips that are already minted, in progress, posted, not ready,
@@ -79,6 +83,7 @@ export class NftMintGuard implements CanActivate {
     nftStatus: string;
     mintAddress: string | null;
     postStatus: unknown;
+    postedAt: Date | null;
     clipUrl: string | null;
     clipPosts: { status: string }[];
   }): Promise<void> {
@@ -92,13 +97,11 @@ export class NftMintGuard implements CanActivate {
       throw new ConflictException('Clip has already been minted on-chain');
     }
 
-    // Check if clip is posted (either via postStatus or any published clipPost)
-    const isPosted =
-      clip.postStatus === 'posted' ||
-      clip.clipPosts.some((post) => post.status === 'published');
-
-    if (isPosted) {
-      throw new BadRequestException('Posted clips cannot be minted.');
+    // Business rule (Issue #764): posted clips cannot be minted. The predicate
+    // is shared with ClipsService.preventPostedMint so the guard and the
+    // service-level check can never disagree about what "posted" means.
+    if (isClipPosted(clip)) {
+      throw new BadRequestException(POSTED_CLIP_MINT_ERROR);
     }
 
     if (!clip.clipUrl) {

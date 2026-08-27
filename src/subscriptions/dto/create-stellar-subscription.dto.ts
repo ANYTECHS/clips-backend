@@ -76,65 +76,22 @@ export class CreateStellarSubscriptionDto {
 }
 
 export class StellarPaymentIntentDto {
-  @ApiProperty({ example: 'pi_01HXYZ', description: 'Payment intent ID' })
+  @ApiProperty({ description: 'Payment intent ID', example: 'pi_01HXYZ' })
   id: string;
 
-  @ApiProperty({ example: 10, description: 'Payment amount' })
+  @ApiProperty({ description: 'Payment amount in the selected asset', example: 10 })
   amount: number;
 
-  @ApiProperty({ example: 'xlm', enum: ['xlm', 'usdc', 'custom'] })
+  @ApiProperty({ description: 'Payment asset (xlm, usdc, custom)', example: 'xlm', enum: ['xlm', 'usdc', 'custom'] })
   asset: string;
 
-  @ApiProperty({
-    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
-    description: 'Destination Stellar address',
-  })
+  @ApiProperty({ description: 'Stellar destination address', example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3' })
   destination: string;
 
-  @ApiProperty({ example: 'sub-pro-2026-07', description: 'Payment memo' })
+  @ApiProperty({ description: 'Payment memo for tracking', example: 'sub-pro-2026-07' })
   memo: string;
 
-  @ApiProperty({
-    example: '2026-07-26T13:00:00.000Z',
-    description: 'Intent expiry timestamp',
-  })
-  expiresAt: Date;
-
-  @ApiProperty({
-    example: 'pending',
-    enum: ['pending', 'completed', 'expired'],
-  })
-  status: 'pending' | 'completed' | 'expired';
-
-  @ApiPropertyOptional({
-    example: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
-    description: 'Asset issuer when using a custom asset',
-  })
-  @ApiProperty({ description: 'Payment intent ID', example: 'pi_123456789' })
-  id: string;
-
-  @ApiProperty({
-    description: 'Payment amount in the selected asset',
-    example: 10,
-  })
-  amount: number;
-
-  @ApiProperty({
-    description: 'Payment asset (xlm, usdc, custom)',
-    example: 'xlm',
-  })
-  asset: string;
-
-  @ApiProperty({ description: 'Stellar destination address', example: 'G...' })
-  destination: string;
-
-  @ApiProperty({ description: 'Payment memo for tracking', example: 'sub_xyz' })
-  memo: string;
-
-  @ApiProperty({
-    description: 'Expiration date and time',
-    example: '2023-12-31T23:59:59.000Z',
-  })
+  @ApiProperty({ description: 'Expiration date and time', example: '2026-07-26T13:00:00.000Z' })
   expiresAt: Date;
 
   @ApiProperty({
@@ -145,8 +102,8 @@ export class StellarPaymentIntentDto {
   status: 'pending' | 'completed' | 'expired';
 
   @ApiPropertyOptional({
-    description: 'Required when asset is custom — issuing account public key',
-    example: 'G...',
+    description: 'Asset issuer when using a custom Stellar asset',
+    example: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
   })
   assetIssuer?: string | null;
 }
