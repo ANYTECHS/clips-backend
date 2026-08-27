@@ -23,6 +23,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { CircuitBreakerModule } from './common/circuit-breaker/circuit-breaker.module';
 import { RedisModule } from './redis/redis.module';
 import { EarningsModule } from './earnings/earnings.module';
+import { DailyEarningsModule } from './earnings/daily-earnings.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { ConfigModule as AppConfigModule } from './config/config.module';
 import { WalletsModule } from './wallets/wallets.module';
@@ -35,6 +36,7 @@ import { QueueDashboardModule } from './queue-dashboard/queue-dashboard.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from './queue/queue.module';
 import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.module';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
@@ -129,6 +131,7 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
     CircuitBreakerModule,
     RedisModule,
     EarningsModule,
+    DailyEarningsModule,
     MetricsModule,
     AppConfigModule,
     WalletsModule,
@@ -137,6 +140,7 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
     HealthModule,
     QueueDashboardModule,
     GracefulShutdownModule,
+    CommonModule,
   ],
   controllers: [AppController],
   providers: [
