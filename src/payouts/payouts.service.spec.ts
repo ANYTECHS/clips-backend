@@ -10,6 +10,7 @@ import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { PayoutApprovalService } from './payout-approval.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { ConfigService } from '../config/config.service';
+import { CurrencyService } from '../common/services/currency.service';
 import {
   ConflictException,
   BadRequestException,
@@ -81,6 +82,13 @@ describe('PayoutsService', () => {
 
   const mockConfigService = { minStellarPayout: 5 };
 
+  // Issue #766: the minimum-payout floor is a USD equivalent, so non-USD
+  // amounts are converted before the comparison. 1:1 by default; individual
+  // tests override the rate.
+  const mockCurrencyService = {
+    convert: jest.fn(async (amount: number) => ({ amount, rate: 1 })),
+  };
+
   const mockPlatformAddress = StellarSdk.Keypair.random().publicKey();
 
   beforeEach(async () => {
@@ -129,6 +137,10 @@ describe('PayoutsService', () => {
         {
           provide: ConfigService,
           useValue: mockConfigService,
+        },
+        {
+          provide: CurrencyService,
+          useValue: mockCurrencyService,
         },
       ],
     }).compile();

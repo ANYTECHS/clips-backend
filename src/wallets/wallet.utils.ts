@@ -1,8 +1,12 @@
 /**
- * Masks a Stellar wallet address to show only the first 4 and last 6 characters,
- * with the middle replaced by asterisks.
+ * Masks a wallet address so only the first 4 and the last 6 characters remain
+ * visible, with the middle replaced by asterisks (Issue #763).
  *
- * Example: GABC1234DEF5678 becomes GABC********5678
+ * Example: "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
+ *       -> "GC6X********UHTZF3"
+ *
+ * Addresses shorter than 10 characters are returned untouched — there is not
+ * enough material to mask without the result leaking as much as the original.
  *
  * @param address The full wallet address to mask
  * @returns The masked wallet address

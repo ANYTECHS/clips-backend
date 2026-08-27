@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -14,7 +14,8 @@ import {
 } from '@nestjs/swagger';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { PayoutsService } from './payouts.service';
-import { PayoutResponseDto, RejectPayoutDto } from './dto/payout-responses.dto';
+import { PayoutResponseDto } from './dto/payout-responses.dto';
+import { RejectPayoutDto } from './dto/payout-review.dto';
 
 @ApiTags('admin')
 @ApiHeader({
