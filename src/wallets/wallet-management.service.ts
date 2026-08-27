@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectWalletDto } from './dto/connect-wallet.dto';
@@ -100,6 +101,34 @@ export class WalletManagementService {
 
     this.walletValidationService.validateAddressForChain(dto.address, chain);
 
+    if (chain === 'stellar') {
+      if (dto.publicKey !== dto.address) {
+        throw new BadRequestException(
+          'publicKey must match the wallet address being connected',
+        );
+      }
+      this.walletValidationService.verifySignatureOwnership(
+        dto.publicKey,
+        dto.signature,
+        dto.signedMessage,
+      );
+    }
+
+    const existing = await this.prisma.wallet.findUnique({
+      where: {
+        address_chain: {
+          address: dto.address,
+          chain,
+        },
+      },
+    });
+
+    if (existing && existing.userId !== userId) {
+      throw new ConflictException(
+        'This wallet address is already connected to another account',
+      );
+    }
+
     const wallet = await this.prisma.wallet.upsert({
       where: {
         address_chain: {
@@ -108,7 +137,6 @@ export class WalletManagementService {
         },
       },
       update: {
-        userId,
         type: dto.type,
         deletedAt: null,
         updatedAt: new Date(),
