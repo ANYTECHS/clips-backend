@@ -24,6 +24,7 @@ import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.
 import { GasMetricsService } from './gas-metrics.service';
 
 @Module({
+  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
   imports: [
     PrismaModule,
     StellarModule,
@@ -34,39 +35,15 @@ import { GasMetricsService } from './gas-metrics.service';
     ClipsModule,
   ],
   providers: [
-    NftConfig,
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    NftMintGuard,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
-    AdminContractService,
+    NftConfig, NftService, GasMetricsService, NftMintService, NftMetadataService,
+    RoyaltyQueryService, PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    NftMintGuard, RoyaltyConfigurationService, MintSignatureVerificationService, AdminContractService,
   ],
-  controllers: [
-    NftController,
-    PlatformRevenueController,
-    BatchRoyaltyController,
-    ClipRoyaltyController,
-  ],
+  controllers: [NftController, PlatformRevenueController, BatchRoyaltyController, ClipRoyaltyController],
   exports: [
-    NftService,
-    GasMetricsService,
-    NftMintService,
-    NftMetadataService,
-    RoyaltyQueryService,
-    PlatformRevenueService,
-    BatchRoyaltyService,
-    ClipRoyaltyService,
-    IpfsUploadModule,
-    NftOwnershipModule,
-    RoyaltyConfigurationService,
-    MintSignatureVerificationService,
+    NftService, GasMetricsService, NftMintService, NftMetadataService, RoyaltyQueryService,
+    PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
+    IpfsUploadModule, NftOwnershipModule, RoyaltyConfigurationService, MintSignatureVerificationService,
   ],
 })
 export class NftModule {}
