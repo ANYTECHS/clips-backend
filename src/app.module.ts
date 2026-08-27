@@ -23,6 +23,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { CircuitBreakerModule } from './common/circuit-breaker/circuit-breaker.module';
 import { RedisModule } from './redis/redis.module';
 import { EarningsModule } from './earnings/earnings.module';
+import { DailyEarningsModule } from './earnings/daily-earnings.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { ConfigModule as AppConfigModule } from './config/config.module';
 import { WalletsModule } from './wallets/wallets.module';
@@ -130,6 +131,7 @@ import { CommonModule } from './common/common.module';
     CircuitBreakerModule,
     RedisModule,
     EarningsModule,
+    DailyEarningsModule,
     MetricsModule,
     AppConfigModule,
     WalletsModule,
