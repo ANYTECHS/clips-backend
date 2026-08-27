@@ -20,9 +20,10 @@ import {
   ApiUnauthorizedResponse,
   ApiBadRequestResponse,
   ApiInternalServerErrorResponse,
+  ApiPayloadTooLargeResponse,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
+import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
 import type { Request } from 'express';
 import { LoginGuard } from '../auth/guards/login.guard.js';
@@ -36,7 +37,13 @@ import * as path from 'path';
 import * as os from 'os';
 
 const ALLOWED_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm'];
-const MAX_FILE_SIZE = 500 * 1024 * 1024;
+const ALLOWED_MIME_TYPES = [
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+];
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 @ApiTags('videos')
 @ApiBearerAuth('access-token')
@@ -49,27 +56,44 @@ export class VideoUploadController {
 
   @Post('upload')
   @HttpCode(HttpStatus.ACCEPTED)
-  @ApiOperation({ summary: 'Upload a video file' })
+  @ApiOperation({
+    summary: 'Upload a video file for clip generation',
+    description:
+      'Accepts a multipart/form-data video file (mp4, mov, avi, webm), saves it to a ' +
+      'temporary directory, validates format/size/duration, creates a Video record, and ' +
+      'enqueues a clip-generation job. Returns a jobId for polling status. ' +
+      'Maximum file size: 500 MB. Maximum duration: 4 hours.',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
       type: 'object',
       properties: {
-        file: { type: 'string', format: 'binary' },
-        title: { type: 'string' },
+        file: {
+          type: 'string',
+          format: 'binary',
+          description: 'Video file to upload (mp4, mov, avi, webm — max 500 MB)',
+        },
+        title: {
+          type: 'string',
+          description: 'Optional title for the video. Defaults to the original filename.',
+        },
       },
       required: ['file'],
     },
   })
   @ApiResponse({
     status: 202,
-    description: 'Video upload accepted',
+    description: 'Video upload accepted and queued for processing',
     type: UploadVideoResponseDto,
   })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid file',
+  @ApiBadRequestResponse({
+    description:
+      'Invalid file format, file exceeds 500 MB, or video duration exceeds 4 hours',
     type: UploadVideoErrorDto,
+  })
+  @ApiPayloadTooLargeResponse({
+    description: 'File exceeds the 500 MB upload limit',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @UseInterceptors(
@@ -93,12 +117,24 @@ export class VideoUploadController {
       limits: { fileSize: MAX_FILE_SIZE },
       fileFilter: (req, file, cb) => {
         const ext = extname(file.originalname).toLowerCase();
-        if (ALLOWED_EXTENSIONS.includes(ext)) {
+        const mimeOk =
+          ALLOWED_MIME_TYPES.includes(file.mimetype) ||
+          // Some clients send application/octet-stream for video files; fall back to extension check
+          file.mimetype === 'application/octet-stream';
+
+        if (ALLOWED_EXTENSIONS.includes(ext) && mimeOk) {
           cb(null, true);
-        } else {
+        } else if (!ALLOWED_EXTENSIONS.includes(ext)) {
           cb(
             new BadRequestException(
               `Invalid file format "${ext}". Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`,
+            ),
+            false,
+          );
+        } else {
+          cb(
+            new BadRequestException(
+              `Invalid MIME type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
             ),
             false,
           );

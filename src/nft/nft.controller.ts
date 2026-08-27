@@ -397,7 +397,11 @@ export class NftController {
     type: BatchMintResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Mismatched arrays, invalid payload, or batch size exceeded limit',
+    description:
+      'Mismatched arrays, invalid payload, or batch size exceeded limit. ' +
+      'Individual clips that cannot be minted — including clips already posted ' +
+      'to a social platform (Issue #764) — are reported per-clip in ' +
+      '`partialFailures` rather than failing the whole batch.',
   })
   async batchMint(@Body() dto: BatchMintDto): Promise<BatchMintResponseDto> {
     return this.nftService.batchMintClips(dto);

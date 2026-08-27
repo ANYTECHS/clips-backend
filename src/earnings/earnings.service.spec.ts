@@ -75,6 +75,7 @@ describe('EarningsService', () => {
       expect(redis.setex).toHaveBeenCalled();
     });
   });
+});
 
   describe('getEarningsByPeriod', () => {
     it('queries earnings within date range', async () => {
