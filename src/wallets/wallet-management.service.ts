@@ -39,9 +39,6 @@ export class WalletManagementService {
   ): Promise<DisconnectResult> {
     const wallet = await this.prisma.wallet.findUnique({
       where: { id: walletId },
-      include: {
-        payouts: true,
-      },
     });
 
     if (!wallet || wallet.userId !== userId) {
@@ -52,13 +49,21 @@ export class WalletManagementService {
       throw new ConflictException('Wallet is already disconnected');
     }
 
-    const pendingPayout = (wallet.payouts ?? []).find(
-      (payout) => payout.status === 'pending',
-    );
+    // Check for any open payouts tied to this specific wallet (excluding
+    // soft-deleted payout records so that historical data does not block
+    // future disconnects).
+    const pendingPayout = await this.prisma.payout.findFirst({
+      where: {
+        walletId,
+        status: { in: ['pending', 'pending_approval', 'approved', 'processing'] },
+        deletedAt: null,
+      },
+      select: { id: true, status: true },
+    });
 
     if (pendingPayout) {
       throw new ConflictException(
-        'Cannot disconnect wallet: there are pending payouts attached to it',
+        `Cannot disconnect wallet: payout ${pendingPayout.id} is still ${pendingPayout.status}`,
       );
     }
 
@@ -99,6 +104,16 @@ export class WalletManagementService {
     const chain = (dto.chain ?? DEFAULT_CHAIN) as SupportedChain;
 
     this.walletValidationService.validateAddressForChain(dto.address, chain);
+
+    // Signature verification is only supported for Stellar wallets today;
+    // Solana and Base/EVM wallets will need their own verification flow.
+    if (chain === 'stellar') {
+      this.walletValidationService.verifySignatureOwnership(
+        dto.publicKey,
+        dto.signature,
+        dto.signedMessage,
+      );
+    }
 
     const wallet = await this.prisma.wallet.upsert({
       where: {
