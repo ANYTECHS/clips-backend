@@ -22,6 +22,7 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
 import { GasMetricsService } from './gas-metrics.service';
+import { RedisModule } from '../redis/redis.module';
 
 @Module({
   imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
