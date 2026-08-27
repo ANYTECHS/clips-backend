@@ -1,11 +1,17 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { NftMintGuard } from './nft-mint.guard';
+import { LOW_BALANCE_THRESHOLD_XLM } from '../../stellar/stellar.service';
 
 describe('NftMintGuard', () => {
   const prismaMock = {
     clip: {
       findUnique: jest.fn(),
     },
+  };
+
+  const stellarServiceMock = {
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
+    getAccountBalance: jest.fn().mockResolvedValue(10),
   };
 
   let guard: NftMintGuard;
@@ -21,7 +27,9 @@ describe('NftMintGuard', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    guard = new NftMintGuard(prismaMock as any);
+    stellarServiceMock.validateAddress.mockReturnValue({ valid: true });
+    stellarServiceMock.getAccountBalance.mockResolvedValue(10);
+    guard = new NftMintGuard(prismaMock as any, stellarServiceMock as any);
   });
 
   const runGuard = (request: {
@@ -126,5 +134,74 @@ describe('NftMintGuard', () => {
     expect(prismaMock.clip.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 1 } }),
     );
+  });
+
+  describe('wallet balance pre-check', () => {
+    it('allows minting when wallet balance is sufficient', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+      stellarServiceMock.getAccountBalance.mockResolvedValue(10);
+
+      await expect(
+        runGuard({ body: { clipId: 1, creatorWallet: 'GABC...XYZ' } }),
+      ).resolves.toBe(true);
+
+      expect(stellarServiceMock.getAccountBalance).toHaveBeenCalledWith('GABC...XYZ');
+    });
+
+    it('rejects minting when wallet balance is below threshold', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+      stellarServiceMock.getAccountBalance.mockResolvedValue(0.5);
+
+      await expect(
+        runGuard({ body: { clipId: 1, creatorWallet: 'GABC...XYZ' } }),
+      ).rejects.toThrow('Insufficient wallet balance');
+    });
+
+    it('rejects minting when wallet balance is exactly zero', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+      stellarServiceMock.getAccountBalance.mockResolvedValue(0);
+
+      await expect(
+        runGuard({ body: { clipId: 1, creatorWallet: 'GABC...XYZ' } }),
+      ).rejects.toThrow('Insufficient wallet balance');
+    });
+
+    it('allows minting when Horizon is unreachable (best-effort check)', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+      stellarServiceMock.getAccountBalance.mockRejectedValue(
+        new Error('Horizon timeout'),
+      );
+
+      await expect(
+        runGuard({ body: { clipId: 1, creatorWallet: 'GABC...XYZ' } }),
+      ).resolves.toBe(true);
+    });
+
+    it('skips balance check when no wallet address is provided', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+
+      await expect(runGuard({ body: { clipId: 1 } })).resolves.toBe(true);
+      expect(stellarServiceMock.getAccountBalance).not.toHaveBeenCalled();
+    });
+
+    it('skips balance check when wallet address is not a string', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+
+      await expect(
+        runGuard({ body: { clipId: 1, creatorWallet: 12345 } }),
+      ).resolves.toBe(true);
+      expect(stellarServiceMock.getAccountBalance).not.toHaveBeenCalled();
+    });
+
+    it('uses walletAddress fallback from prepare-mint DTO', async () => {
+      prismaMock.clip.findUnique.mockResolvedValue(mintableClip);
+      stellarServiceMock.getAccountBalance.mockResolvedValue(5);
+
+      await expect(
+        runGuard({ body: { clipId: 1, walletAddress: 'GDEF...UVW' } }),
+      ).resolves.toBe(true);
+
+      expect(stellarServiceMock.getAccountBalance).toHaveBeenCalledWith('GDEF...UVW');
+    });
   });
 });
