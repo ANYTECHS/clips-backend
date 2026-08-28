@@ -381,7 +381,7 @@ export class ClipsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Clip not found' })
   async findOne(@Param('id') id: string) {
-    const clip = await this.clipsService.findById(id);
+    const clip = await this.clipsService.findById(Number(id));
     if (!clip) throw new NotFoundException(`Clip ${id} not found`);
     return clip;
   }

@@ -81,6 +81,7 @@ model Clip {
   duration      Float
   viralityScore Float?
   royaltyBps    Int?       @default(1000)
+  selected      Boolean    @default(false)
   postStatus    Json?
   postedAt      DateTime?
   metadataUri   String?
@@ -98,6 +99,7 @@ model Clip {
   royalty       ClipRoyalty?
 
   @@index([videoId])
+  @@index([selected])
 }
 
 model ClipRoyalty {
