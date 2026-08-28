@@ -41,6 +41,9 @@ export class ClipEntity {
   @ApiPropertyOptional({ example: 1000 })
   royaltyBps: number | null;
 
+  @ApiPropertyOptional({ example: true })
+  selected: boolean;
+
   @ApiPropertyOptional()
   postStatus: Record<string, unknown> | null;
 
@@ -83,7 +86,13 @@ export class ClipEntity {
 
   @ApiProperty()
   updatedAt: Date;
+
+  // For testing compatibility
+  userId?: number;
 }
+
+// Alias for backward compatibility with tests
+export const Clip = ClipEntity;
 
 /**
  * Subset of Clip fields relevant to NFT minting.

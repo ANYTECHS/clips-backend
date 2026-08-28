@@ -180,10 +180,15 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       const uploadResult = await this.uploadWithAbort(data.outputPath, clipId, controller);
 
       if (uploadResult.error) {
+        // Don't delete local file on upload failure - keep it as fallback
+        this.logger.warn(
+          `Upload failed for ${clipId}, keeping local file: ${data.outputPath}`
+        );
         return this.buildUploadFailedClip(data, clipId, actualDuration, viralityScore, uploadResult.error);
       }
 
-      // ── Step 4: done ───────────────────────────────────────────────────
+      // ── Step 4: cleanup and completion ─────────────────────────────────
+      // Only delete local file after successful Cloudinary upload
       await this.cloudinaryService.deleteLocalFile(data.outputPath);
       await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
 
@@ -191,7 +196,10 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_GENERATION_QUEUE, 'success');
       this.clearJobResources(data.videoId, String(job.id ?? ''), timeout);
 
-      this.logger.log(`Clip processing complete: ${clipId} → ${uploadResult.secure_url}`);
+      this.logger.log(
+        `Clip processing complete: ${clipId} → video: ${uploadResult.secure_url}, ` +
+        `thumbnail: ${uploadResult.thumbnail_url || 'fallback'}`
+      );
 
       return this.buildSuccessClip(data, clipId, actualDuration, viralityScore, uploadResult);
     } catch (error) {
@@ -418,30 +426,88 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   }
 
   /**
-   * Upload clip buffer to Cloudinary with 2 retries (3 total attempts).
+   * Upload clip buffer to Cloudinary with retry logic.
+   * Issue #727: Enhanced with proper error handling and logging.
    * Returns an object with `error` set on failure instead of throwing.
    */
-private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
-  for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
-    try {
-      const buffer = await this.cloudinaryService.readFileToBuffer(filePath);
-      const result = await this.cloudinaryService.uploadVideoFromBuffer(buffer, clipId, {}, 2);
-      if (!result.error) {
-        return result;
+  private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
+    this.logger.log(`Starting Cloudinary upload for ${clipId} from ${filePath}`);
+    
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        // Read the FFmpeg output file to buffer
+        const buffer = await this.cloudinaryService.readFileToBuffer(filePath);
+        
+        this.logger.log(
+          `Upload attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} for ${clipId} ` +
+          `(buffer size: ${Math.round(buffer.length / 1024)}KB)`
+        );
+
+        // Upload to Cloudinary with automatic thumbnail generation
+        const result = await this.cloudinaryService.uploadVideoFromBuffer(
+          buffer, 
+          clipId, 
+          {
+            folder: 'clips',
+            resourceType: 'video'
+          },
+          attempt
+        );
+
+        if (!result.error && result.secure_url) {
+          this.logger.log(
+            `Cloudinary upload successful for ${clipId} on attempt ${attempt}: ` +
+            `video=${result.secure_url}, thumbnail=${result.thumbnail_url}`
+          );
+          return result;
+        }
+
+        // Log the specific error from Cloudinary
+        const errorMsg = result.error || 'No secure_url in response';
+        this.logger.warn(
+          `Cloudinary upload attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} failed for ${clipId}: ${errorMsg}`
+        );
+
+        // Don't retry if it's the last attempt
+        if (attempt >= UPLOAD_MAX_ATTEMPTS) {
+          return { 
+            error: `Upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts: ${errorMsg}`, 
+            secure_url: '', 
+            public_id: clipId 
+          };
+        }
+
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Upload to Cloudinary attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} threw error for ${clipId}: ${errorMsg}`
+        );
+
+        // Don't retry if it's the last attempt
+        if (attempt >= UPLOAD_MAX_ATTEMPTS) {
+          return { 
+            error: `Upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts: ${errorMsg}`, 
+            secure_url: '', 
+            public_id: clipId 
+          };
+        }
       }
-      this.logger.warn(`Cloudinary upload attempt ${attempt} failed for ${clipId}: ${result.error}`);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Upload to Cloudinary attempt ${attempt} failed for ${clipId}: ${msg}`);
+
+      // Wait before retrying (exponential backoff)
+      if (attempt < UPLOAD_MAX_ATTEMPTS) {
+        const delayMs = UPLOAD_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        this.logger.log(`Waiting ${delayMs}ms before retry attempt ${attempt + 1} for ${clipId}`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
-    if (attempt < UPLOAD_MAX_ATTEMPTS) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, UPLOAD_RETRY_BASE_DELAY_MS * attempt),
-      );
-    }
+
+    // This should never be reached, but just in case
+    return { 
+      error: `Upload failed after retries`, 
+      secure_url: '', 
+      public_id: clipId 
+    };
   }
-  return { error: 'Upload failed after retries', secure_url: '', public_id: clipId };
-}
 
   /**
    * Handle errors from the main clip processing try/catch.
@@ -605,7 +671,7 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
 
   // ── Clip builder helpers ───────────────────────────────────────────────────
 
-  /** Build a Clip object for a successful generation. */
+  /** Build a Clip object for a successful generation with enhanced Cloudinary result. */
   private buildSuccessClip(
     data: ClipGenerationJob,
     clipId: string,
@@ -613,6 +679,15 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
     viralityScore: number,
     uploadResult: any,
   ): Clip {
+    const thumbnailUrl = uploadResult.thumbnail_url || 
+                        this.cloudinaryService.generateThumbnailUrl(uploadResult.public_id || clipId, 0.5);
+    
+    this.logger.log(
+      `Built success clip: ${clipId}, duration=${actualDuration}s, ` +
+      `viralityScore=${viralityScore}, video=${uploadResult.secure_url}, ` +
+      `thumbnail=${thumbnailUrl}`
+    );
+
     return {
       id: clipId,
       videoId: data.videoId,
@@ -624,7 +699,7 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       transcript: data.transcript,
       viralityScore,
       clipUrl: uploadResult.secure_url,
-      thumbnail: uploadResult.thumbnail_url,
+      thumbnail: thumbnailUrl,
       status: 'success',
       selected: false,
       postStatus: null,
@@ -648,9 +723,10 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
   ): Clip {
     this.metricsService.incrementClipsGenerated('failure');
     this.logger.error(
-      `Cloudinary upload failed after retries for ${clipId}: ${errorMessage}. ` +
-        `Keeping local file as fallback: ${data.outputPath}`,
+      `Cloudinary upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts for ${clipId}: ${errorMessage}. ` +
+        `Keeping local file as fallback: ${data.outputPath}`
     );
+    
     return {
       id: clipId,
       videoId: data.videoId,
@@ -661,14 +737,18 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       positionRatio: data.positionRatio,
       transcript: data.transcript,
       viralityScore,
-      clipUrl: '',
-      thumbnail: undefined,
+      clipUrl: '', // Empty since Cloudinary upload failed
+      thumbnail: null, // No thumbnail available
       status: 'upload_failed',
-      localFilePath: data.outputPath,
-      error: `Cloudinary upload failed: ${errorMessage}`,
+      localFilePath: data.outputPath, // Keep local file as fallback
+      error: `Cloudinary upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts: ${errorMessage}`,
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
+      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      nftStatus: 'none',
+      mintAddress: null,
+      mintedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
