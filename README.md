@@ -254,11 +254,56 @@ Swagger (development): <http://localhost:3000/api/docs>
 | Port 3000 already in use | Stop the other process or set `PORT` in `.env` |
 | JWT / 401 on protected routes | Obtain a token via auth endpoints; send `Authorization: Bearer <token>` |
 
-Stellar-specific integration (wallets, mint, royalties) is documented in [docs/stellar-integration.md](./docs/stellar-integration.md).
+Stellar-specific integration (wallets, mint, royalties) is documented in [docs/wallet-integration.md](./docs/wallet-integration.md).
 
 ## API Documentation (Swagger/OpenAPI)
 
 ClipCash provides comprehensive API documentation via Swagger UI.
+
+### Standard API Response Format
+
+All API responses are wrapped in a consistent `ApiResponseDto` envelope (Issue #854):
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": { ... },
+  "timestamp": "2026-08-29T16:50:25.156Z"
+}
+```
+
+Error responses include an `error` field:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Wallet not found",
+  "error": "Wallet not found",
+  "timestamp": "2026-08-29T16:50:25.156Z"
+}
+```
+
+Paginated list endpoints use `PaginatedResponseDto` inside the `data` field:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "items": [...],
+    "total": 120,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 6,
+    "hasNextPage": true,
+    "hasPrevPage": false
+  },
+  "timestamp": "2026-08-29T16:50:25.156Z"
+}
+```
+
+For a full list of error codes, see [docs/error-codes.md](./docs/error-codes.md).
 
 ### Accessing the Docs
 

@@ -27,6 +27,7 @@ import {
   ApiConflictResponse,
   ApiOkResponse,
 } from '@nestjs/swagger';
+import { API_ERROR_SCHEMA } from '../common/dtos';
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
@@ -43,8 +44,8 @@ interface AuthRequest extends Request {
 
 @ApiTags('wallets')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
-@ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
+@ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })
 @Controller('wallets')
 @Auth()
 export class WalletsController {

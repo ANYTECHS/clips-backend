@@ -38,30 +38,18 @@ import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
 
+import { API_ERROR_SCHEMA } from '../common/dtos';
+
 interface RequestWithUser extends Request {
   user: { userId: number };
 }
 
-const validationErrorSchema = {
-  type: 'object',
-  properties: {
-    message: {
-      type: 'array',
-      items: { type: 'string' },
-      example: [
-        'property unexpected should not exist',
-        'amount must not be less than 0.01',
-      ],
-    },
-    error: { type: 'string', example: 'Bad Request' },
-    statusCode: { type: 'number', example: 400 },
-  },
-};
+const validationErrorSchema = API_ERROR_SCHEMA;
 
 @ApiTags('payout')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
-@ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
+@ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })
 @Controller('payouts')
 @Auth()
 export class PayoutsController {
