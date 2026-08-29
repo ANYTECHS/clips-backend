@@ -25,6 +25,9 @@ import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
 import { ConfigModule } from '../config/config.module';
 import { GasMetricsService } from './gas-metrics.service';
+import { NftTransferService } from './nft-transfer.service';
+import { NftTransferHistoryService } from './nft-transfer-history.service';
+import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 
@@ -53,6 +56,9 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
     AdminContractService,
+    NftTransferService,
+    NftTransferHistoryService,
+    NftMetadataRefreshService,
     AdminConfigService,
     NftApprovalService,
     ClaimRoyaltyService,
@@ -77,6 +83,9 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     NftOwnershipModule,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
+    NftTransferService,
+    NftTransferHistoryService,
+    NftMetadataRefreshService,
     AdminConfigService,
     NftApprovalService,
     ClaimRoyaltyService,

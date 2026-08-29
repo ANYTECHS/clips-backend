@@ -13,6 +13,9 @@ import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { AdminContractService } from './admin-contract.service';
 import { GasMetricsService } from './gas-metrics.service';
+import { NftTransferService } from './nft-transfer.service';
+import { NftTransferHistoryService } from './nft-transfer-history.service';
+import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 
 const VALID_ADDRESS = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
 
@@ -32,6 +35,9 @@ async function makeController(ownershipService: Partial<NftOwnershipService>) {
       { provide: MintSignatureVerificationService, useValue: {} },
       { provide: AdminContractService, useValue: {} },
       { provide: GasMetricsService, useValue: {} },
+      { provide: NftTransferService, useValue: { prepareTransferTx: jest.fn() } },
+      { provide: NftTransferHistoryService, useValue: { getTransfers: jest.fn() } },
+      { provide: NftMetadataRefreshService, useValue: { prepareRefreshWithCooldown: jest.fn() } },
     ],
   }).compile();
 

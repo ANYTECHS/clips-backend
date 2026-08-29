@@ -145,6 +145,19 @@ import {
   GetUserTokensQueryDto,
   PaginatedUserTokensResponseDto,
 } from './dto/paginated-user-tokens.dto';
+import {
+  GetNftTransfersQueryDto,
+  PaginatedNftTransfersResponseDto,
+} from './dto/nft-transfer-history.dto';
+import {
+  TransferNftDto,
+  TransferNftResponseDto,
+  TransferOwnershipErrorDto,
+  TransferSoulboundErrorDto,
+} from './dto/transfer-nft.dto';
+import { NftTransferService } from './nft-transfer.service';
+import { NftTransferHistoryService } from './nft-transfer-history.service';
+import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 
 @ApiTags('nfts')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
@@ -165,6 +178,9 @@ export class NftController {
     private readonly adminConfigService: AdminConfigService,
     private readonly nftApprovalService: NftApprovalService,
     private readonly gasMetricsService: GasMetricsService,
+    private readonly nftTransferService: NftTransferService,
+    private readonly nftTransferHistoryService: NftTransferHistoryService,
+    private readonly nftMetadataRefreshService: NftMetadataRefreshService,
     private readonly claimRoyaltyService: ClaimRoyaltyService,
     private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
   ) {}
@@ -237,11 +253,11 @@ export class NftController {
 
   @Get('/wallets/:address/nfts')
   @ApiOperation({
-    summary: 'Get paginated NFTs owned by a wallet',
+    summary: 'Get paginated NFTs owned by a wallet (Issue #838)',
     description:
-      'Queries the on-chain Soroban contract to get token IDs held by the specified wallet. ' +
-      'Supports offset-based pagination via limit and cursor query parameters. ' +
-      'Large collections are handled safely by returning paginated results.',
+      'Calls on-chain get_user_tokens(owner, limit, cursor) when available, with a safe ' +
+      'ledger fallback. Returns token IDs plus nextCursor for large collections without ' +
+      'loading the entire owner vector into the API response.',
   })
   @ApiParam({
     name: 'address',
@@ -297,6 +313,90 @@ export class NftController {
       limit,
       cursor,
     };
+  }
+
+  /**
+   * GET /nfts/:id/transfers
+   * Paginated ownership transfer history indexed from Soroban Transfer events (Issue #841).
+   */
+  @Get(':id/transfers')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get paginated NFT transfer history (Issue #841)',
+    description:
+      'Returns indexed Transfer events for the given token ID, ordered by transferredAt ' +
+      'descending. Includes sender, recipient, token ID, transaction hash, and timestamp. ' +
+      'Supports limit/cursor pagination.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Page size (1-100, default 20)',
+    example: 20,
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description: 'Offset cursor (0-based, default 0)',
+    example: 0,
+  })
+  @ApiOkResponse({
+    description: 'Paginated transfer history',
+    type: PaginatedNftTransfersResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID or pagination parameters' })
+  async getNftTransfers(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: GetNftTransfersQueryDto,
+  ): Promise<PaginatedNftTransfersResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    return this.nftTransferHistoryService.getTransfers(id, query);
+  }
+
+  /**
+   * POST /nfts/:id/transfer
+   * Prepare an unsigned transfer_with_royalty Soroban transaction (Issue #843).
+   */
+  @UseGuards(LoginGuard)
+  @Post(':id/transfer')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Prepare an unsigned NFT transfer transaction (Issue #843)',
+    description:
+      'Validates on-chain ownership, recipient address, and soulbound restrictions, then ' +
+      'builds an unsigned Soroban transfer_with_royalty transaction. Returns XDR for the ' +
+      'owner wallet to sign. Soulbound NFTs cannot be transferred.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: TransferNftDto })
+  @ApiOkResponse({
+    description: 'Unsigned transfer XDR returned',
+    type: TransferNftResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid recipient, soulbound NFT, or validation error',
+    type: TransferSoulboundErrorDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the NFT on-chain',
+    type: TransferOwnershipErrorDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  async prepareTransfer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TransferNftDto,
+  ): Promise<TransferNftResponseDto> {
+    return this.nftTransferService.prepareTransferTx(
+      id,
+      dto.fromWallet,
+      dto.toWallet,
+      dto.salePrice,
+      dto.royaltyBpsOverride,
+    );
   }
 
   /**
@@ -1246,11 +1346,12 @@ export class NftController {
   @Post(':id/refresh-metadata')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
-    summary: 'Prepare an admin-authorized NFT metadata refresh',
+    summary: 'Prepare an admin-authorized NFT metadata refresh (Issue #837)',
     description:
       'Builds an unsigned Soroban refresh_metadata(token_id, metadata) transaction. ' +
       'Requires x-admin-secret; the contract admin wallet signs and submits the XDR. ' +
-      'Each token is limited to one refresh every 30 days on-chain.',
+      'Backend enforces a 30-day cooldown per token (HTTP 429 when still cooling down) ' +
+      'and records a MetadataRefresh event for audit.',
   })
   @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
   @ApiBody({ type: RefreshMetadataDto })
@@ -1268,7 +1369,11 @@ export class NftController {
     @Body() dto: RefreshMetadataDto,
   ): Promise<RefreshMetadataResponseDto> {
     const { adminAddress, ...metadata } = dto;
-    return this.adminContractService.prepareRefreshMetadataTx(id, adminAddress, metadata);
+    return this.nftMetadataRefreshService.prepareRefreshWithCooldown(
+      id,
+      adminAddress,
+      metadata,
+    );
   }
 
   @UseGuards(LoginGuard)
