@@ -10,6 +10,7 @@ import {
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { JobsService } from './jobs.service';
+import { JobProgressResponseDto } from './dto/job-progress-response.dto';
 
 @ApiTags('jobs')
 @ApiBearerAuth('access-token')
@@ -36,6 +37,37 @@ export class JobsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getFailedJobs(@Query('type') type: string) {
     return this.jobsService.getFailedJobs(type || 'clip-generation');
+  }
+
+  @Get(':jobId/progress')
+  @ApiOperation({
+    summary: 'Get current job progress',
+    description:
+      'Returns the current BullMQ progress percentage and stage for the specified job. Supports clip-generation jobs and other queue-backed jobs.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'BullMQ job ID to inspect',
+    example: 'clip-123',
+  })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    description: 'Queue type to search (optional). Searches all supported queues if omitted.',
+    example: 'clip-generation',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Current job progress response',
+    type: JobProgressResponseDto,
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Job not found' })
+  async getJobProgress(
+    @Param('jobId') jobId: string,
+    @Query('type') type?: string,
+  ): Promise<JobProgressResponseDto> {
+    return this.jobsService.getJobProgress(jobId, type);
   }
 
   @Post('retry/:jobId')
