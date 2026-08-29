@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsString, IsEnum, Min } from 'class-validator';
+import { IsNumber, IsString, IsEnum, Min, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { TrimString } from '../../common/decorators/trim-string.decorator';
 
@@ -16,24 +16,27 @@ export class CreatePayoutDto {
     minimum: 0.01,
   })
   @Type(() => Number)
-  @IsNumber()
-  @Min(0.01)
+  @IsNumber({}, { message: 'amount must be a valid number' })
+  @Min(0.01, { message: 'amount must be at least 0.01' })
   amount: number;
 
   @ApiProperty({
-    description: 'Currency code',
+    description: 'ISO 4217 currency code (e.g. USD, XLM)',
     example: 'USD',
   })
   @TrimString()
-  @IsString()
+  @IsString({ message: 'currency must be a string' })
+  @IsNotEmpty({ message: 'currency is required' })
   currency: string;
 
   @ApiProperty({
-    description: 'Payout method',
+    description: 'Payout method — "fiat" for bank transfers, "stellar" for XLM payouts',
     enum: ['fiat', 'stellar'],
     example: 'stellar',
   })
   @TrimString()
-  @IsEnum(['fiat', 'stellar'])
+  @IsEnum(['fiat', 'stellar'], {
+    message: 'method must be one of: fiat, stellar',
+  })
   method: 'fiat' | 'stellar';
 }

@@ -380,6 +380,23 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) => {
+        const messages = errors.map((error) => {
+          const constraints = error.constraints
+            ? Object.values(error.constraints)
+            : [`${error.property} is invalid`];
+          return {
+            field: error.property,
+            errors: constraints,
+          };
+        });
+        return new (require('@nestjs/common').BadRequestException)({
+          statusCode: 400,
+          message: 'Validation failed',
+          error: 'Bad Request',
+          details: messages,
+        });
+      },
     }),
   );
 
