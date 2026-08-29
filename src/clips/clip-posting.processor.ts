@@ -1,7 +1,7 @@
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { AyrshareService } from './ayrshare.service';
 import { UserPlatformService } from '../user-platform/user-platform.service';
@@ -118,21 +118,56 @@ export class ClipPostingProcessor extends WorkerHost implements OnModuleInit {
       if (failedPlatforms.length > 0) {
         const remainingAttempts =
           (job.opts.attempts ?? 1) - (job.attemptsMade + 1);
+        const retryMessage =
+          `Posting failed for platforms: [${failedPlatforms.join(', ')}]. ` +
+          `Will retry (${remainingAttempts} attempt(s) left).`;
+
         if (remainingAttempts > 0) {
           // Re-enqueue only the failed platforms via job data mutation isn't possible;
           // instead we throw so BullMQ retries. The next run re-checks DB-stored
           // status to avoid re-posting already published platforms.
-          throw new Error(
-            `Posting failed for platforms: [${failedPlatforms.join(', ')}]. ` +
-              `Will retry (${remainingAttempts} attempt(s) left).`,
-          );
+          throw new Error(retryMessage);
         }
+
+        const permanentFailure = new UnrecoverableError(
+          `Posting failed for platforms: [${failedPlatforms.join(', ')}]. ` +
+            `No retries remain for this job; marking it failed permanently.`,
+        );
+
+        this.logger.error(
+          `[posting] job ${job.id} exhausted retries for clipId=${clipId} — ` +
+            `platforms=[${failedPlatforms.join(', ')}]`,
+          JSON.stringify({
+            jobId: job.id,
+            clipId,
+            userId,
+            platforms: failedPlatforms,
+            attemptsMade: job.attemptsMade,
+            maxAttempts: job.opts.attempts ?? 1,
+          }),
+        );
+
+        throw permanentFailure;
       }
 
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_POSTING_QUEUE, 'success');
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_POSTING_QUEUE, 'failure');
-      this.metricsService.recordJobFailure(CLIP_POSTING_QUEUE, error instanceof Error ? error.message : String(error));
+      this.metricsService.recordJobFailure(CLIP_POSTING_QUEUE, errorMessage);
+      this.logger.error(
+        `[posting] job ${job.id} failed processing clipId=${clipId} — ` +
+          `reason: ${errorMessage}`,
+        JSON.stringify({
+          jobId: job.id,
+          clipId,
+          userId,
+          platforms,
+          attemptsMade: job.attemptsMade,
+          maxAttempts: job.opts.attempts ?? 1,
+          error: errorMessage,
+        }),
+      );
       throw error;
     }
   }

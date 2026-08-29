@@ -102,6 +102,10 @@ import {
   ClaimRoyaltiesResponseDto,
   ClaimRoyaltiesInsufficientBalanceDto,
 } from './dto/claim-royalties.dto';
+import {
+  RoyaltyClaimHistoryQueryDto,
+  RoyaltyClaimHistoryResponseDto,
+} from './dto/royalty-claim-history.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -115,6 +119,8 @@ import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { AdminContractService } from './admin-contract.service';
+import { ClaimRoyaltyService } from './claim-royalty.service';
+import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
 import { maskAddress } from '../wallets/wallet.utils';
 import {
@@ -159,6 +165,8 @@ export class NftController {
     private readonly adminConfigService: AdminConfigService,
     private readonly nftApprovalService: NftApprovalService,
     private readonly gasMetricsService: GasMetricsService,
+    private readonly claimRoyaltyService: ClaimRoyaltyService,
+    private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
   ) {}
 
   @UseGuards(LoginGuard, NftMintGuard)
@@ -792,6 +800,40 @@ export class NftController {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(id, userId);
     return this.nftMintService.prepareBurnTx(id, dto.walletAddress);
+  }
+
+  /**
+   * GET /nfts/:id/royalties/history
+   * Paginated royalty claim history for an NFT (Issue #840).
+   */
+  @Get(':id/royalties/history')
+  @ApiOperation({
+    summary: 'Get royalty claim history for an NFT',
+    description:
+      'Returns paginated historical royalty claims for the given token. ' +
+      'Each record is created when a RoyaltyClaimed contract event is indexed ' +
+      'and includes the Stellar transaction hash.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({
+    description: 'Paginated royalty claim history',
+    type: RoyaltyClaimHistoryResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID or pagination params' })
+  async getRoyaltyClaimHistory(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: RoyaltyClaimHistoryQueryDto,
+  ): Promise<RoyaltyClaimHistoryResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    return this.royaltyClaimHistoryService.getHistory(
+      id,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   /**
@@ -1939,7 +1981,7 @@ export class NftController {
   ): Promise<ClaimRoyaltiesResponseDto> {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(id, userId);
-    return this.nftMintService.prepareClaimRoyaltiesTx(
+    return this.claimRoyaltyService.prepareClaimRoyaltiesTx(
       id,
       dto.walletAddress,
       dto.assetContractId,

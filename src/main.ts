@@ -233,7 +233,6 @@ async function bootstrap() {
       'The `Content-Security-Policy` directives (`scriptSrc`, `styleSrc`, ...) only relax to allow ' +
       '`\'unsafe-inline\'` scripts when the Swagger UI is enabled (non-production, or ' +
       '`ENABLE_SWAGGER_UI=true`), since the docs page needs an inline script to boot. ' +
-      'API JSON responses are never affected by this relaxation.',
       'API JSON responses are never affected by this relaxation.\n\n' +
       '## CSRF Protection\n\n' +
       'All state-changing requests (`POST`, `PUT`, `PATCH`, `DELETE`) that are authenticated via the ' +
@@ -270,7 +269,27 @@ async function bootstrap() {
       '| Production | Only origins listed in `ALLOWED_ORIGINS` (comma-separated); empty by default |\n\n' +
       'Configure additional development or staging origins with the `ALLOWED_ORIGINS` environment variable, ' +
       'e.g. `ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173`. Allowed methods and headers can ' +
-      'similarly be overridden via `ALLOWED_METHODS` and `ALLOWED_HEADERS`.',
+      'similarly be overridden via `ALLOWED_METHODS` and `ALLOWED_HEADERS`.\n\n' +
+      '## Correlation / Request IDs\n\n' +
+      'Every request is assigned a correlation ID for end-to-end tracing:\n\n' +
+      '| Header | Direction | Description |\n' +
+      '|--------|-----------|-------------|\n' +
+      '| `X-Request-Id` | Request (optional) | Client or proxy may supply an ID; otherwise the API generates a UUID v4 |\n' +
+      '| `X-Request-Id` | Response | Echoed on every response so clients can correlate with support/logs |\n\n' +
+      'Error response bodies also include `requestId` when available. Example:\n' +
+      '```json\n' +
+      '{\n' +
+      '  "statusCode": 404,\n' +
+      '  "message": "Not Found",\n' +
+      '  "error": "Not Found",\n' +
+      '  "requestId": "550e8400-e29b-41d4-a716-446655440000"\n' +
+      '}\n' +
+      '```\n\n' +
+      'Internal stack traces are **never** returned in API or Swagger responses. ' +
+      'Use the `requestId` when contacting support or searching structured application logs.\n\n' +
+      '## API Versioning\n\n' +
+      'This OpenAPI document reflects the current public API surface (SemVer; see `CHANGELOG.md` and `docs/versioning.md`). ' +
+      'Breaking API changes bump the major version and are reflected in this Swagger/OpenAPI spec.',
     )
     .setVersion('1.0')
     .addBearerAuth(
@@ -304,6 +323,7 @@ async function bootstrap() {
     .addTag('user-platforms', 'Social platform connections')
     .addTag('platform', 'Platform revenue queries')
     .addTag('health', 'System health checks')
+    .addTag('blockchain', 'Indexed Soroban contract events')
     .addTag('transactions', 'Blockchain transactions')
     .addTag('payout-methods', 'Payout method management')
     .build();
