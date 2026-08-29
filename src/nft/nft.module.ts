@@ -18,6 +18,8 @@ import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { AdminContractService } from './admin-contract.service';
+import { AdminConfigService } from './admin-config.service';
+import { NftApprovalService } from './nft-approval.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
@@ -34,6 +36,7 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     IpfsUploadModule,
     NftOwnershipModule,
     RedisModule,
+    ClipsModule,
     ConfigModule,
   ],
   providers: [
@@ -50,6 +53,8 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
     AdminContractService,
+    AdminConfigService,
+    NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
   ],
@@ -72,6 +77,8 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     NftOwnershipModule,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
+    AdminConfigService,
+    NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
   ],

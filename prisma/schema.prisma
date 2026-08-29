@@ -483,6 +483,24 @@ model UserEarningsSummary {
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+/// Tracks submitted Soroban / Stellar transaction hashes until confirmed or
+/// failed (Issue #846). Status is one of: pending | confirmed | failed.
+model TrackedTransaction {
+  id             Int       @id @default(autoincrement())
+  hash           String    @unique
+  status         String    @default("pending")
+  label          String?
+  userId         Int?
+  failureReason  String?
+  submittedAt    DateTime  @default(now())
+  confirmedAt    DateTime?
+  lastCheckedAt  DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([lastCheckedAt])
+  @@index([userId])
 /// Historical royalty claims by NFT creators (Issue #840).
 /// Populated from on-chain `RoyaltyClaimed` events by the Soroban indexer.
 model RoyaltyClaim {
