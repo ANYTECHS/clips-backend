@@ -10,6 +10,8 @@ import {
   ApiResponse,
   ApiTags,
   ApiInternalServerErrorResponse,
+  ApiOkResponse,
+  ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
 import { RedisMemoryService, RedisMemoryStats } from './redis-memory.service';
 import { RedisService } from '../redis/redis.service';
@@ -18,6 +20,8 @@ import {
   QueueHealthResponseDto,
   QueueStatisticsResponseDto,
 } from '../queue/dtos/queue-stats.dto';
+import { SorobanHealthService } from './soroban-health.service';
+import { SorobanHealthResponseDto } from './dto/soroban-health.dto';
 
 interface HealthResponse {
   status: 'ok' | 'degraded';
@@ -40,7 +44,46 @@ export class HealthController {
     private readonly redisMemoryService: RedisMemoryService,
     private readonly redisService: RedisService,
     private readonly queueHealthService: QueueHealthService,
+    private readonly sorobanHealthService: SorobanHealthService,
   ) {}
+
+  /**
+   * GET /health/soroban
+   * Verifies the configured NFT Soroban contract is reachable (Issue #844).
+   */
+  @Get('soroban')
+  @ApiOperation({
+    summary: 'Soroban NFT contract health check',
+    description:
+      'Queries the configured NFT contract `version()` and `name()`, verifies ' +
+      'the contract address format, and reports the configured Stellar network. ' +
+      'Returns HTTP 200 when healthy and HTTP 503 when unreachable or misconfigured.',
+  })
+  @ApiOkResponse({
+    description: 'Contract is reachable and responding',
+    type: SorobanHealthResponseDto,
+    schema: {
+      example: {
+        status: 'healthy',
+        network: 'testnet',
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.0.0',
+        collectionName: 'ClipCash NFTs',
+        rpcReachable: true,
+      },
+    },
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Contract unreachable, misconfigured, or RPC unavailable',
+    type: SorobanHealthResponseDto,
+  })
+  async checkSoroban(): Promise<SorobanHealthResponseDto> {
+    const result = await this.sorobanHealthService.check();
+    if (result.status !== 'healthy') {
+      throw new HttpException(result, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return result;
+  }
 
   /**
    * Returns current Redis memory utilisation.

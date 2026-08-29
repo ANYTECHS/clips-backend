@@ -37,6 +37,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from './queue/queue.module';
 import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.module';
 import { CommonModule } from './common/common.module';
+import { BlockchainModule } from './blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -141,6 +142,7 @@ import { CommonModule } from './common/common.module';
     QueueDashboardModule,
     GracefulShutdownModule,
     CommonModule,
+    BlockchainModule,
   ],
   controllers: [AppController],
   providers: [

@@ -304,6 +304,7 @@ async function bootstrap() {
     .addTag('user-platforms', 'Social platform connections')
     .addTag('platform', 'Platform revenue queries')
     .addTag('health', 'System health checks')
+    .addTag('blockchain', 'Indexed Soroban contract events')
     .addTag('transactions', 'Blockchain transactions')
     .addTag('payout-methods', 'Payout method management')
     .build();
