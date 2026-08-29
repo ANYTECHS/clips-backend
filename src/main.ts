@@ -184,6 +184,13 @@ async function bootstrap() {
     .setTitle('ClipCash API')
     .setDescription(
       'ClipCash backend API documentation\n\n' +
+      '## API Security Contract\n\n' +
+      'All protected endpoints must require server-side authentication and authorization. ' +
+      'JWT bearer auth is required for authenticated API traffic, `401 Unauthorized` is returned ' +
+      'for missing or invalid credentials, `403 Forbidden` is returned for authenticated-but-not-authorized access, ' +
+      'and `429 Too Many Requests` is returned when a throttle limit is exceeded.\n\n' +
+      'Sensitive endpoints should also advertise their security contract in Swagger via `@ApiBearerAuth`, ' +
+      '`@ApiUnauthorizedResponse`, `@ApiForbiddenResponse`, and `@ApiTooManyRequestsResponse` decorators.\n\n' +
       '## Rate Limits\n\n' +
       'All API endpoints are protected by rate limiting to ensure fair usage and system stability.\n\n' +
       '### Rate Limit Tiers\n\n' +
