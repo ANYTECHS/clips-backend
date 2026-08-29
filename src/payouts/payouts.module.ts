@@ -25,6 +25,8 @@ import { EarningsModule } from '../earnings/earnings.module';
 import { BalanceService } from './balance.service';
 import { PayoutStateMachineService } from './payout-state-machine.service';
 import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
+import { PayoutValidationService } from './payout-validation.service';
+import { PayoutProcessingService } from './payout-processing.service';
 import { CommonModule } from '../common/common.module';
 
 @Module({
@@ -60,6 +62,8 @@ import { CommonModule } from '../common/common.module';
     StellarConfirmationProcessor,
     PayoutApprovalService,
     PayoutLimitsService,
+    PayoutValidationService,
+    PayoutProcessingService,
     ConfigService,
     BalanceService,
     PayoutStateMachineService,
@@ -70,6 +74,8 @@ import { CommonModule } from '../common/common.module';
     FeeService,
     PayoutMethodService,
     PayoutLimitsService,
+    PayoutValidationService,
+    PayoutProcessingService,
     BalanceService,
     SoftDeleteService,
   ],

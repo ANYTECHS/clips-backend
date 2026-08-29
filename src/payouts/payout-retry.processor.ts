@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
@@ -40,9 +40,10 @@ export class PayoutRetryProcessor extends WorkerHost {
         'success',
       );
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       this.logger.error(
-        `Payout retry failed for payout ${payoutId}:`,
-        error,
+        `[payout-retry] job ${job.id} failed for payout ${payoutId}: ${message}`,
+        error instanceof Error ? error.stack : undefined,
       );
       this.metricsService.recordJobCompletion(
         jobMetricId,
@@ -51,9 +52,30 @@ export class PayoutRetryProcessor extends WorkerHost {
       );
       this.metricsService.recordJobFailure(
         PAYOUT_RETRY_QUEUE,
-        error instanceof Error ? error.message : String(error),
+        message,
       );
       throw error;
     }
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job<PayoutRetryJob>, error: Error): void {
+    const maxAttempts = job.opts.attempts ?? 1;
+    const isFinalAttempt = job.attemptsMade >= maxAttempts;
+
+    if (!isFinalAttempt) {
+      this.logger.warn(
+        `[RETRY] Payout retry job ${job.id} failed on attempt ${job.attemptsMade}/${maxAttempts} — ` +
+          `payoutId=${job.data.payoutId} — reason: ${error.message} — retrying`,
+      );
+      return;
+    }
+
+    this.logger.error(
+      `[FINAL FAILURE] Payout retry job ${job.id} exhausted all ${maxAttempts} attempts — ` +
+        `payoutId=${job.data.payoutId} — reason: ${error.message}`,
+      error.stack,
+    );
+    this.metricsService.recordJobFailure(PAYOUT_RETRY_QUEUE, 'final_failure');
   }
 }
