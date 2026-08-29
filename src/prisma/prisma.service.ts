@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 @Injectable()
@@ -6,6 +6,8 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
+  private readonly logger = new Logger(PrismaService.name);
+
   async onModuleInit() {
     this.$use(async (params, next) => {
       const result = await next(params);
@@ -57,7 +59,9 @@ export class PrismaService
         }
       } catch (err) {
         // fail silently to avoid breaking the main transaction
-        console.error('Failed to create audit log:', err);
+        this.logger.error(
+          `Failed to create audit log: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
 
       return result;

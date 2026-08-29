@@ -31,7 +31,7 @@ export class RoyaltyEstimateQueryDto {
   royaltyBps?: number;
 }
 
-/** Response for GET /nfts/royalty/estimate (Issue #680). */
+/** Response for GET /nfts/royalty/estimate (Issue #680 / #836). */
 export class RoyaltyEstimateResponseDto {
   @ApiProperty({
     description: 'Sale price in stroops the estimate was computed from',
@@ -47,10 +47,33 @@ export class RoyaltyEstimateResponseDto {
 
   @ApiProperty({
     description:
-      'Royalty amount owed in stroops, rounded down to the nearest stroop (salePrice * royaltyBps / 10_000)',
+      'Royalty amount owed in stroops, rounded down to the nearest stroop ' +
+      '(checked: floor(salePrice × royaltyBps / 10_000) via BigInt safe math)',
     example: 10_000_000,
   })
   royaltyAmount!: number;
+}
+
+/**
+ * 400 body when royalty inputs are unsupported or would overflow (Issue #836).
+ * Returned when salePrice/royaltyBps are invalid, or when the checked product
+ * exceeds Number.MAX_SAFE_INTEGER.
+ */
+export class RoyaltyOverflowErrorDto {
+  @ApiProperty({ example: 400 })
+  statusCode!: number;
+
+  @ApiProperty({
+    example:
+      'Royalty amount (13510798882111486500) exceeds Number.MAX_SAFE_INTEGER. salePrice=9007199254740991, royaltyBps=1500.',
+    description:
+      'Validation / overflow message from checkedRoyaltyAmount. Extreme values that ' +
+      'would lose IEEE-754 precision are rejected rather than silently corrupted.',
+  })
+  message!: string;
+
+  @ApiProperty({ example: 'Bad Request' })
+  error!: string;
 }
 
 /** Successful on-chain royalty query response. */

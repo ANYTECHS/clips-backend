@@ -67,7 +67,24 @@ import {
   RoyaltyUnauthorizedDto,
   RoyaltyEstimateQueryDto,
   RoyaltyEstimateResponseDto,
+  RoyaltyOverflowErrorDto,
 } from './dto/royalty-query.dto';
+import {
+  SetPlatformFeeDto,
+  SetDefaultRoyaltyDto,
+  AdminConfigTxResponseDto,
+  AdminConfigValueResponseDto,
+} from './dto/admin-config.dto';
+import {
+  ApproveNftDto,
+  SetApprovalForAllDto,
+  ApproveNftResponseDto,
+  SetApprovalForAllResponseDto,
+  GetApprovedResponseDto,
+  IsApprovedForAllResponseDto,
+} from './dto/nft-approval.dto';
+import { AdminConfigService } from './admin-config.service';
+import { NftApprovalService } from './nft-approval.service';
 import {
   BurnNftDto,
   BurnNftResponseDto,
@@ -85,6 +102,10 @@ import {
   ClaimRoyaltiesResponseDto,
   ClaimRoyaltiesInsufficientBalanceDto,
 } from './dto/claim-royalties.dto';
+import {
+  RoyaltyClaimHistoryQueryDto,
+  RoyaltyClaimHistoryResponseDto,
+} from './dto/royalty-claim-history.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftMetadataService } from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
@@ -98,6 +119,8 @@ import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { AdminContractService } from './admin-contract.service';
+import { ClaimRoyaltyService } from './claim-royalty.service';
+import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
 import { maskAddress } from '../wallets/wallet.utils';
 import {
@@ -152,10 +175,14 @@ export class NftController {
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
     private readonly mintSignatureVerification: MintSignatureVerificationService,
     private readonly adminContractService: AdminContractService,
+    private readonly adminConfigService: AdminConfigService,
+    private readonly nftApprovalService: NftApprovalService,
     private readonly gasMetricsService: GasMetricsService,
     private readonly nftTransferService: NftTransferService,
     private readonly nftTransferHistoryService: NftTransferHistoryService,
     private readonly nftMetadataRefreshService: NftMetadataRefreshService,
+    private readonly claimRoyaltyService: ClaimRoyaltyService,
+    private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
   ) {}
 
   @UseGuards(LoginGuard, NftMintGuard)
@@ -776,7 +803,12 @@ export class NftController {
     description: 'Royalty estimate calculated successfully',
     type: RoyaltyEstimateResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid salePrice or royaltyBps' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid salePrice / royaltyBps, or computed royalty exceeds Number.MAX_SAFE_INTEGER ' +
+      '(Issue #836 checked arithmetic).',
+    type: RoyaltyOverflowErrorDto,
+  })
   getRoyaltyEstimate(
     @Query() query: RoyaltyEstimateQueryDto,
   ): RoyaltyEstimateResponseDto {
@@ -868,6 +900,40 @@ export class NftController {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(id, userId);
     return this.nftMintService.prepareBurnTx(id, dto.walletAddress);
+  }
+
+  /**
+   * GET /nfts/:id/royalties/history
+   * Paginated royalty claim history for an NFT (Issue #840).
+   */
+  @Get(':id/royalties/history')
+  @ApiOperation({
+    summary: 'Get royalty claim history for an NFT',
+    description:
+      'Returns paginated historical royalty claims for the given token. ' +
+      'Each record is created when a RoyaltyClaimed contract event is indexed ' +
+      'and includes the Stellar transaction hash.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({
+    description: 'Paginated royalty claim history',
+    type: RoyaltyClaimHistoryResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID or pagination params' })
+  async getRoyaltyClaimHistory(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: RoyaltyClaimHistoryQueryDto,
+  ): Promise<RoyaltyClaimHistoryResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    return this.royaltyClaimHistoryService.getHistory(
+      id,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   /**
@@ -1089,6 +1155,191 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret header' })
   async prepareUnpause(@Body() dto: PrepareContractPauseDto) {
     return this.adminContractService.preparePauseTx(dto.adminAddress, false);
+  }
+
+  /**
+   * POST /nfts/admin/config/platform-fee
+   * Prepare set_platform_fee() — contract owner only (Issue #835).
+   * On-chain success emits ConfigUpdated.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/config/platform-fee')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare set_platform_fee() admin config tx (Issue #835)',
+    description:
+      'Builds an unsigned Soroban `set_platform_fee(bps)` transaction. ' +
+      'Requires x-admin-secret. Only the contract owner wallet can successfully ' +
+      'submit on-chain. Emits `ConfigUpdated` (local + on-chain).',
+  })
+  @ApiBody({
+    type: SetPlatformFeeDto,
+    examples: {
+      setFee: {
+        summary: 'Set platform fee to 2%',
+        value: {
+          adminAddress: 'GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          platformFeeBps: 200,
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned set_platform_fee XDR returned',
+    type: AdminConfigTxResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret / not contract owner on-chain' })
+  @ApiBadRequestResponse({ description: 'Invalid address or BPS out of range' })
+  async prepareSetPlatformFee(
+    @Body() dto: SetPlatformFeeDto,
+  ): Promise<AdminConfigTxResponseDto> {
+    return this.adminConfigService.prepareSetPlatformFee(
+      dto.adminAddress,
+      dto.platformFeeBps,
+    );
+  }
+
+  /**
+   * POST /nfts/admin/config/default-royalty
+   * Prepare set_default_royalty() — contract owner only (Issue #835).
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/config/default-royalty')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare set_default_royalty() admin config tx (Issue #835)',
+    description:
+      'Builds an unsigned Soroban `set_default_royalty(bps)` transaction. ' +
+      'Requires x-admin-secret. Only the contract owner can submit on-chain. ' +
+      'Emits `ConfigUpdated` (local + on-chain).',
+  })
+  @ApiBody({
+    type: SetDefaultRoyaltyDto,
+    examples: {
+      setRoyalty: {
+        summary: 'Set default royalty to 10%',
+        value: {
+          adminAddress: 'GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          defaultRoyaltyBps: 1000,
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned set_default_royalty XDR returned',
+    type: AdminConfigTxResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret / not contract owner on-chain' })
+  @ApiBadRequestResponse({ description: 'Invalid address or BPS out of range' })
+  async prepareSetDefaultRoyalty(
+    @Body() dto: SetDefaultRoyaltyDto,
+  ): Promise<AdminConfigTxResponseDto> {
+    return this.adminConfigService.prepareSetDefaultRoyalty(
+      dto.adminAddress,
+      dto.defaultRoyaltyBps,
+    );
+  }
+
+  @Get('admin/config/platform-fee')
+  @ApiOperation({
+    summary: 'Read on-chain platform fee BPS (Issue #835)',
+    description: 'Queries get_platform_fee() on the Soroban NFT contract.',
+  })
+  @ApiOkResponse({ type: AdminConfigValueResponseDto })
+  async getPlatformFeeConfig(): Promise<AdminConfigValueResponseDto> {
+    return this.adminConfigService.getPlatformFee();
+  }
+
+  @Get('admin/config/default-royalty')
+  @ApiOperation({
+    summary: 'Read on-chain default royalty BPS (Issue #835)',
+    description: 'Queries get_default_royalty() on the Soroban NFT contract.',
+  })
+  @ApiOkResponse({ type: AdminConfigValueResponseDto })
+  async getDefaultRoyaltyConfig(): Promise<AdminConfigValueResponseDto> {
+    return this.adminConfigService.getDefaultRoyalty();
+  }
+
+  /**
+   * POST /nfts/approve-all
+   * Grant or revoke operator approval for all tokens (Issue #842).
+   */
+  @UseGuards(LoginGuard)
+  @Post('approve-all')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Approve or revoke an operator for all NFTs (Issue #842)',
+    description:
+      'Prepares unsigned `set_approval_for_all(owner, operator, approved)` XDR. ' +
+      'Emits ApprovalForAll on-chain when submitted.',
+  })
+  @ApiBody({ type: SetApprovalForAllDto })
+  @ApiOkResponse({
+    description: 'Unsigned set_approval_for_all XDR',
+    type: SetApprovalForAllResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid address or body' })
+  async approveAll(
+    @Body() dto: SetApprovalForAllDto,
+  ): Promise<SetApprovalForAllResponseDto> {
+    return this.nftApprovalService.prepareSetApprovalForAll(
+      dto.ownerAddress,
+      dto.operatorAddress,
+      dto.approved,
+    );
+  }
+
+  /**
+   * GET /nfts/:id/approved — get_approved(token_id) (Issue #842).
+   */
+  @Get(':id/approved')
+  @ApiOperation({
+    summary: 'Get the approved spender for an NFT (Issue #842)',
+    description: 'Calls Soroban `get_approved(token_id)`. Returns null when none.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({ type: GetApprovedResponseDto })
+  @ApiBadRequestResponse({ description: 'Invalid token ID' })
+  async getApproved(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<GetApprovedResponseDto> {
+    return this.nftApprovalService.getApproved(id);
+  }
+
+  /**
+   * POST /nfts/:id/approve — approve(owner, spender, token_id) (Issue #842).
+   */
+  @UseGuards(LoginGuard)
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Approve a spender for a specific NFT (Issue #842)',
+    description:
+      'Prepares unsigned `approve(owner, spender, token_id)` XDR. ' +
+      'Pass empty spenderAddress to revoke. Emits Approval on-chain when submitted. ' +
+      'Unauthorized callers (non-owners) fail ownership validation.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token / clip ID', example: 42 })
+  @ApiBody({ type: ApproveNftDto })
+  @ApiOkResponse({ type: ApproveNftResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid address or not token owner' })
+  @ApiForbiddenResponse({ description: 'Caller does not own the NFT' })
+  async approveNft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ApproveNftDto,
+    @Req() req: Request,
+  ): Promise<ApproveNftResponseDto> {
+    const userId = Number((req as any).user?.id ?? (req as any).user?.userId ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+    return this.nftApprovalService.prepareApprove(
+      id,
+      dto.ownerAddress,
+      dto.spenderAddress,
+    );
   }
 
   @UseGuards(AdminGuard)
@@ -1835,7 +2086,7 @@ export class NftController {
   ): Promise<ClaimRoyaltiesResponseDto> {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(id, userId);
-    return this.nftMintService.prepareClaimRoyaltiesTx(
+    return this.claimRoyaltyService.prepareClaimRoyaltiesTx(
       id,
       dto.walletAddress,
       dto.assetContractId,
