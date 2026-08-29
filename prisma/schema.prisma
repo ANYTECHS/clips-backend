@@ -482,3 +482,34 @@ model UserEarningsSummary {
   updatedAt        DateTime @updatedAt
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+/// Indexed NFT ownership transfers from Soroban Transfer events (Issue #841).
+model NftTransfer {
+  id            Int      @id @default(autoincrement())
+  tokenId       Int
+  fromAddress   String
+  toAddress     String
+  txHash        String
+  transferredAt DateTime
+  salePrice     BigInt?
+  contractId    String?
+  createdAt     DateTime @default(now())
+
+  @@unique([txHash, tokenId])
+  @@index([tokenId])
+  @@index([transferredAt])
+  @@index([tokenId, transferredAt])
+}
+
+/// Tracks backend-authorized metadata refreshes for the 30-day cooldown (Issue #837).
+model NftMetadataRefresh {
+  id           Int      @id @default(autoincrement())
+  tokenId      Int
+  adminAddress String
+  txHash       String?
+  refreshedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([tokenId])
+  @@index([tokenId, refreshedAt])
+}
