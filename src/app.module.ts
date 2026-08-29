@@ -1,8 +1,10 @@
 import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD, APP_FILTER } from '@nestjs/core';
+import { APP_GUARD, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { SecurityAuditFilter } from './common/filters/security-audit.filter';
+import { HttpExceptionLoggingFilter } from './common/filters/http-exception-logging.filter';
+import { RequestLoggingInterceptor } from './common/interceptors/request-logging.interceptor';
 import { ThrottlerRedisModule } from './common/throttler/throttler-redis.module';
 import { ThrottlerStorageRedisService } from './common/throttler/throttler-storage-redis.service';
 import { AppController } from './app.controller';
@@ -153,7 +155,15 @@ import { BlockchainModule } from './blockchain/blockchain.module';
     },
     {
       provide: APP_FILTER,
+      useClass: HttpExceptionLoggingFilter,
+    },
+    {
+      provide: APP_FILTER,
       useClass: SecurityAuditFilter,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: RequestLoggingInterceptor,
     },
   ],
 })

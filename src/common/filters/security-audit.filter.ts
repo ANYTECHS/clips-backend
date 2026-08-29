@@ -14,9 +14,9 @@ const SECURITY_EVENTS: Record<number, string> = {
 
 /**
  * Logs security-relevant HTTP exceptions (auth failures, permission denials,
- * rate-limit violations, account lockouts) for auditing, then forwards the
- * original response unchanged. Never logs request bodies/headers, so
- * credentials and tokens can't leak into logs.
+ * rate-limit violations, account lockouts) for auditing, then returns the
+ * original error payload plus `requestId`. Never logs request bodies/headers.
+ * Stack traces are stripped from client responses.
  */
 @Catch(HttpException)
 export class SecurityAuditFilter implements ExceptionFilter {
@@ -47,10 +47,26 @@ export class SecurityAuditFilter implements ExceptionFilter {
         method: request.method,
         path: request.originalUrl ?? request.url,
         ip: request.ip,
-        requestId: request.id,
+        requestId: request.requestId,
       });
     }
 
-    response.status(status).json(exceptionResponse);
+    // Include correlation ID; never attach stack traces
+    const body =
+      typeof exceptionResponse === 'string'
+        ? {
+            statusCode: status,
+            message: exceptionResponse,
+            error: 'Error',
+          }
+        : { ...(exceptionResponse as Record<string, unknown>) };
+
+    delete body.stack;
+    delete body.trace;
+    if (request.requestId) {
+      body.requestId = request.requestId;
+    }
+
+    response.status(status).json(body);
   }
 }

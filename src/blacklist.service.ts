@@ -6,6 +6,8 @@
  * @see https://github.com/ANYTECHS/clips-backend/issues/681
  */
 
+import { Logger } from '@nestjs/common';
+
 export interface BlacklistEntry {
   clipId: string;
   reason: string;
@@ -22,6 +24,7 @@ export interface BlacklistAction {
 }
 
 export class BlacklistService {
+  private readonly logger = new Logger(BlacklistService.name);
   private blacklistedClips: Map<string, BlacklistEntry> = new Map();
   private adminAddresses: Set<string> = new Set();
 
@@ -142,7 +145,9 @@ export class BlacklistService {
    * Emit an event for API/Swagger integration.
    */
   private emitEvent(eventName: string, data: Record<string, unknown>): void {
-    console.log(`[BlacklistEvent] ${eventName}:`, JSON.stringify(data));
+    this.logger.log(
+      `BlacklistEvent: ${eventName} clipId=${String(data.clipId ?? '')} reason=${String(data.reason ?? '')}`,
+    );
     // In production, this would emit a proper event for:
     // - POST /admin/nfts/blacklist
     // - Admin audit logging
