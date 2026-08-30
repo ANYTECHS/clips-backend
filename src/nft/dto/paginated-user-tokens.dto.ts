@@ -18,7 +18,9 @@ export class GetUserTokensQueryDto {
   limit?: number = 20;
 
   @ApiPropertyOptional({
-    description: 'Offset into the owner\'s token list (0-based index) for cursor-based pagination',
+    description:
+      'Cursor passed to on-chain get_user_tokens(owner, limit, cursor). ' +
+      '0-based offset into the owner\'s token list (Issue #838).',
     example: 0,
     default: 0,
     minimum: 0,

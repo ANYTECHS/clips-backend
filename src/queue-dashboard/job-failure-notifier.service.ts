@@ -6,12 +6,15 @@ import { CLIP_POSTING_QUEUE } from '../clips/clip-posting.queue';
 import { PAYOUT_RETRY_QUEUE } from '../payouts/payout-retry.queue';
 import { MailService } from '../auth/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SlackNotificationService } from '../queue/slack-notification.service';
 
 @Injectable()
 export class JobFailureNotifierService implements OnModuleInit {
   private readonly logger = new Logger(JobFailureNotifierService.name);
   private readonly adminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
-  private readonly slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+  private readonly slackChannel =
+    process.env.SLACK_CHANNEL || process.env.SLACK_DEFAULT_CHANNEL;
+  private readonly notifiedJobs = new Set<string>();
 
   constructor(
     @InjectQueue(CLIP_GENERATION_QUEUE)
@@ -22,6 +25,7 @@ export class JobFailureNotifierService implements OnModuleInit {
     private payoutRetryQueue: Queue,
     private mailService: MailService,
     private prisma: PrismaService,
+    private readonly slackNotificationService: SlackNotificationService,
   ) {}
 
   onModuleInit() {
@@ -37,11 +41,17 @@ export class JobFailureNotifierService implements OnModuleInit {
         ): void;
       }).on('failed', async (job, error) => {
         const isFinalAttempt = job && (job.attemptsMade ?? 0) >= (job.opts?.attempts || 3);
-        if (isFinalAttempt) {
-          await this.handleCriticalFailure(jobType, job!.id, job!.data, error);
-        } else {
-          await this.sendSlackNotification(jobType, job?.id, job?.data, error, false);
+        if (!isFinalAttempt || !job?.id) {
+          return;
         }
+
+        const notificationKey = `${jobType}:${job.id}`;
+        if (this.notifiedJobs.has(notificationKey)) {
+          return;
+        }
+
+        this.notifiedJobs.add(notificationKey);
+        await this.handleCriticalFailure(jobType, job.id, job.data, error);
       });
     };
 
@@ -65,7 +75,7 @@ export class JobFailureNotifierService implements OnModuleInit {
     try {
       await Promise.all([
         this.sendAdminNotification(jobType, jobId, jobData, error),
-        this.sendSlackNotification(jobType, jobId, jobData, error, true),
+        this.sendSlackNotification(jobType, jobId, jobData, error),
       ]);
 
       if (jobType === 'Payout' && jobData?.payoutId) {
@@ -111,40 +121,24 @@ export class JobFailureNotifierService implements OnModuleInit {
     jobId: string | undefined,
     jobData: any,
     error: Error,
-    isFinal: boolean,
   ) {
-    if (!this.slackWebhookUrl) return;
+    const summary = [
+      '🚨 *FINAL FAILURE*',
+      `*Queue:* ${jobType}`,
+      `*Job ID:* ${jobId || 'Unknown'}`,
+      `*Failure Reason:* ${error.message}`,
+    ].join('\n');
 
-    const severity = isFinal ? '🚨 *FINAL FAILURE*' : '⚠️ *Job Failed*';
-    const payload = {
-      text: `${severity}: ${jobType}`,
-      blocks: [
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `${severity}\n*Queue:* ${jobType}\n*Job ID:* ${jobId || 'Unknown'}\n*Error:* ${error.message}`,
-          },
-        },
-        {
-          type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: `*Job Data:*\n\`\`\`${JSON.stringify(jobData, null, 2).slice(0, 500)}\`\`\``,
-          },
-        },
-      ],
-    };
+    const payloadBody =
+      jobData && Object.keys(jobData).length > 0
+        ? `\n*Job Data:*\n\`\`\`${JSON.stringify(jobData).slice(0, 500)}\`\`\``
+        : '';
 
     try {
-      const response = await fetch(this.slackWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!response.ok) {
-        this.logger.warn(`Slack notification failed: HTTP ${response.status}`);
-      }
+      await this.slackNotificationService.notify(
+        `${summary}${payloadBody}`,
+        this.slackChannel,
+      );
     } catch (err) {
       this.logger.warn(`Slack notification error: ${(err as Error).message}`);
     }

@@ -157,13 +157,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       await this.clipsService.refreshQueueDepth();
 
       // ── Step 1: video_download ─────────────────────────────────────────
-      await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.VIDEO_DOWNLOAD,
+        step: 'video_download',
+      });
 
-      // ── Step 2: ffmpeg_cut ─────────────────────────────────────────────
+      // ── Step 2: ffmpeg_processing ───────────────────────────────────────
       const { actualDuration, viralityScore } = await this.cutAndAnalyze(job, data, controller);
 
       // ── Step 3: upload ─────────────────────────────────────────────────
-      await job.updateProgress({ percent: PROGRESS.UPLOAD, step: 'upload' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.UPLOAD,
+        step: 'upload',
+      });
 
       // Clean up existing Cloudinary asset if we are regenerating
       if (data.existingClipUrl) {
@@ -190,7 +196,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       // ── Step 4: cleanup and completion ─────────────────────────────────
       // Only delete local file after successful Cloudinary upload
       await this.cloudinaryService.deleteLocalFile(data.outputPath);
-      await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
+      await this.safeUpdateProgress(job, { percent: PROGRESS.DONE, step: 'done' });
 
       this.metricsService.incrementClipsGenerated('success');
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_GENERATION_QUEUE, 'success');
@@ -230,10 +236,16 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
     try {
       // ── Step 1: video_download ─────────────────────────────────────────
-      await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.VIDEO_DOWNLOAD,
+        step: 'video_download',
+      });
 
       // ── Step 2: ai_analysis — detect viral timestamps ──────────────────
-      await job.updateProgress({ percent: PROGRESS.AI_ANALYSIS, step: 'ai_analysis' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.AI_ANALYSIS,
+        step: 'ai_analysis',
+      });
 
       if (controller.signal.aborted) {
         throw new Error('Aborted');
@@ -245,7 +257,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
       // ── Step 3: cleanup temp file ──────────────────────────────────────
       await this.safeDeleteLocalFile(inputPath);
-      await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
+      await this.safeUpdateProgress(job, { percent: PROGRESS.DONE, step: 'done' });
 
       this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
       return this.buildUploadProcessedClip(videoId, userId);
@@ -389,7 +401,10 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       videoDuration: data.videoDuration,
       signal: controller.signal,
     });
-    await job.updateProgress({ percent: PROGRESS.FFMPEG_CUT, step: 'ffmpeg_cut' });
+    await this.safeUpdateProgress(job, {
+      percent: PROGRESS.FFMPEG_CUT,
+      step: 'ffmpeg_processing',
+    });
 
     const metadata = await getVideoMetadata(data.outputPath);
     const actualDuration = parseFloat(metadata.duration.toFixed(3));
@@ -633,12 +648,38 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       typeof progress === 'object' && progress !== null
         ? (progress as any).percent
         : progress;
-    const step: ClipProgressStep =
+    const stepRaw =
       typeof progress === 'object' && progress !== null
-        ? ((progress as any).step ?? 'ffmpeg_cut')
-        : this.stepFromPercent(Number(rawPercent));
+        ? ((progress as any).step ?? 'ffmpeg_processing')
+        : undefined;
+    const normalizedStep = this.normalizeStep(stepRaw ?? this.stepFromPercent(Number(rawPercent)));
     const percent = Math.max(0, Math.min(100, Math.round(Number(rawPercent) || 0)));
-    return { percent, step };
+    return { percent, step: normalizedStep };
+  }
+
+  /** Normalizes legacy step values to the canonical progression names used by the API and WS clients. */
+  private normalizeStep(step: ClipProgressStep | string | undefined): ClipProgressStep {
+    switch (step) {
+      case 'ffmpeg_cut':
+        return 'ffmpeg_processing';
+      default:
+        return (step as ClipProgressStep) ?? 'video_download';
+    }
+  }
+
+  /** Safely report progress without failing the BullMQ job if reporting itself errors. */
+  private async safeUpdateProgress(
+    job: Job<ClipGenerationJob>,
+    payload: { percent: number; step: ClipProgressStep },
+  ): Promise<void> {
+    try {
+      await job.updateProgress(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to update BullMQ progress for job ${job.id}: ${message}`,
+      );
+    }
   }
 
   /**
@@ -664,7 +705,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   private stepFromPercent(percent: number): ClipProgressStep {
     if (percent <= 10) return 'video_download';
     if (percent <= 30) return 'ai_analysis';
-    if (percent <= 60) return 'ffmpeg_cut';
+    if (percent <= 60) return 'ffmpeg_processing';
     if (percent <= 90) return 'upload';
     return 'done';
   }

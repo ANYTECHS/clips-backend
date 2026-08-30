@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
+import { checkedRoyaltyAmount } from '../common/helpers/safe-math.helper';
 
 export const MAX_ROYALTY_BPS = 1500; // 15%
 
@@ -163,21 +164,8 @@ export class ClipRoyaltyService {
       );
     }
 
-    if (salePrice === 0 || royaltyBps === 0) {
-      return 0;
-    }
-
-    // Use BigInt to prevent precision loss on large numbers
-    const royalty = BigInt(salePrice) * BigInt(royaltyBps) / BigInt(10000);
-
-    // Ensure result fits in Number range
-    if (royalty > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new BadRequestException(
-        `Royalty calculation overflow: ${royalty.toString()}`,
-      );
-    }
-
-    return Number(royalty);
+    // Checked BigInt arithmetic — see safe-math.helper.ts (Issue #836).
+    return checkedRoyaltyAmount(salePrice, royaltyBps);
   }
 
   /**

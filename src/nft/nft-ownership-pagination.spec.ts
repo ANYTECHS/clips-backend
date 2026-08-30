@@ -1,12 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NftOwnershipService } from './nft-ownership.service';
+import { NftOwnershipService, NFT_OWNERSHIP_STRATEGY } from './nft-ownership.service';
 import { StellarService } from '../stellar/stellar.service';
 import { ConfigService } from '../config/config.service';
 import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
 
-describe('NftOwnershipService - Paginated User Tokens (Issue #704)', () => {
+describe('NftOwnershipService - Paginated User Tokens (Issue #838)', () => {
   let service: NftOwnershipService;
-  let mockGetWalletTokenIds: jest.SpyInstance;
+  let mockGetUserTokens: jest.Mock;
+  let mockGetWalletTokenIds: jest.Mock;
 
   const mockStellarService = {
     rpcUrl: 'https://soroban-testnet.stellar.org',
@@ -22,17 +23,29 @@ describe('NftOwnershipService - Paginated User Tokens (Issue #704)', () => {
   };
 
   beforeEach(async () => {
+    mockGetUserTokens = jest.fn();
+    mockGetWalletTokenIds = jest.fn();
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         NftOwnershipService,
         { provide: StellarService, useValue: mockStellarService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: CircuitBreakerService, useValue: mockCircuitBreakerService },
+        {
+          provide: NFT_OWNERSHIP_STRATEGY,
+          useValue: {
+            verifyOwnership: jest.fn(),
+            getOwner: jest.fn(),
+            getWalletTokenIds: mockGetWalletTokenIds,
+            getUserTokens: mockGetUserTokens,
+            tokenExists: jest.fn(),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<NftOwnershipService>(NftOwnershipService);
-    mockGetWalletTokenIds = jest.spyOn(service, 'getWalletTokenIds');
   });
 
   afterEach(() => {
@@ -40,20 +53,32 @@ describe('NftOwnershipService - Paginated User Tokens (Issue #704)', () => {
   });
 
   describe('getUserTokensPaginated', () => {
-    it('returns first page with default limit of 20', async () => {
-      const tokens = Array.from({ length: 50 }, (_, i) => i + 1);
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+    it('returns first page with default limit of 20 via get_user_tokens', async () => {
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: Array.from({ length: 20 }, (_, i) => i + 1),
+        nextCursor: 20,
+        total: 50,
+      });
 
       const result = await service.getUserTokensPaginated('GABC...', 20, 0);
 
       expect(result.tokenIds).toEqual(Array.from({ length: 20 }, (_, i) => i + 1));
       expect(result.nextCursor).toBe(20);
       expect(result.total).toBe(50);
+      expect(mockGetUserTokens).toHaveBeenCalledWith(
+        mockConfigService.sorobanNftContractId,
+        'GABC...',
+        20,
+        0,
+      );
     });
 
     it('returns second page correctly', async () => {
-      const tokens = Array.from({ length: 50 }, (_, i) => i + 1);
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: Array.from({ length: 20 }, (_, i) => i + 21),
+        nextCursor: 40,
+        total: 50,
+      });
 
       const result = await service.getUserTokensPaginated('GABC...', 20, 20);
 
@@ -63,8 +88,11 @@ describe('NftOwnershipService - Paginated User Tokens (Issue #704)', () => {
     });
 
     it('returns last partial page with null nextCursor', async () => {
-      const tokens = Array.from({ length: 50 }, (_, i) => i + 1);
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: Array.from({ length: 10 }, (_, i) => i + 41),
+        nextCursor: null,
+        total: 50,
+      });
 
       const result = await service.getUserTokensPaginated('GABC...', 20, 40);
 
@@ -74,8 +102,11 @@ describe('NftOwnershipService - Paginated User Tokens (Issue #704)', () => {
     });
 
     it('returns empty when cursor exceeds total', async () => {
-      const tokens = [1, 2, 3];
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: [],
+        nextCursor: null,
+        total: 3,
+      });
 
       const result = await service.getUserTokensPaginated('GABC...', 10, 100);
 
@@ -84,84 +115,140 @@ describe('NftOwnershipService - Paginated User Tokens (Issue #704)', () => {
       expect(result.total).toBe(3);
     });
 
-    it('returns all tokens when limit exceeds total', async () => {
-      const tokens = [1, 2, 3];
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
-
-      const result = await service.getUserTokensPaginated('GABC...', 100, 0);
-
-      expect(result.tokenIds).toEqual([1, 2, 3]);
-      expect(result.nextCursor).toBeNull();
-      expect(result.total).toBe(3);
-    });
-
-    it('returns empty for wallet with no tokens', async () => {
-      mockGetWalletTokenIds.mockResolvedValue([]);
-
-      const result = await service.getUserTokensPaginated('GABC...', 20, 0);
-
-      expect(result.tokenIds).toEqual([]);
-      expect(result.nextCursor).toBeNull();
-      expect(result.total).toBe(0);
-    });
-
     it('clamps limit to max 100', async () => {
-      const tokens = Array.from({ length: 50 }, (_, i) => i + 1);
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: Array.from({ length: 50 }, (_, i) => i + 1),
+        nextCursor: null,
+        total: 50,
+      });
 
-      const result = await service.getUserTokensPaginated('GABC...', 500, 0);
+      await service.getUserTokensPaginated('GABC...', 500, 0);
 
-      expect(result.tokenIds.length).toBe(50);
-      expect(result.nextCursor).toBeNull();
+      expect(mockGetUserTokens).toHaveBeenCalledWith(
+        expect.any(String),
+        'GABC...',
+        100,
+        0,
+      );
     });
 
     it('clamps negative cursor to 0', async () => {
-      const tokens = [1, 2, 3];
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: [1, 2, 3],
+        nextCursor: null,
+        total: 3,
+      });
 
-      const result = await service.getUserTokensPaginated('GABC...', 10, -5);
+      await service.getUserTokensPaginated('GABC...', 10, -5);
 
-      expect(result.tokenIds).toEqual([1, 2, 3]);
-      expect(result.total).toBe(3);
+      expect(mockGetUserTokens).toHaveBeenCalledWith(
+        expect.any(String),
+        'GABC...',
+        10,
+        0,
+      );
     });
 
     it('enforces minimum limit of 1', async () => {
-      const tokens = [1, 2, 3];
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: [1],
+        nextCursor: 1,
+        total: 3,
+      });
 
-      const result = await service.getUserTokensPaginated('GABC...', 0, 0);
+      await service.getUserTokensPaginated('GABC...', 0, 0);
 
-      expect(result.tokenIds.length).toBe(1);
-      expect(result.tokenIds[0]).toBe(1);
+      expect(mockGetUserTokens).toHaveBeenCalledWith(
+        expect.any(String),
+        'GABC...',
+        1,
+        0,
+      );
     });
 
-    it('paginates through entire large collection', async () => {
-      const tokens = Array.from({ length: 100 }, (_, i) => i + 1);
-      mockGetWalletTokenIds.mockResolvedValue(tokens);
+    it('paginates through entire large collection (1000 tokens)', async () => {
+      const TOTAL = 1000;
+      const PAGE = 100;
 
-      const page1 = await service.getUserTokensPaginated('GABC...', 25, 0);
-      expect(page1.tokenIds).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
-      expect(page1.nextCursor).toBe(25);
+      mockGetUserTokens.mockImplementation(
+        async (_c: string, _w: string, limit: number, cursor: number) => {
+          const tokenIds = Array.from(
+            { length: Math.min(limit, TOTAL - cursor) },
+            (_, i) => cursor + i + 1,
+          );
+          const end = cursor + tokenIds.length;
+          return {
+            tokenIds,
+            nextCursor: end < TOTAL ? end : null,
+            total: TOTAL,
+          };
+        },
+      );
 
-      const page2 = await service.getUserTokensPaginated('GABC...', 25, 25);
-      expect(page2.tokenIds).toEqual(Array.from({ length: 25 }, (_, i) => i + 26));
-      expect(page2.nextCursor).toBe(50);
+      let cursor = 0;
+      let pages = 0;
+      const seen: number[] = [];
 
-      const page3 = await service.getUserTokensPaginated('GABC...', 25, 50);
-      expect(page3.tokenIds).toEqual(Array.from({ length: 25 }, (_, i) => i + 51));
-      expect(page3.nextCursor).toBe(75);
+      while (cursor != null) {
+        const page = await service.getUserTokensPaginated('GABC...', PAGE, cursor);
+        seen.push(...page.tokenIds);
+        pages += 1;
+        if (page.nextCursor == null) break;
+        cursor = page.nextCursor;
+      }
 
-      const page4 = await service.getUserTokensPaginated('GABC...', 25, 75);
-      expect(page4.tokenIds).toEqual(Array.from({ length: 25 }, (_, i) => i + 76));
-      expect(page4.nextCursor).toBeNull();
+      expect(pages).toBe(10);
+      expect(seen.length).toBe(TOTAL);
+      expect(seen[0]).toBe(1);
+      expect(seen[TOTAL - 1]).toBe(TOTAL);
     });
 
-    it('passes contractId through to getWalletTokenIds', async () => {
-      mockGetWalletTokenIds.mockResolvedValue([1, 2]);
+    it('passes contractId through to get_user_tokens', async () => {
+      mockGetUserTokens.mockResolvedValue({
+        tokenIds: [1, 2],
+        nextCursor: null,
+        total: 2,
+      });
 
       await service.getUserTokensPaginated('GABC...', 10, 0, 'CUSTOM_CONTRACT');
 
-      expect(mockGetWalletTokenIds).toHaveBeenCalledWith('GABC...', 'CUSTOM_CONTRACT');
+      expect(mockGetUserTokens).toHaveBeenCalledWith(
+        'CUSTOM_CONTRACT',
+        'GABC...',
+        10,
+        0,
+      );
+    });
+
+    it('falls back to getWalletTokenIds when getUserTokens is absent', async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          NftOwnershipService,
+          { provide: StellarService, useValue: mockStellarService },
+          { provide: ConfigService, useValue: mockConfigService },
+          { provide: CircuitBreakerService, useValue: mockCircuitBreakerService },
+          {
+            provide: NFT_OWNERSHIP_STRATEGY,
+            useValue: {
+              verifyOwnership: jest.fn(),
+              getOwner: jest.fn(),
+              getWalletTokenIds: mockGetWalletTokenIds,
+              tokenExists: jest.fn(),
+            },
+          },
+        ],
+      }).compile();
+
+      const fallbackService = module.get<NftOwnershipService>(NftOwnershipService);
+      mockGetWalletTokenIds.mockResolvedValue(
+        Array.from({ length: 50 }, (_, i) => i + 1),
+      );
+
+      const result = await fallbackService.getUserTokensPaginated('GABC...', 20, 0);
+
+      expect(result.tokenIds.length).toBe(20);
+      expect(result.nextCursor).toBe(20);
+      expect(result.total).toBe(50);
     });
   });
 });

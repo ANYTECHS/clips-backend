@@ -150,10 +150,11 @@ export class NftOwnershipService {
   }
 
   /**
-   * Get a paginated slice of token IDs owned by a wallet address.
+   * Get a paginated slice of token IDs owned by a wallet address (Issue #838).
    *
-   * Uses offset-based pagination: `cursor` is the 0-based index into the
-   * full token list, and `limit` is the maximum number of items to return.
+   * Prefers on-chain `get_user_tokens(owner, limit, cursor)` when the strategy
+   * supports it, so large collections do not require loading the full token
+   * vector into memory. Falls back to ledger iteration + local pagination.
    *
    * @returns Paginated result with tokenIds, nextCursor (null when exhausted), and total count.
    */
@@ -163,14 +164,44 @@ export class NftOwnershipService {
     cursor: number = 0,
     contractId?: string,
   ): Promise<{ tokenIds: number[]; nextCursor: number | null; total: number }> {
-    const allTokens = await this.getWalletTokenIds(walletAddress, contractId);
-    const total = allTokens.length;
-    const start = Math.min(cursor, total);
     const effectiveLimit = Math.min(Math.max(limit, 1), 100);
-    const end = Math.min(start + effectiveLimit, total);
-    const tokenIds = allTokens.slice(start, end);
-    const nextCursor = end < total ? end : null;
-    return { tokenIds, nextCursor, total };
+    const effectiveCursor = Math.max(cursor, 0);
+    const cid = contractId ?? this.contractId;
+
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        async () => {
+          if (typeof this.strategy.getUserTokens === 'function') {
+            return this.strategy.getUserTokens(
+              cid,
+              walletAddress,
+              effectiveLimit,
+              effectiveCursor,
+            );
+          }
+
+          const allTokens = await this.strategy.getWalletTokenIds(
+            cid,
+            walletAddress,
+          );
+          const total = allTokens.length;
+          const start = Math.min(effectiveCursor, total);
+          const end = Math.min(start + effectiveLimit, total);
+          return {
+            tokenIds: allTokens.slice(start, end),
+            nextCursor: end < total ? end : null,
+            total,
+          };
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to paginate tokens for wallet ${walletAddress}`,
+        error,
+      );
+      return { tokenIds: [], nextCursor: null, total: 0 };
+    }
   }
 }
 

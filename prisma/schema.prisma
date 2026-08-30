@@ -482,3 +482,100 @@ model UserEarningsSummary {
   updatedAt        DateTime @updatedAt
   user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+/// Indexed NFT ownership transfers from Soroban Transfer events (Issue #841).
+model NftTransfer {
+  id            Int      @id @default(autoincrement())
+  tokenId       Int
+  fromAddress   String
+  toAddress     String
+  txHash        String
+  transferredAt DateTime
+  salePrice     BigInt?
+  contractId    String?
+  createdAt     DateTime @default(now())
+
+  @@unique([txHash, tokenId])
+  @@index([tokenId])
+  @@index([transferredAt])
+  @@index([tokenId, transferredAt])
+}
+
+/// Tracks backend-authorized metadata refreshes for the 30-day cooldown (Issue #837).
+model NftMetadataRefresh {
+  id           Int      @id @default(autoincrement())
+  tokenId      Int
+  adminAddress String
+  txHash       String?
+  refreshedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([tokenId])
+  @@index([tokenId, refreshedAt])
+/// Tracks submitted Soroban / Stellar transaction hashes until confirmed or
+/// failed (Issue #846). Status is one of: pending | confirmed | failed.
+model TrackedTransaction {
+  id             Int       @id @default(autoincrement())
+  hash           String    @unique
+  status         String    @default("pending")
+  label          String?
+  userId         Int?
+  failureReason  String?
+  submittedAt    DateTime  @default(now())
+  confirmedAt    DateTime?
+  lastCheckedAt  DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([lastCheckedAt])
+  @@index([userId])
+/// Historical royalty claims by NFT creators (Issue #840).
+/// Populated from on-chain `RoyaltyClaimed` events by the Soroban indexer.
+model RoyaltyClaim {
+  id              Int      @id @default(autoincrement())
+  tokenId         Int
+  recipient       String
+  amount          String
+  assetContractId String?
+  txHash          String   @unique
+  ledger          Int?
+  eventIndex      Int?
+  claimedAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([tokenId, claimedAt])
+  @@index([recipient])
+}
+
+/// Indexed Soroban NFT contract events (Issue #845).
+model BlockchainEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  tokenId     Int?
+  fromAddress String?
+  toAddress   String?
+  amount      String?
+  asset       String?
+  txHash      String
+  eventIndex  Int
+  ledger      Int
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  @@unique([txHash, eventIndex])
+  @@index([eventType])
+  @@index([tokenId])
+  @@index([ledger])
+  @@index([createdAt])
+}
+
+/// Cursor / failure state for the Soroban contract event indexer (Issue #845).
+model IndexerState {
+  id           String   @id
+  lastLedger   Int      @default(0)
+  failureCount Int      @default(0)
+  lastError    String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
