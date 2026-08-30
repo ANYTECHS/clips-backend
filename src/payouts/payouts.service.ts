@@ -872,7 +872,10 @@ export class PayoutsService {
         await this.prisma.$transaction(async (tx) => {
           const payout = await tx.payout.findUnique({
             where: { id: payoutId },
-            include: { wallet: true, user: true },
+            include: {
+              wallet: { select: { address: true, chain: true } },
+              user: { select: { id: true, email: true, name: true } },
+            },
           });
 
           if (!payout) {

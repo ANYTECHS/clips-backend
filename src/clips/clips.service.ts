@@ -3,19 +3,9 @@
  *
  * Issue #747: setRoyaltyBps() stores a per-clip royalty (0–1500 bps)
  *             on the Clip model so the value is available at mint time.
+ * Issue #866: listClips() uses selective `select` to avoid loading unnecessary
+ *             relations (no broad `include`), preventing N+1 and oversized payloads.
  */
-import {
-  Injectable,
-  Logger,
-  NotFoundException,
-  BadRequestException,
-  ForbiddenException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-
-export const ROYALTY_BPS_MIN = 0;
-export const ROYALTY_BPS_MAX = 1500;
-export const ROYALTY_BPS_DEFAULT = 1000;
 import {
   Injectable,
   Logger,
@@ -37,6 +27,10 @@ import {
 } from './clip-post-status.util';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto';
 import { ALL_CLIPS_PROCESSED_EVENT } from './clips.events';
+
+export const ROYALTY_BPS_MIN = 0;
+export const ROYALTY_BPS_MAX = 1500;
+export const ROYALTY_BPS_DEFAULT = 1000;
 
 const NFT_STATUSES = {
   NONE: 'none',
@@ -74,6 +68,9 @@ export interface ClipRecord {
   video?: { userId: number }; // For tests
 }
 
+export type ClipSortField = 'viralityScore' | 'createdAt' | 'duration';
+export type SortOrder = 'asc' | 'desc';
+
 @Injectable()
 export class ClipsService {
   private readonly logger = new Logger(ClipsService.name);
@@ -91,11 +88,6 @@ export class ClipsService {
   _seed(clips: ClipRecord[]): void {
     this.testData = clips;
   }
-
-  /** Find a clip by ID. Returns null when the clip does not exist. */
-    @Optional() @InjectQueue(CLIP_GENERATION_QUEUE) private readonly clipQueue?: Queue,
-  ) {}
-  ) {}
 
   // ──────────────────────────────────────────────────────────────────────────
   // Issue #747 — Royalty BPS configuration per clip
@@ -133,7 +125,7 @@ export class ClipsService {
     // Fetch clip and verify ownership.
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
-      include: { video: { select: { userId: true } } },
+      select: { id: true, video: { select: { userId: true } } },
     });
 
     if (!clip) {
@@ -141,9 +133,7 @@ export class ClipsService {
     }
 
     if (clip.video.userId !== userId) {
-      throw new ForbiddenException(
-        `You do not own clip ${clipId}`,
-      );
+      throw new ForbiddenException(`You do not own clip ${clipId}`);
     }
 
     // Persist the value.
@@ -165,15 +155,26 @@ export class ClipsService {
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
       select: { id: true, royaltyBps: true },
-  /**
-   * Find a clip by ID. Returns null when the clip does not exist.
-   */
+    });
+
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
+
+    return { clipId: clip.id, royaltyBps: clip.royaltyBps ?? ROYALTY_BPS_DEFAULT };
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Core lookup helpers
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /** Find a clip by ID. Returns null when the clip does not exist. */
   async findById(id: number): Promise<ClipRecord | null> {
     // Use test data if available (for testing)
     if (this.testData) {
-      return this.testData.find(clip => clip.id === id) || null;
+      return this.testData.find((clip) => clip.id === id) || null;
     }
-    return this.prisma.clip.findUnique({ where: { id } });
+    return this.prisma.clip.findUnique({ where: { id } }) as Promise<ClipRecord | null>;
   }
 
   /** Find a clip by ID or throw NotFoundException. */
@@ -246,6 +247,10 @@ export class ClipsService {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // NFT status transitions
+  // ──────────────────────────────────────────────────────────────────────────
+
   /** Transition nftStatus → "minting". */
   async updateMintStatusToMinting(clipId: number): Promise<void> {
     await this.findByIdOrThrow(clipId);
@@ -299,6 +304,10 @@ export class ClipsService {
     this.logger.log(`Clip ${clipId} nftStatus → none (reset)`);
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Ownership verification
+  // ──────────────────────────────────────────────────────────────────────────
+
   /** Verify the requesting user owns a clip via its parent video. */
   async validateClipOwnership(clipId: number, userId: number): Promise<void> {
     const clip = await this.prisma.clip.findUnique({
@@ -307,68 +316,20 @@ export class ClipsService {
     });
 
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
 
-    return { clipId: clip.id, royaltyBps: clip.royaltyBps ?? ROYALTY_BPS_DEFAULT };
     if (clip.video.userId !== userId) {
       throw new BadRequestException('You do not own this clip');
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Video management
+  // ──────────────────────────────────────────────────────────────────────────
+
   /**
    * Cancel video processing.
-   * Removes the BullMQ job (or discards if active) and marks the video
-   * status as 'cancelled'.
-   */
-  async cancelVideo(videoId: string, userId: number): Promise<{ message: string }> {
-    const vid = parseInt(videoId, 10);
-    if (isNaN(vid)) throw new BadRequestException('Invalid video ID');
-
-    const video = await this.prisma.video.findUnique({
-      where: { id: vid },
-      select: { id: true, userId: true, status: true },
-    });
-
-    if (!video) throw new NotFoundException(`Video ${videoId} not found`);
-    if (video.userId !== userId) throw new BadRequestException('You do not own this video');
-
-    if (!['pending', 'processing'].includes(video.status)) {
-      throw new BadRequestException(
-        `Video is already in status '${video.status}' and cannot be cancelled`,
-      );
-    }
-
-    if (this.clipQueue) {
-      try {
-        const jobs = await this.clipQueue.getJobs(['waiting', 'active', 'delayed', 'paused']);
-        const videoJob = jobs.find((j) => j.data?.videoId === String(vid));
-
-        if (videoJob) {
-          const state = await videoJob.getState();
-          state === 'active' ? await videoJob.discard() : await videoJob.remove();
-          this.logger.log(`Cancelled BullMQ job ${videoJob.id} for video ${videoId}`);
-        }
-      } catch (err) {
-        this.logger.error(`Error removing BullMQ job for video ${videoId}: ${err.message}`);
-      }
-    }
-
-    await this.prisma.video.update({
-      where: { id: vid },
-      data: { status: 'cancelled', processingError: 'Cancelled by user' },
-    });
-
-    return { message: `Video ${videoId} processing has been cancelled` };
-  }
-
-  /**
-   * Bulk-delete clips after verifying ownership. Removes Cloudinary assets.
    * Finds the active/waiting BullMQ job for the video, removes it and marks
    * the video status as 'cancelled' in the database.
-   *
-   * Closes #735
    */
   async cancelVideo(
     videoId: string,
@@ -444,160 +405,15 @@ export class ClipsService {
     return { message: `Video ${videoId} processing has been cancelled` };
   }
 
-  /**
-   * Bulk-delete clips by ID after verifying the requesting user owns each one.
-   * Also removes associated Cloudinary assets when a public_id can be derived.
-   *
-   * Closes #739
-   */
-  async bulkDeleteClips(
-    clipIds: number[],
-    userId: number,
-  ): Promise<{ deleted: number; skipped: number; skippedIds: number[] }> {
-    const clips = await this.prisma.clip.findMany({
-      where: { id: { in: clipIds } },
-      select: {
-        id: true,
-        clipUrl: true,
-        thumbnail: true,
-        video: { select: { userId: true } },
-      },
-    });
-
-    const ownedClips = clips.filter((c) => c.video.userId === userId);
-    const ownedIds = ownedClips.map((c) => c.id);
-    const skippedIds = clipIds.filter((id) => !ownedIds.includes(id));
-
-    if (ownedIds.length === 0) {
-      throw new ForbiddenException(
-        'None of the provided clip IDs belong to the current user',
-      );
-    }
-
-    for (const clip of ownedClips) {
-      const publicId = this.extractPublicId(clip.clipUrl);
-      if (publicId) {
-        try {
-          this.cloudinary.deleteClip(publicId);
-        } catch (err) {
-          this.logger.warn(
-            `Cloudinary delete failed for clip ${clip.id} (${publicId}): ${err.message}`,
-          );
-        }
-      }
-      if (clip.thumbnail) {
-        const thumbId = this.extractPublicId(clip.thumbnail);
-        if (thumbId) {
-          try {
-            this.cloudinary.deleteClip(thumbId);
-          } catch (err) {
-            this.logger.warn(
-              `Cloudinary thumbnail delete failed for clip ${clip.id}: ${err.message}`,
-            );
-          }
-        }
-      }
-    }
-
-    const { count } = await this.prisma.clip.deleteMany({
-      where: { id: { in: ownedIds } },
-    });
-
-    this.logger.log(
-      `Bulk deleted ${count} clips for user ${userId}; skipped ${skippedIds.length}`,
-    );
-
-    return { deleted: count, skipped: skippedIds.length, skippedIds };
-  }
-
-  /**
-   * Re-cut a single clip using its original timestamps and upload a new version
-   * to Cloudinary. Preserves viralityScore and title.
-   *
-   * Closes #734
-   */
-  async regenerateClip(
-    clipId: number,
-    userId: number,
-  ): Promise<ClipRecord> {
-    const clip = await this.prisma.clip.findUnique({
-      where: { id: clipId },
-      select: {
-        id: true,
-        startTime: true,
-        endTime: true,
-        viralityScore: true,
-        title: true,
-        video: {
-          select: {
-            userId: true,
-            sourceUrl: true,
-          },
-        },
-      },
-    });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
-
-    if (clip.video.userId !== userId) {
-      throw new ForbiddenException('You do not own this clip');
-    }
-
-    const { startTime, endTime } = clip;
-    const newPublicId = `clip-${clipId}-regen-${Date.now()}`;
-
-    this.logger.log(
-      `Regenerating clip ${clipId} [${startTime}s-${endTime}s] → ${newPublicId}`,
-    );
-
-    // Re-upload via CloudinaryService (production: pass actual FFmpeg output buffer)
-    const fakeBuffer = Buffer.alloc(0);
-    const uploadResult = this.cloudinary.uploadVideoFromBuffer(
-      fakeBuffer,
-      newPublicId,
-      { folder: 'clips' },
-    );
-
-    const thumbnailPublicId = `${newPublicId}-thumb`;
-    const thumbnailResult = this.cloudinary.uploadVideoFromBuffer(
-      fakeBuffer,
-      thumbnailPublicId,
-      { folder: 'thumbnails', resourceType: 'image' },
-    );
-
-    const updated = await this.prisma.clip.update({
-      where: { id: clipId },
-      data: {
-        clipUrl: uploadResult.secure_url,
-        thumbnail: thumbnailResult.secure_url,
-        status: 'ready',
-        error: null,
-        updatedAt: new Date(),
-      },
-    });
-
-    this.logger.log(`Clip ${clipId} regenerated → ${uploadResult.secure_url}`);
-    return updated as unknown as ClipRecord;
-  }
-
-  /** Extract a Cloudinary public_id from a secure_url, or null when not parseable. */
-  private extractPublicId(url: string | null): string | null {
-    if (!url) return null;
-    try {
-      const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)(?:\.[^.]+)?$/);
-      return match ? match[1] : null;
-    } catch {
-      return null;
-    }
-  }
+  // ──────────────────────────────────────────────────────────────────────────
+  // Clip CRUD
+  // ──────────────────────────────────────────────────────────────────────────
 
   /**
    * Bulk-delete clips by ID after verifying the requesting user owns each clip.
    * Also removes associated Cloudinary assets when a public_id can be derived.
    *
-   * Returns counts of successfully deleted and not-found/forbidden records.
+   * Closes #739
    */
   async bulkDeleteClips(
     clipIds: number[],
@@ -619,24 +435,6 @@ export class ClipsService {
     const skippedIds = clipIds.filter((id) => !ownedIds.includes(id));
 
     if (ownedIds.length === 0) {
-      throw new ForbiddenException('None of the provided clip IDs belong to the current user');
-    }
-
-    for (const clip of ownedClips) {
-      for (const url of [clip.clipUrl, clip.thumbnail]) {
-        const publicId = this.extractPublicId(url);
-        if (publicId) {
-          try {
-            this.cloudinary.deleteClip(publicId);
-          } catch (err) {
-            this.logger.warn(`Cloudinary delete failed for clip ${clip.id}: ${err.message}`);
-          }
-        }
-      }
-    }
-
-    const { count } = await this.prisma.clip.deleteMany({ where: { id: { in: ownedIds } } });
-    this.logger.log(`Bulk deleted ${count} clips for user ${userId}; skipped ${skippedIds.length}`);
       throw new ForbiddenException(
         'None of the provided clip IDs belong to the current user',
       );
@@ -644,31 +442,20 @@ export class ClipsService {
 
     // Delete from Cloudinary (best-effort, don't abort DB delete on failure)
     for (const clip of ownedClips) {
-      const publicId = this.extractPublicId(clip.clipUrl);
-      if (publicId) {
-        try {
-          this.cloudinary.deleteClip(publicId);
-        } catch (err) {
-          this.logger.warn(
-            `Cloudinary delete failed for clip ${clip.id} (${publicId}): ${err.message}`,
-          );
-        }
-      }
-      if (clip.thumbnail) {
-        const thumbId = this.extractPublicId(clip.thumbnail);
-        if (thumbId) {
+      for (const url of [clip.clipUrl, clip.thumbnail]) {
+        const publicId = this.extractPublicId(url);
+        if (publicId) {
           try {
-            this.cloudinary.deleteClip(thumbId);
+            this.cloudinary.deleteClip(publicId);
           } catch (err) {
             this.logger.warn(
-              `Cloudinary thumbnail delete failed for clip ${clip.id}: ${err.message}`,
+              `Cloudinary delete failed for clip ${clip.id}: ${err.message}`,
             );
           }
         }
       }
     }
 
-    // Bulk delete from DB
     const { count } = await this.prisma.clip.deleteMany({
       where: { id: { in: ownedIds } },
     });
@@ -681,19 +468,10 @@ export class ClipsService {
   }
 
   /**
-   * Regenerate a single clip by re-running FFmpeg with the original
-   * startTime/endTime and uploading a fresh copy to Cloudinary.
-   *
-   * - Reuses existing timestamps (startTime, endTime)
-   * - Uploads new version to Cloudinary (new public_id with regen timestamp)
-   * - Updates clipUrl and thumbnail in the DB
-   * - Preserves viralityScore and title (untouched)
-   *
-   * Closes #734
-   */
-  async regenerateClip(clipId: number, userId: number): Promise<ClipRecord> {
    * Re-cut a single clip using its original timestamps and upload a new version
    * to Cloudinary. Preserves viralityScore and title.
+   *
+   * Closes #734
    */
   async regenerateClip(
     clipId: number,
@@ -708,35 +486,6 @@ export class ClipsService {
         viralityScore: true,
         title: true,
         status: true,
-        video: { select: { userId: true, sourceUrl: true } },
-      },
-    });
-
-    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.video.userId !== userId) throw new ForbiddenException('You do not own this clip');
-
-    const { startTime, endTime } = clip;
-    const newPublicId = `clip-${clipId}-regen-${Date.now()}`;
-    const thumbnailPublicId = `${newPublicId}-thumb`;
-
-    this.logger.log(
-      `Regenerating clip ${clipId} [${startTime}s–${endTime}s] → ${newPublicId}`,
-    );
-
-    // Production: pass the actual FFmpeg-cut buffer here.
-    // CloudinaryService.uploadVideoFromBuffer() is the established upload contract.
-    const emptyBuf = Buffer.alloc(0);
-
-    const uploadResult = this.cloudinary.uploadVideoFromBuffer(emptyBuf, newPublicId, {
-      folder: 'clips',
-    });
-
-    const thumbResult = this.cloudinary.uploadVideoFromBuffer(emptyBuf, thumbnailPublicId, {
-      folder: 'thumbnails',
-      resourceType: 'image',
-    });
-
-    // Update only the mutable fields; viralityScore and title are preserved.
         video: {
           select: {
             userId: true,
@@ -754,35 +503,33 @@ export class ClipsService {
       throw new ForbiddenException('You do not own this clip');
     }
 
-    const { startTime, endTime, video } = clip;
+    const { startTime, endTime } = clip;
     const newPublicId = `clip-${clipId}-regen-${Date.now()}`;
-    const outputPath = `/tmp/${newPublicId}.mp4`;
+    const thumbnailPublicId = `${newPublicId}-thumb`;
 
     this.logger.log(
-      `Regenerating clip ${clipId} [${startTime}s-${endTime}s] → ${newPublicId}`,
+      `Regenerating clip ${clipId} [${startTime}s–${endTime}s] → ${newPublicId}`,
     );
 
-    // Re-cut and upload using CloudinaryService stubs (same interface as existing code)
-    const fakeBuffer = Buffer.alloc(0); // production: read actual cut output
-    const uploadResult = this.cloudinary.uploadVideoFromBuffer(
-      fakeBuffer,
-      newPublicId,
-      { folder: 'clips' },
-    );
+    // Production: pass the actual FFmpeg-cut buffer here.
+    // CloudinaryService.uploadVideoFromBuffer() is the established upload contract.
+    const emptyBuf = Buffer.alloc(0);
 
-    const thumbnailPublicId = `${newPublicId}-thumb`;
-    const thumbnailResult = this.cloudinary.uploadVideoFromBuffer(
-      fakeBuffer,
-      thumbnailPublicId,
-      { folder: 'thumbnails', resourceType: 'image' },
-    );
+    const uploadResult = await this.cloudinary.uploadVideoFromBuffer(emptyBuf, newPublicId, {
+      folder: 'clips',
+    });
 
+    const thumbResult = await this.cloudinary.uploadVideoFromBuffer(emptyBuf, thumbnailPublicId, {
+      folder: 'thumbnails',
+      resourceType: 'image',
+    });
+
+    // Update only the mutable fields; viralityScore and title are preserved.
     const updated = await this.prisma.clip.update({
       where: { id: clipId },
       data: {
         clipUrl: uploadResult.secure_url,
         thumbnail: thumbResult.secure_url,
-        thumbnail: thumbnailResult.secure_url,
         status: 'ready',
         error: null,
         updatedAt: new Date(),
@@ -793,10 +540,6 @@ export class ClipsService {
     return updated as unknown as ClipRecord;
   }
 
-  /** Extract a Cloudinary public_id from a secure_url. Returns null when not parseable. */
-  private extractPublicId(url: string | null): string | null {
-    if (!url) return null;
-    try {
   /** Extract a Cloudinary public_id from a secure_url, or null when not parseable. */
   private extractPublicId(url: string | null): string | null {
     if (!url) return null;
@@ -811,10 +554,10 @@ export class ClipsService {
 
   /**
    * Bulk update clips with the given updates.
-   * 
+   *
    * @param userId The ID of the user making the request
-   * @param dto The bulk update request containing clipIds and updates
-   * @returns Summary of the update operation
+   * @param dto    The bulk update request containing clipIds and updates
+   * @returns      Summary of the update operation
    */
   async bulkUpdate(
     userId: number,
@@ -834,18 +577,20 @@ export class ClipsService {
 
     // Handle test mode
     if (this.testData) {
-      const ownedClips = this.testData.filter(clip => 
-        clipIds.includes(clip.id) && clip.video?.userId === userId
+      const ownedClips = this.testData.filter(
+        (clip) => clipIds.includes(clip.id) && clip.video?.userId === userId,
       );
-      const foundClipIds = ownedClips.map(c => c.id);
-      const notFoundIds = clipIds.filter(id => !foundClipIds.includes(id));
+      const foundClipIds = ownedClips.map((c) => c.id);
+      const notFoundIds = clipIds.filter((id) => !foundClipIds.includes(id));
 
       if (foundClipIds.length === 0) {
-        throw new ForbiddenException('No clips found or none belong to the requesting user');
+        throw new ForbiddenException(
+          'No clips found or none belong to the requesting user',
+        );
       }
 
       // Apply updates to test data
-      ownedClips.forEach(clip => {
+      ownedClips.forEach((clip) => {
         if (updates.selected !== undefined) clip.selected = updates.selected;
         if (updates.postStatus !== undefined) clip.postStatus = updates.postStatus;
         if (updates.caption !== undefined) clip.caption = updates.caption;
@@ -855,13 +600,15 @@ export class ClipsService {
       // Check for all clips processed event
       let allClipsProcessed = false;
       if (updates.postStatus === 'posted') {
-        const videoIds = [...new Set(ownedClips.map(c => c.videoId))];
+        const videoIds = [...new Set(ownedClips.map((c) => c.videoId))];
         for (const videoId of videoIds) {
-          const allClipsInVideo = this.testData.filter(c => c.videoId === videoId);
-          const allPosted = allClipsInVideo.every(clip => 
-            clip.postStatus === 'posted' || 
-            (typeof clip.postStatus === 'object' && clip.postStatus && 
-             (clip.postStatus as any)?.status === 'posted')
+          const allClipsInVideo = this.testData.filter((c) => c.videoId === videoId);
+          const allPosted = allClipsInVideo.every(
+            (clip) =>
+              clip.postStatus === 'posted' ||
+              (typeof clip.postStatus === 'object' &&
+                clip.postStatus &&
+                (clip.postStatus as any)?.status === 'posted'),
           );
           if (allPosted) {
             allClipsProcessed = true;
@@ -898,7 +645,9 @@ export class ClipsService {
     const notFoundIds = clipIds.filter((id) => !foundClipIds.includes(id));
 
     if (foundClipIds.length === 0) {
-      throw new ForbiddenException('No clips found or none belong to the requesting user');
+      throw new ForbiddenException(
+        'No clips found or none belong to the requesting user',
+      );
     }
 
     // Prepare update data
@@ -920,26 +669,32 @@ export class ClipsService {
 
       // Check if all clips in affected videos are now posted (for event emission)
       let allClipsProcessed = false;
-      if (updates.postStatus && typeof updates.postStatus === 'string' && updates.postStatus === 'posted') {
+      if (
+        updates.postStatus &&
+        typeof updates.postStatus === 'string' &&
+        updates.postStatus === 'posted'
+      ) {
         // Get unique video IDs from updated clips
         const videoIds = [...new Set(clips.map((c) => c.videoId))];
-        
+
         for (const videoId of videoIds) {
           const allClipsInVideo = await prisma.clip.findMany({
             where: { videoId },
             select: { id: true, postStatus: true },
           });
 
-          const allPosted = allClipsInVideo.every((clip) => 
-            clip.postStatus === 'posted' || 
-            (typeof clip.postStatus === 'object' && clip.postStatus && 
-             (clip.postStatus as any)?.status === 'posted')
+          const allPosted = allClipsInVideo.every(
+            (clip) =>
+              clip.postStatus === 'posted' ||
+              (typeof clip.postStatus === 'object' &&
+                clip.postStatus &&
+                (clip.postStatus as any)?.status === 'posted'),
           );
 
           if (allPosted) {
             allClipsProcessed = true;
             this.eventEmitter.emit(ALL_CLIPS_PROCESSED_EVENT, {
-              videoId: videoId.toString(),
+              videoId: String(videoId),
               clipCount: allClipsInVideo.length,
             });
           }
@@ -951,7 +706,7 @@ export class ClipsService {
 
     this.logger.log(
       `Bulk updated ${result.updateResult.count} clips for user ${userId}. ` +
-      `Not found: ${notFoundIds.length}`,
+        `Not found: ${notFoundIds.length}`,
     );
 
     return {
@@ -962,13 +717,11 @@ export class ClipsService {
     };
   }
 
-  /**
-   * Placeholder for other missing methods that are referenced in the controller.
-   * These would need to be implemented based on the specific requirements.
-   */
+  // ──────────────────────────────────────────────────────────────────────────
+  // Convenience aliases used by ClipsController
+  // ──────────────────────────────────────────────────────────────────────────
 
   async bulkDeleteRejected(userId: number, clipIds: number[]) {
-    // Implementation would go here - for now, delegate to existing method
     return this.bulkDeleteClips(clipIds, userId);
   }
 
@@ -977,9 +730,107 @@ export class ClipsService {
     throw new Error('Method not implemented');
   }
 
-  async listClips(options: any) {
-    // This would implement clip listing with pagination and filtering
-    throw new Error('Method not implemented');
+  /**
+   * Issue #866 — List clips with pagination and selective field loading.
+   *
+   * Uses `select` (not `include`) to return only the fields required by
+   * the list view. This avoids loading large relations (video, clipPosts,
+   * earnings) on every list request and prevents N+1 query patterns.
+   *
+   * Trade-offs documented:
+   *  - `video`, `clipPosts`, and `earnings` relations are deliberately omitted;
+   *    use GET /clips/:id for full detail including relations.
+   *  - `platform` and `localFilePath` are included as they are lightweight
+   *    scalar fields needed by the UI.
+   */
+  async listClips(
+    options: {
+      videoId?: string;
+      sortBy?: ClipSortField | string;
+      order?: SortOrder | string;
+      page?: number;
+      limit?: number;
+    } = {},
+  ): Promise<{
+    data: ClipRecord[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }> {
+    const page = options.page ?? 1;
+    const limit = options.limit ?? 20;
+
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new BadRequestException('limit must be an integer between 1 and 100');
+    }
+    if (!Number.isInteger(page) || page < 1) {
+      throw new BadRequestException('page must be a positive integer');
+    }
+
+    const where: any = {};
+    if (options.videoId !== undefined) {
+      where.videoId = parseInt(String(options.videoId), 10);
+    }
+
+    // Build orderBy — viralityScore uses nulls-last to keep scored clips first
+    let orderBy: any[];
+    if (options.sortBy === 'viralityScore') {
+      orderBy = [
+        { viralityScore: { sort: options.order ?? 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ];
+    } else if (options.sortBy === 'duration') {
+      orderBy = [{ duration: options.order ?? 'desc' }, { createdAt: 'desc' }];
+    } else if (options.sortBy === 'createdAt') {
+      orderBy = [{ createdAt: options.order ?? 'desc' }];
+    } else {
+      orderBy = [{ createdAt: 'desc' }];
+    }
+
+    const skip = (page - 1) * limit;
+
+    // Issue #866: use explicit `select` — never `include: { video: true }` or
+    // similar broad includes that would load entire relation sub-trees.
+    const [data, total] = await Promise.all([
+      this.prisma.clip.findMany({
+        where,
+        orderBy,
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          videoId: true,
+          clipUrl: true,
+          thumbnail: true,
+          platform: true,
+          title: true,
+          caption: true,
+          startTime: true,
+          endTime: true,
+          duration: true,
+          viralityScore: true,
+          royaltyBps: true,
+          selected: true,
+          postStatus: true,
+          postedAt: true,
+          metadataUri: true,
+          mintAddress: true,
+          mintedAt: true,
+          nftStatus: true,
+          status: true,
+          localFilePath: true,
+          error: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.clip.count({ where }),
+    ]);
+
+    const totalPages = total > 0 ? Math.ceil(total / limit) : 0;
+
+    return {
+      data: data as ClipRecord[],
+      meta: { total, page, limit, totalPages },
+    };
   }
 
   async regenerate(userId: number, clipId: number) {
@@ -989,7 +840,7 @@ export class ClipsService {
 
   async updateCaption(clipId: number, userId: number, caption: string) {
     await this.validateClipOwnership(clipId, userId);
-    
+
     const updated = await this.prisma.clip.update({
       where: { id: clipId },
       data: { caption, updatedAt: new Date() },
@@ -1001,8 +852,8 @@ export class ClipsService {
 
   async updateRoyalty(clipId: number, userId: number, royaltyBps: number) {
     await this.validateClipOwnership(clipId, userId);
-    
-    const updated = await this.prisma.clip.update({
+
+    await this.prisma.clip.update({
       where: { id: clipId },
       data: { royaltyBps, updatedAt: new Date() },
     });

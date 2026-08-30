@@ -1,7 +1,6 @@
 import {
   Controller,
   Post,
-  UseGuards,
   Req,
   UseInterceptors,
   UploadedFile,
@@ -26,8 +25,8 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
 import type { Request } from 'express';
-import { LoginGuard } from '../auth/guards/login.guard.js';
 import { VideoUploadService } from './video-upload.service';
+import { Auth } from '../auth/decorators/auth.decorator';
 import {
   UploadVideoResponseDto,
   UploadVideoErrorDto,
@@ -49,7 +48,7 @@ const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
-@UseGuards(LoginGuard)
+@Auth()
 @Controller('videos')
 export class VideoUploadController {
   constructor(private readonly videoUploadService: VideoUploadService) {}

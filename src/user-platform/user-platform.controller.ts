@@ -6,7 +6,6 @@ import {
   Param,
   Put,
   Delete,
-  UseGuards,
   Request,
   HttpCode,
   HttpStatus,
@@ -23,7 +22,7 @@ import {
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { UserPlatformService } from './user-platform.service';
-import { LoginGuard } from '../auth/guards/login.guard';
+import { Auth } from '../auth/decorators/auth.decorator';
 import type {
   UserPlatformCreateInput,
   UserPlatformUpdateInput,
@@ -38,7 +37,7 @@ import {
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller(['user-platforms', 'user-platform'])
-@UseGuards(LoginGuard)
+@Auth()
 export class UserPlatformController {
   constructor(private readonly userPlatformService: UserPlatformService) {}
 

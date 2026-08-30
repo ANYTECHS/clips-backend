@@ -4,7 +4,6 @@ import {
   Get,
   Body,
   Req,
-  UseGuards,
   HttpCode,
   HttpStatus,
   Query,
@@ -28,13 +27,13 @@ import {
   CreateStellarSubscriptionDto,
   StellarPaymentIntentDto,
 } from './dto/create-stellar-subscription.dto';
-import { LoginGuard } from '../auth/guards/login.guard';
+import { Auth } from '../auth/decorators/auth.decorator';
 
 @ApiTags('subscriptions')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
-@UseGuards(LoginGuard)
+@Auth()
 @Controller('subscriptions')
 export class SubscriptionsController {
   constructor(private readonly stellarPaymentService: StellarPaymentService) {}

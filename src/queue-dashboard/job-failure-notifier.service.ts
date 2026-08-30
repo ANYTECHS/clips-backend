@@ -154,7 +154,7 @@ export class JobFailureNotifierService implements OnModuleInit {
     try {
       const payout = await this.prisma.payout.findUnique({
         where: { id: payoutId },
-        include: { user: true },
+        include: { user: { select: { id: true, email: true, name: true } } },
       });
 
       if (!payout || !payout.user.email) {
