@@ -22,13 +22,13 @@ import { AdminContractService } from './admin-contract.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
-import { RedisModule } from '../redis/redis.module';
 import { ConfigModule } from '../config/config.module';
 import { GasMetricsService } from './gas-metrics.service';
-import { RedisModule } from '../redis/redis.module';
+import { NftMintStatusService } from './nft-mint-status.service';
+import { NftMetadataValidationService } from './nft-metadata-validation.service';
+import { MintTransactionRetryService } from './mint-transaction-retry.service';
 
 @Module({
-  imports: [PrismaModule, StellarModule, CircuitBreakerModule, IpfsUploadModule, NftOwnershipModule],
   imports: [
     PrismaModule,
     StellarModule,
@@ -42,12 +42,14 @@ import { RedisModule } from '../redis/redis.module';
     NftConfig, NftService, GasMetricsService, NftMintService, NftMetadataService,
     RoyaltyQueryService, PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
     NftMintGuard, RoyaltyConfigurationService, MintSignatureVerificationService, AdminContractService,
+    NftMintStatusService, NftMetadataValidationService, MintTransactionRetryService,
   ],
   controllers: [NftController, PlatformRevenueController, BatchRoyaltyController, ClipRoyaltyController],
   exports: [
     NftService, GasMetricsService, NftMintService, NftMetadataService, RoyaltyQueryService,
     PlatformRevenueService, BatchRoyaltyService, ClipRoyaltyService,
     IpfsUploadModule, NftOwnershipModule, RoyaltyConfigurationService, MintSignatureVerificationService,
+    NftMintStatusService, NftMetadataValidationService, MintTransactionRetryService,
   ],
 })
 export class NftModule {}

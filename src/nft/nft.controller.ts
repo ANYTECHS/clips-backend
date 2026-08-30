@@ -122,6 +122,10 @@ import {
   GetUserTokensQueryDto,
   PaginatedUserTokensResponseDto,
 } from './dto/paginated-user-tokens.dto';
+import { NftMintStatusService } from './nft-mint-status.service';
+import { NftMetadataValidationService } from './nft-metadata-validation.service';
+import { MintStatusResponseDto, MintStatusNotFoundDto } from './dto/mint-status-response.dto';
+import { ValidateNftMetadataDto, MetadataValidationResponseDto, MetadataValidationBadRequestDto } from './dto/metadata-validation.dto';
 
 @ApiTags('nfts')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
@@ -140,6 +144,8 @@ export class NftController {
     private readonly mintSignatureVerification: MintSignatureVerificationService,
     private readonly adminContractService: AdminContractService,
     private readonly gasMetricsService: GasMetricsService,
+    private readonly nftMintStatusService: NftMintStatusService,
+    private readonly nftMetadataValidationService: NftMetadataValidationService,
   ) {}
 
   @UseGuards(LoginGuard, NftMintGuard)
@@ -1735,5 +1741,187 @@ export class NftController {
       dto.walletAddress,
       dto.assetContractId,
     );
+  }
+
+  // ── #862 — Metadata preview endpoint ─────────────────────────────────────
+
+  /**
+   * GET /nfts/:id/metadata-preview
+   *
+   * Returns a preview of the NFT metadata that *would* be generated for the
+   * given clip without uploading anything to IPFS. Useful for frontend
+   * preview screens before the user commits to minting.
+   *
+   * Closes #862 — document metadata preview endpoint.
+   */
+  @UseGuards(LoginGuard)
+  @Get(':id/metadata-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiTags('NFT Metadata')
+  @ApiOperation({
+    summary: 'Preview NFT metadata without uploading to IPFS',
+    description:
+      'Generates the OpenSea-compatible metadata JSON that would be uploaded to IPFS when ' +
+      'this clip is minted, without actually uploading anything. ' +
+      'Includes all standard fields (name, description, image, animation_url), ' +
+      'rich attributes (duration, virality score, tags, platforms, royalty), and ' +
+      'royalty information (bps, percent, recipient, asset). ' +
+      'Closes #862.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Clip ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Metadata preview generated successfully.',
+    schema: {
+      example: {
+        clipId: 42,
+        preview: true,
+        metadata: {
+          name: 'My Viral Clip',
+          description: 'A great moment from my latest video',
+          image: 'https://cdn.example.com/thumbnail.jpg',
+          animation_url: 'https://cdn.example.com/clip.mp4',
+          attributes: [
+            { trait_type: 'Clip Duration', value: 30 },
+            { trait_type: 'Virality Score', value: 85 },
+            { trait_type: 'Creation Date', value: '2026-01-01T00:00:00.000Z' },
+            { trait_type: 'Royalty BPS', value: 1000 },
+            { trait_type: 'Royalty Percent', value: 10 },
+            { trait_type: 'Platform', value: 'ClipCash' },
+          ],
+          seller_fee_basis_points: 1000,
+          royalty: { bps: 1000, percent: 10, asset: 'native' },
+          viralityScore: 85,
+          originalDuration: 30,
+          createdAt: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid clip ID.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT token.' })
+  @ApiForbiddenResponse({ description: 'Caller does not own the clip.' })
+  @ApiNotFoundResponse({ description: 'Clip not found.' })
+  async getMetadataPreview(
+    @Param('id', ParseIntPipe) clipId: number,
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(clipId, userId);
+
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
+
+    const clipData = {
+      id: clip.id,
+      title: clip.title,
+      caption: clip.caption,
+      clipUrl: clip.clipUrl,
+      thumbnail: clip.thumbnail,
+      duration: clip.duration,
+      viralityScore: clip.viralityScore,
+      royaltyBps: clip.royaltyBps ?? 1000,
+      createdAt: clip.createdAt,
+    };
+
+    return this.nftMetadataService.buildPreview(clipData);
+  }
+
+  // ── #849 — Mint lifecycle tracking ────────────────────────────────────────
+
+  @Get(':id/mint-status')
+  @UseGuards(LoginGuard)
+  @ApiBearerAuth()
+  @ApiTags('NFT Mint Status')
+  @ApiOperation({
+    summary: 'Get NFT mint lifecycle status',
+    description:
+      'Returns the complete minting lifecycle status for a clip. ' +
+      'Stages progress from none → upload → prepare → submit → confirm, or → fail on error. ' +
+      'Closes #849.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Clip ID' })
+  @ApiOkResponse({
+    type: MintStatusResponseDto,
+    description: 'Current mint lifecycle status.',
+    schema: {
+      example: {
+        id: 1,
+        clipId: 42,
+        stage: 'upload',
+        txHash: null,
+        retryCount: 0,
+        nextRetryAt: null,
+        failureReason: null,
+        permanentFailure: false,
+        metadataUri: 'ipfs://bafybeig…',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  @ApiNotFoundResponse({ type: MintStatusNotFoundDto, description: 'Clip not found.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT token.' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Possible stages: none | upload | prepare | submit | confirm | fail. ' +
+      'When stage is fail, failureReason describes what went wrong. ' +
+      'When permanentFailure is true, no further retries will be attempted.',
+  })
+  async getMintStatus(
+    @Param('id', ParseIntPipe) clipId: number,
+  ): Promise<MintStatusResponseDto> {
+    return this.nftMintStatusService.getOrCreate(clipId) as Promise<MintStatusResponseDto>;
+  }
+
+  // ── #848 — Metadata validation ────────────────────────────────────────────
+
+  @Post(':id/validate-metadata')
+  @UseGuards(LoginGuard)
+  @ApiBearerAuth()
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('NFT Metadata Validation')
+  @ApiOperation({
+    summary: 'Validate NFT metadata before minting',
+    description:
+      'Validates a metadata JSON object for completeness, URI format, required fields, ' +
+      'image/animation URI, and attributes. Returns all errors found. Closes #848.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Clip ID (for context; not required by validation)' })
+  @ApiBody({ type: ValidateNftMetadataDto })
+  @ApiOkResponse({
+    type: MetadataValidationResponseDto,
+    description: 'Validation result with errors array (empty when valid).',
+    schema: {
+      examples: {
+        valid: {
+          summary: 'Valid metadata',
+          value: { valid: true, errors: [] },
+        },
+        invalid: {
+          summary: 'Invalid metadata',
+          value: {
+            valid: false,
+            errors: [
+              { field: 'image', message: "'image' must be a valid URI starting with: https://, http://, ipfs://, ar://" },
+            ],
+          },
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    type: MetadataValidationBadRequestDto,
+    description: 'Request body is not a valid object.',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT token.' })
+  validateMetadata(
+    @Param('id', ParseIntPipe) _clipId: number,
+    @Body() dto: ValidateNftMetadataDto,
+  ): MetadataValidationResponseDto {
+    return this.nftMetadataValidationService.validate(dto.metadata) as MetadataValidationResponseDto;
   }
 }
