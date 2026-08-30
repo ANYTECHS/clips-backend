@@ -10,14 +10,19 @@ import {
   ApiResponse,
   ApiTags,
   ApiInternalServerErrorResponse,
+  ApiOkResponse,
+  ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
 import { RedisMemoryService, RedisMemoryStats } from './redis-memory.service';
+import { RedisHealthService, RedisHealthResult } from './redis-health.service';
 import { RedisService } from '../redis/redis.service';
 import { QueueHealthService } from '../queue/queue-health.service';
 import {
   QueueHealthResponseDto,
   QueueStatisticsResponseDto,
 } from '../queue/dtos/queue-stats.dto';
+import { SorobanHealthService } from './soroban-health.service';
+import { SorobanHealthResponseDto } from './dto/soroban-health.dto';
 
 interface HealthResponse {
   status: 'ok' | 'degraded';
@@ -25,9 +30,11 @@ interface HealthResponse {
 }
 
 interface RedisHealthResponse {
-  status: 'ok' | 'degraded';
+  status: 'healthy' | 'unhealthy';
+  service: 'redis';
   connected: boolean;
   latencyMs: number | null;
+  message?: string;
 }
 
 @ApiTags('health')
@@ -39,8 +46,74 @@ export class HealthController {
   constructor(
     private readonly redisMemoryService: RedisMemoryService,
     private readonly redisService: RedisService,
+    private readonly redisHealthService: RedisHealthService,
     private readonly queueHealthService: QueueHealthService,
+    private readonly sorobanHealthService: SorobanHealthService,
   ) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'Application health overview',
+    description:
+      'Returns the app health status and includes the Redis service health in the main health response.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Health overview retrieved successfully.',
+    schema: {
+      example: {
+        status: 'healthy',
+        redis: { status: 'healthy', service: 'redis' },
+      },
+    },
+  })
+  async getHealth(): Promise<{ status: 'healthy' | 'unhealthy'; redis: RedisHealthResult }> {
+    const redisStatus = await this.redisHealthService.check();
+    const status = redisStatus.status === 'healthy' ? 'healthy' : 'unhealthy';
+
+    return {
+      status,
+      redis: redisStatus,
+    };
+  }
+
+  /**
+   * GET /health/soroban
+   * Verifies the configured NFT Soroban contract is reachable (Issue #844).
+   */
+  @Get('soroban')
+  @ApiOperation({
+    summary: 'Soroban NFT contract health check',
+    description:
+      'Queries the configured NFT contract `version()` and `name()`, verifies ' +
+      'the contract address format, and reports the configured Stellar network. ' +
+      'Returns HTTP 200 when healthy and HTTP 503 when unreachable or misconfigured.',
+  })
+  @ApiOkResponse({
+    description: 'Contract is reachable and responding',
+    type: SorobanHealthResponseDto,
+    schema: {
+      example: {
+        status: 'healthy',
+        network: 'testnet',
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.0.0',
+        collectionName: 'ClipCash NFTs',
+        rpcReachable: true,
+      },
+    },
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Contract unreachable, misconfigured, or RPC unavailable',
+    type: SorobanHealthResponseDto,
+  })
+  async checkSoroban(): Promise<SorobanHealthResponseDto> {
+    const result = await this.sorobanHealthService.check();
+    if (result.status !== 'healthy') {
+      throw new HttpException(result, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return result;
+  }
 
   /**
    * Returns current Redis memory utilisation.
@@ -106,24 +179,55 @@ export class HealthController {
   @Get('redis')
   @ApiOperation({
     summary: 'Redis connection health check',
-    description: 'Returns Redis connection status and round-trip latency.',
+    description:
+      'Pings Redis and reports whether the service is reachable and responsive. Returns HTTP 200 when healthy and HTTP 503 when unreachable.',
   })
-  @ApiResponse({ status: 200, description: 'Redis is reachable.' })
-  @ApiResponse({ status: 503, description: 'Redis is unreachable.' })
+  @ApiOkResponse({
+    description: 'Redis is reachable and responsive.',
+    schema: {
+      example: {
+        status: 'healthy',
+        service: 'redis',
+        connected: true,
+        latencyMs: 12,
+      },
+    },
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Redis is unreachable or did not respond in time.',
+    schema: {
+      example: {
+        status: 'unhealthy',
+        service: 'redis',
+        connected: false,
+        latencyMs: null,
+        message: 'Redis ping failed',
+      },
+    },
+  })
   async checkRedis(): Promise<RedisHealthResponse> {
-    const start = Date.now();
-    const connected = await this.redisService.ping();
-    const latencyMs = connected ? Date.now() - start : null;
+    const result = await this.redisHealthService.check();
 
-    if (!connected) {
+    if (result.status !== 'healthy') {
       this.logger.warn('Redis health check: Redis unreachable');
       throw new HttpException(
-        { status: 'degraded', connected: false, latencyMs: null },
+        {
+          status: result.status,
+          service: result.service,
+          connected: false,
+          latencyMs: null,
+          message: result.message ?? 'Redis ping failed',
+        },
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
 
-    return { status: 'ok', connected: true, latencyMs };
+    return {
+      status: 'healthy',
+      service: 'redis',
+      connected: true,
+      latencyMs: result.latencyMs ?? null,
+    };
   }
 
   @Get('queues')

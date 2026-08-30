@@ -52,8 +52,21 @@ export class NftMintProcessor extends WorkerHost implements OnModuleInit {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<NftMintJob>, error: Error): void {
+    const maxAttempts = job.opts.attempts ?? 1;
+    const isFinalAttempt = job.attemptsMade >= maxAttempts;
+
+    if (!isFinalAttempt) {
+      this.logger.warn(
+        `[RETRY] NFT mint job ${job.id} failed on attempt ${job.attemptsMade}/${maxAttempts} — ` +
+          `clipId=${job.data.clipId} — reason: ${error.message} — retrying`,
+      );
+      return;
+    }
+
     this.logger.error(
-      `NFT mint job ${job.id} failed for clip ${job.data.clipId}: ${error.message}`,
+      `[FINAL FAILURE] NFT mint job ${job.id} exhausted all ${maxAttempts} attempts — ` +
+        `clipId=${job.data.clipId} — reason: ${error.message}`,
+      error.stack,
     );
     this.metricsService.recordJobFailure(NFT_MINT_QUEUE, 'final_failure');
   }

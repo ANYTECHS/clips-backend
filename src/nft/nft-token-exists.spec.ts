@@ -13,6 +13,9 @@ import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { AdminContractService } from './admin-contract.service';
 import { GasMetricsService } from './gas-metrics.service';
+import { NftTransferService } from './nft-transfer.service';
+import { NftTransferHistoryService } from './nft-transfer-history.service';
+import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { LoginGuard } from '../auth/guards/login.guard';
 
@@ -43,6 +46,9 @@ describe('NftController – GET /nfts/:id/exists (Issue #688)', () => {
         { provide: MintSignatureVerificationService, useValue: { verify: jest.fn() } },
         { provide: AdminContractService, useValue: { getPauseStatus: jest.fn(), preparePauseTx: jest.fn() } },
         { provide: GasMetricsService, useValue: { getStats: jest.fn() } },
+        { provide: NftTransferService, useValue: { prepareTransferTx: jest.fn() } },
+        { provide: NftTransferHistoryService, useValue: { getTransfers: jest.fn() } },
+        { provide: NftMetadataRefreshService, useValue: { prepareRefreshWithCooldown: jest.fn() } },
       ],
     })
       .overrideGuard(LoginGuard)

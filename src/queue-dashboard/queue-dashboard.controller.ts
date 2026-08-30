@@ -10,7 +10,9 @@ import {
 } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
+import { Admin } from '../auth/decorators/admin.decorator';
 import { QueueDashboardService } from './queue-dashboard.service';
+import { QueueCollectorService } from '../metrics/queue-collector.service';
 import {
   ApiTags,
   ApiOperation,
@@ -18,6 +20,7 @@ import {
   ApiUnauthorizedResponse,
   ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
+  ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 
 @ApiTags('queues')
@@ -26,7 +29,8 @@ import {
 @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('admin/queues')
-@Auth('admin')
+@Auth()
+@Admin()
 export class QueueDashboardController {
   constructor(
     private readonly queueDashboardService: QueueDashboardService,
@@ -34,6 +38,7 @@ export class QueueDashboardController {
   ) {}
 
   @Get('*')
+  @ApiExcludeEndpoint()
   dashboard(
     @Req() req: Request,
     @Res() res: Response,

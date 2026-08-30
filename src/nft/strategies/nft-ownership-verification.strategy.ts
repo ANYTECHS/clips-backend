@@ -6,6 +6,12 @@ export interface OwnershipVerificationResult {
   error?: string;
 }
 
+export interface PaginatedUserTokensResult {
+  tokenIds: number[];
+  nextCursor: number | null;
+  total: number;
+}
+
 export interface NftOwnershipVerificationStrategy {
   verifyOwnership(
     contractId: string,
@@ -22,6 +28,17 @@ export interface NftOwnershipVerificationStrategy {
     contractId: string,
     walletAddress: string,
   ): Promise<number[]>;
+
+  /**
+   * On-chain paginated query: get_user_tokens(owner, limit, cursor) (Issue #838).
+   * Optional — strategies may omit and fall back to getWalletTokenIds + slice.
+   */
+  getUserTokens?(
+    contractId: string,
+    walletAddress: string,
+    limit: number,
+    cursor: number,
+  ): Promise<PaginatedUserTokensResult>;
 
   /**
    * Check whether a token with the given ID has been minted.
@@ -143,7 +160,8 @@ export class SorobanOwnerOfVerificationStrategy implements NftOwnershipVerificat
   async getWalletTokenIds(
     contractId: string,
     walletAddress: string,
-  ): Promise<number[]> {    const server = new StellarSdk.rpc.Server(this.rpcUrl);
+  ): Promise<number[]> {
+    const server = new StellarSdk.rpc.Server(this.rpcUrl);
     const ownerScVal = new StellarSdk.Address(walletAddress).toScVal();
 
     const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
@@ -169,16 +187,134 @@ export class SorobanOwnerOfVerificationStrategy implements NftOwnershipVerificat
         const vec = val.vec();
         if (!vec) return [];
         return vec.map(v => {
-          // In Rust u64 is returned as ScValType.scvU64. The SDK parses it to a BigInt or struct.
-          // Let's use scValToNative to safely extract it.
           const nativeVal = StellarSdk.scValToNative(v);
           return Number(nativeVal);
         });
       }
       return [];
-    } catch (e) {
+    } catch {
       return [];
     }
+  }
+
+  /**
+   * Call on-chain `get_user_tokens(owner, limit, cursor)` to avoid loading
+   * entire large collections into memory (Issue #838).
+   *
+   * Expected return shapes (any accepted):
+   * - { tokens: u64[], next_cursor: Option<u64>, total: u64 }
+   * - [tokenIds[], nextCursor, total]
+   * Falls back to ledger iteration + local slice when the call fails.
+   */
+  async getUserTokens(
+    contractId: string,
+    walletAddress: string,
+    limit: number,
+    cursor: number,
+  ): Promise<PaginatedUserTokensResult> {
+    const effectiveLimit = Math.min(Math.max(limit, 1), 100);
+    const effectiveCursor = Math.max(cursor, 0);
+
+    try {
+      const server = new StellarSdk.rpc.Server(this.rpcUrl);
+      const contract = new StellarSdk.Contract(contractId);
+      const op = contract.call(
+        'get_user_tokens',
+        StellarSdk.Address.fromString(walletAddress).toScVal(),
+        StellarSdk.nativeToScVal(effectiveLimit, { type: 'u32' }),
+        StellarSdk.nativeToScVal(effectiveCursor, { type: 'u32' }),
+      );
+
+      const sourceAccount = new StellarSdk.Account(
+        'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+        '0',
+      );
+      const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+        fee: '100',
+        networkPassphrase: this.networkPassphrase,
+      })
+        .addOperation(op)
+        .setTimeout(StellarSdk.TimeoutInfinite)
+        .build();
+
+      const simulation = await server.simulateTransaction(tx);
+      if ('error' in simulation && simulation.error) {
+        throw new Error(String(simulation.error));
+      }
+
+      const results = (simulation as { results?: Array<{ xdr?: string }> }).results;
+      if (!results?.[0]?.xdr) {
+        throw new Error('No simulation result from get_user_tokens');
+      }
+
+      const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+      const native = StellarSdk.scValToNative(returnValue);
+      return this.decodePaginatedTokens(native, effectiveLimit, effectiveCursor);
+    } catch {
+      // Optimized fallback: still paginate locally without returning the full list to callers
+      const allTokens = await this.getWalletTokenIds(contractId, walletAddress);
+      const total = allTokens.length;
+      const start = Math.min(effectiveCursor, total);
+      const end = Math.min(start + effectiveLimit, total);
+      return {
+        tokenIds: allTokens.slice(start, end),
+        nextCursor: end < total ? end : null,
+        total,
+      };
+    }
+  }
+
+  private decodePaginatedTokens(
+    native: unknown,
+    limit: number,
+    cursor: number,
+  ): PaginatedUserTokensResult {
+    if (Array.isArray(native)) {
+      // [tokenIds, nextCursor, total] or just tokenIds
+      if (
+        native.length >= 2 &&
+        Array.isArray(native[0])
+      ) {
+        const tokenIds = (native[0] as unknown[]).map((t) => Number(t));
+        const nextRaw = native[1];
+        const total = native.length >= 3 ? Number(native[2]) : tokenIds.length;
+        const nextCursor =
+          nextRaw == null ? null : Number(nextRaw);
+        return {
+          tokenIds,
+          nextCursor:
+            nextCursor != null && Number.isFinite(nextCursor)
+              ? nextCursor
+              : null,
+          total: Number.isFinite(total) ? total : tokenIds.length,
+        };
+      }
+      const tokenIds = native.map((t) => Number(t));
+      return {
+        tokenIds,
+        nextCursor: tokenIds.length >= limit ? cursor + tokenIds.length : null,
+        total: tokenIds.length,
+      };
+    }
+
+    if (native && typeof native === 'object') {
+      const obj = native as Record<string, unknown>;
+      const rawTokens =
+        (obj.tokens as unknown[]) ||
+        (obj.token_ids as unknown[]) ||
+        (obj.tokenIds as unknown[]) ||
+        [];
+      const tokenIds = rawTokens.map((t) => Number(t));
+      const nextRaw = obj.next_cursor ?? obj.nextCursor ?? null;
+      const total = Number(obj.total ?? tokenIds.length);
+      return {
+        tokenIds,
+        nextCursor: nextRaw == null ? null : Number(nextRaw),
+        total: Number.isFinite(total) ? total : tokenIds.length,
+      };
+    }
+
+    return { tokenIds: [], nextCursor: null, total: 0 };
   }
 
   /**
