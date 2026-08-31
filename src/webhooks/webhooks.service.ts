@@ -292,7 +292,7 @@ export class WebhooksService {
 
     const clip = await tx.clip.findUnique({
       where: { id: clipId },
-      include: { video: true },
+      include: { video: { select: { userId: true, title: true } } },
     });
 
     if (!clip) {

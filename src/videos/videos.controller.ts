@@ -9,13 +9,12 @@ import {
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { ClipsService } from '../clips/clips.service';
-import { LoginGuard } from '../auth/guards/login.guard.js';
+import { Auth } from '../auth/decorators/auth.decorator';
 
 @ApiTags('videos')
-@ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
-@UseGuards(LoginGuard)
+@Auth()
 @Controller('videos')
 export class VideosController {
   constructor(private readonly clipsService: ClipsService) {}

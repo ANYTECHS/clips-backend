@@ -115,7 +115,6 @@ import { NftOwnershipService } from './nft-ownership.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
-import { LoginGuard } from '../auth/guards/login.guard';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { AdminContractService } from './admin-contract.service';
@@ -185,7 +184,8 @@ export class NftController {
     private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
   ) {}
 
-  @UseGuards(LoginGuard, NftMintGuard)
+  @Auth()
+  @UseGuards(NftMintGuard)
   @Get(':id/owner')
   @ApiOperation({
     summary: 'Get the current owner of an NFT',
@@ -403,7 +403,7 @@ export class NftController {
    * POST /nfts/upload-metadata
    * Builds OpenSea-compatible metadata, uploads to IPFS, and persists metadataUri on the clip.
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Post('upload-metadata')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
@@ -534,7 +534,7 @@ export class NftController {
     return this.nftService.batchMintClips(dto);
   }
 
-  @UseGuards(LoginGuard)
+  @Auth()
   @Patch(':id/token-uri')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
@@ -575,7 +575,8 @@ export class NftController {
    * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
    * The authenticated user must own the clip being minted.
    */
-  @UseGuards(LoginGuard, NftMintGuard)
+  @Auth()
+  @UseGuards(NftMintGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
@@ -643,7 +644,7 @@ export class NftController {
     return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
   }
 
-  @UseGuards(LoginGuard)
+  @Auth()
   @Post('confirm-mint')
   @HttpCode(HttpStatus.OK)
   @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
@@ -830,7 +831,7 @@ export class NftController {
    *
    * Response: { royaltyBps: number, recipient: string }
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Get(':mintAddress/royalty')
   @ApiBearerAuth()
   @ApiOperation({
@@ -868,7 +869,7 @@ export class NftController {
    * Only the clip owner (authenticated user) may request this, and only the
    * on-chain token owner's wallet can sign the returned transaction.
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Post(':id/burn')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
@@ -971,7 +972,7 @@ export class NftController {
    * Prepares a Soroban transaction that configures a token's royalty split
    * across multiple recipients.
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Patch(':id/royalties')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
@@ -1376,7 +1377,7 @@ export class NftController {
     );
   }
 
-  @UseGuards(LoginGuard)
+  @Auth()
   @Patch(':id/royalty-recipient')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
@@ -1656,7 +1657,7 @@ export class NftController {
    * for the owner to sign. Grants `spender` the right to transfer one
    * specific token (Issue #675).
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Post('tokens/:tokenId/approve')
   @HttpCode(HttpStatus.CREATED)
   @ApiBearerAuth('access-token')
@@ -1750,7 +1751,7 @@ export class NftController {
    * caller. Prepares an unsigned Soroban `set_approval_for_all` XDR
    * (Issue #675).
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Post('approvals/operator')
   @HttpCode(HttpStatus.CREATED)
   @ApiBearerAuth('access-token')
@@ -2008,7 +2009,7 @@ export class NftController {
     return this.gasMetricsService.getStats();
   }
 
-  @UseGuards(LoginGuard)
+  @Auth()
   @Patch(':id/metadata')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
@@ -2051,7 +2052,7 @@ export class NftController {
    * creator to sign. Verifies a non-zero claimable balance before building
    * the XDR to avoid unnecessary failed on-chain transactions.
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Post(':id/claim-royalties')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')

@@ -5,7 +5,6 @@ import {
   Post,
   Body,
   Param,
-  UseGuards,
   BadRequestException,
   NotFoundException,
   ParseIntPipe,
@@ -24,8 +23,7 @@ import {
   RoyaltyCalculationDto,
   RoyaltyCalculationResponseDto,
 } from './dto/clip-royalty.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { AdminGuard } from '../auth/guards/admin.guard';
+import { Auth } from '../auth/decorators/auth.decorator';
 
 /**
  * Endpoints for managing clip-level royalty configurations
@@ -73,7 +71,7 @@ export class ClipRoyaltyController {
    * Update or create royalty configuration for a clip
    */
   @Patch(':clipId')
-  @UseGuards(JwtAuthGuard)
+  @Auth()
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Set or update royalty configuration for a clip',
@@ -123,7 +121,7 @@ export class ClipRoyaltyController {
    * Set royalty configuration for a clip
    */
   @Post(':clipId')
-  @UseGuards(JwtAuthGuard)
+  @Auth()
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Create new royalty configuration for a clip',
@@ -197,7 +195,7 @@ export class ClipRoyaltyController {
    * Get all clips with royalties for a recipient (admin only)
    */
   @Get('recipient/:address')
-  @UseGuards(JwtAuthGuard, AdminGuard)
+  @Auth('admin')
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Get all clip royalties for a recipient address (Admin only)',
