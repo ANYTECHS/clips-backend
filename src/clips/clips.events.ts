@@ -25,15 +25,19 @@ export interface ClipGenerationFailedPayload {
 /**
  * Step labels emitted at key processing milestones.
  *
- *  video_download  —  source video has been fetched / is accessible (10 %)
- *  ai_analysis     —  Anthropic/fallback viral-moment detection complete (30 %)
- *  ffmpeg_cut      —  local clip file has been written by FFmpeg (60 %)
- *  upload          —  clip uploaded to Cloudinary CDN (90 %)
- *  done            —  job finished, DB record updated (100 %)
+ *  video_download    — source video has been fetched / is accessible (10 %)
+ *  ai_analysis       — viral-moment detection complete (30 %)
+ *  ffmpeg_processing — FFmpeg is generating the clip (60 %)
+ *  upload            — clip uploaded to Cloudinary CDN (90 %)
+ *  done              — job finished, DB record updated (100 %)
+ *
+ *  ffmpeg_cut remains accepted as a backwards-compatible alias for existing
+ *  progress payloads and older clients.
  */
 export type ClipProgressStep =
   | 'video_download'
   | 'ai_analysis'
+  | 'ffmpeg_processing'
   | 'ffmpeg_cut'
   | 'upload'
   | 'done';

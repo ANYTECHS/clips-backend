@@ -5,10 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import { CLIP_POSTING_QUEUE } from '../clips/clip-posting.queue';
 import { NFT_MINT_QUEUE } from '../clips/nft-mint.queue';
+import { JobProgressResponseDto } from './dto/job-progress-response.dto';
 
 const SUPPORTED_QUEUES = [
   CLIP_GENERATION_QUEUE,
@@ -86,5 +87,52 @@ export class JobsService {
     }
 
     throw new NotFoundException(`Job ${jobId} not found in any queue`);
+  }
+
+  /**
+   * Reads the BullMQ job progress payload and exposes a normalized progress DTO.
+   * This supports monitoring for clip generation and related queues.
+   */
+  async getJobProgress(jobId: string, type?: string): Promise<JobProgressResponseDto> {
+    const queues = type ? [this.resolveQueue(type)] : Object.values(this.queueMap);
+
+    for (const queue of queues) {
+      const job = await queue.getJob(jobId);
+      if (!job) continue;
+
+      const state = await job.getState();
+      const rawProgress = await job.progress;
+      const progressValue = this.normalizeProgress(rawProgress);
+
+      return {
+        jobId: String(job.id),
+        progress: progressValue.percent,
+        stage: progressValue.stage,
+        queue: queue.name,
+        state,
+      };
+    }
+
+    throw new NotFoundException(`Job ${jobId} not found in any queue`);
+  }
+
+  private normalizeProgress(rawProgress: number | object): {
+    percent: number;
+    stage: 'video_download' | 'ai_analysis' | 'ffmpeg_cut' | 'upload' | 'done';
+  } {
+    const numericProgress =
+      typeof rawProgress === 'number'
+        ? rawProgress
+        : typeof rawProgress === 'object' && rawProgress !== null
+          ? Number((rawProgress as Record<string, unknown>).percent ?? 0)
+          : 0;
+
+    const percent = Math.max(0, Math.min(100, Math.round(Number(numericProgress) || 0)));
+
+    if (percent <= 10) return { percent, stage: 'video_download' };
+    if (percent <= 30) return { percent, stage: 'ai_analysis' };
+    if (percent <= 60) return { percent, stage: 'ffmpeg_processing' };
+    if (percent < 100) return { percent, stage: 'upload' };
+    return { percent, stage: 'done' };
   }
 }
