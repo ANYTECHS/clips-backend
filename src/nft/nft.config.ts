@@ -1,33 +1,33 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '../config/config.service';
 
 /**
- * Royalty configuration loaded from environment variables.
+ * Royalty and wallet configuration for the NFT minting pipeline.
+ *
+ * This class is kept for **backward compatibility** so that existing consumers
+ * can continue to inject `NftConfig` without modification. All values are now
+ * sourced from `ConfigService`, which is the single source of truth for
+ * environment-derived configuration.
  *
  * Basis points (bps): 100 bps = 1%
- *   PLATFORM_ROYALTY_BPS  — share kept by ClipCash (default: 100 = 1%)
- *   CREATOR_ROYALTY_BPS   — share paid to the clip creator (default: 1000 = 10%)
- *   PLATFORM_WALLET       — ClipCash treasury wallet address
+ *   platformRoyaltyBps  — share kept by ClipCash (default: 100 = 1%)
+ *   creatorRoyaltyBps   — share paid to the clip creator (default: 1000 = 10%)
+ *   platformWallet      — ClipCash treasury wallet address
  */
 @Injectable()
 export class NftConfig {
-  /** ClipCash platform royalty in basis points (default 100 = 1%) */
+  /** ClipCash platform royalty in basis points (default 100 = 1%). Delegated from ConfigService. */
   readonly platformRoyaltyBps: number;
 
-  /** Creator royalty in basis points (default 1000 = 10%) */
+  /** Creator royalty in basis points (default 1000 = 10%). Delegated from ConfigService. */
   readonly creatorRoyaltyBps: number;
 
-  /** ClipCash treasury wallet address (Stellar or Solana) */
+  /** ClipCash treasury wallet address (Stellar). Delegated from ConfigService. */
   readonly platformWallet: string;
 
-  constructor() {
-    this.platformRoyaltyBps = parseInt(
-      process.env.PLATFORM_ROYALTY_BPS ?? '100',
-      10,
-    );
-    this.creatorRoyaltyBps = parseInt(
-      process.env.CREATOR_ROYALTY_BPS ?? '1000',
-      10,
-    );
-    this.platformWallet = process.env.PLATFORM_WALLET_ADDRESS ?? '';
+  constructor(private readonly configService: ConfigService) {
+    this.platformRoyaltyBps = configService.platformRoyaltyBps;
+    this.creatorRoyaltyBps = configService.creatorRoyaltyBps;
+    this.platformWallet = configService.platformWallet;
   }
 }

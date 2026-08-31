@@ -7,10 +7,11 @@ const mockToXDR = jest.fn().mockReturnValue('mock-config-xdr');
 const mockCall = jest.fn((fnName: string) => ({ fnName }));
 
 jest.mock('@stellar/stellar-sdk', () => {
+  const toXDRFn = jest.fn().mockReturnValue('mock-config-xdr');
   const mockBuilder = {
     addOperation: jest.fn().mockReturnThis(),
     setTimeout: jest.fn().mockReturnThis(),
-    build: jest.fn().mockReturnValue({ toXDR: mockToXDR }),
+    build: jest.fn().mockReturnValue({ toXDR: toXDRFn }),
   };
 
   const sdkShape = {
@@ -53,6 +54,7 @@ describe('AdminConfigService (Issue #835)', () => {
     );
     service = new AdminConfigService(
       stellarService as any,
+      { sorobanNftContractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4' } as any,
       circuitBreakerService as any,
       eventEmitter as unknown as EventEmitter2,
     );

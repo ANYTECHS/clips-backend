@@ -7,6 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import StellarSdk from '@stellar/stellar-sdk';
 import { StellarService } from '../stellar/stellar.service';
+import { ConfigService } from '../config/config.service';
 import {
   CircuitBreakerService,
   CircuitBreakerConfig,
@@ -40,15 +41,13 @@ export class AdminConfigService {
 
   constructor(
     private readonly stellarService: StellarService,
+    private readonly configService: ConfigService,
     private readonly circuitBreakerService: CircuitBreakerService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
   private get CONTRACT_ID(): string {
-    return (
-      process.env.SOROBAN_NFT_CONTRACT_ID ||
-      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4'
-    );
+    return this.configService.sorobanNftContractId || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
   }
 
   private assertAdminAddress(adminAddress: string): void {
