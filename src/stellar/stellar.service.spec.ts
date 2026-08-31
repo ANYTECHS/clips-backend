@@ -254,5 +254,39 @@ describe('StellarService', () => {
       expect(global.fetch).not.toHaveBeenCalled();
     });
   });
+
+  describe('network configuration via env', () => {
+    let originalEnv: string | undefined;
+
+    beforeAll(() => {
+      originalEnv = process.env.STELLAR_NETWORK;
+    });
+
+    afterAll(() => {
+      process.env.STELLAR_NETWORK = originalEnv;
+    });
+
+    it('should configure public mainnet when STELLAR_NETWORK is public', () => {
+      process.env.STELLAR_NETWORK = 'public';
+      const testService = new StellarService(circuitBreakerService);
+      expect(testService.network).toBe('public');
+      expect(testService.horizonUrl).toBe('https://horizon.stellar.org');
+      expect(testService.rpcUrl).toBe('https://soroban-rpc.stellar.org');
+      expect(testService.networkPassphrase).toBe('Public Global Stellar Network ; September 2015');
+      expect(testService.isMainnet()).toBe(true);
+      expect(testService.isTestnet()).toBe(false);
+    });
+
+    it('should configure testnet when STELLAR_NETWORK is testnet', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      const testService = new StellarService(circuitBreakerService);
+      expect(testService.network).toBe('testnet');
+      expect(testService.horizonUrl).toBe('https://horizon-testnet.stellar.org');
+      expect(testService.rpcUrl).toBe('https://soroban-testnet.stellar.org');
+      expect(testService.networkPassphrase).toBe('Test SDF Network ; September 2015');
+      expect(testService.isMainnet()).toBe(false);
+      expect(testService.isTestnet()).toBe(true);
+    });
+  });
 });
 

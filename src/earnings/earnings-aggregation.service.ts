@@ -1,105 +1,24 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-
-export interface EarningsBreakdown {
-  platform: string;
-  total: number;
-  currency: string;
-}
-
-export interface MonthlyEarningsResult {
-  year: number;
-  month: number;
-  total: number;
-  currency: string;
-  breakdown: EarningsBreakdown[];
-}
 import { Currency, EarningsBreakdown } from './earnings.types';
 import { CurrencyConversionService } from './currency-conversion.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
 
+export interface EarningsBreakdownResult {
+  royalties: number;
+  subscriptions: number;
+}
+
 @Injectable()
 export class EarningsAggregationService {
   private readonly logger = new Logger(EarningsAggregationService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
-
-  /**
-   * Aggregates earnings by month for a given user.
-   */
-  async getMonthlyEarnings(
-    userId: number,
-    year: number,
-    month: number,
-  ): Promise<MonthlyEarningsResult> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59, 999);
-
-    const rows = await this.prisma.earning.findMany({
-      where: {
-        clip: { video: { userId } },
-        deletedAt: null,
-        date: { gte: startDate, lte: endDate },
-      },
-      select: { amount: true, source: true, currency: true },
-    });
-
-    let total = 0;
-    const platformMap = new Map<string, number>();
-    let currency = 'USD';
-
-    for (const row of rows) {
-      total += row.amount;
-      currency = row.currency ?? 'USD';
-      const platform = row.source ?? 'unknown';
-      platformMap.set(platform, (platformMap.get(platform) ?? 0) + row.amount);
-    }
-
-    const breakdown: EarningsBreakdown[] = Array.from(platformMap.entries()).map(
-      ([platform, amount]) => ({ platform, total: amount, currency }),
-    );
-
-    return { year, month, total, currency, breakdown };
-  }
-
-  /**
-   * Returns the top N earners (userId + total) for the public leaderboard.
-   */
-  async getLeaderboard(limit = 10): Promise<Array<{ userId: number; total: number }>> {
-    const rows = await this.prisma.earning.groupBy({
-      by: ['clipId'],
-      where: { deletedAt: null },
-      _sum: { amount: true },
-      orderBy: { _sum: { amount: 'desc' } },
-      take: limit * 5, // over-fetch because we group by clip, not user
-    });
-
-    // Resolve clip → user
-    const clipIds = rows.map((r) => r.clipId);
-    const clips = await this.prisma.clip.findMany({
-      where: { id: { in: clipIds } },
-      select: { id: true, video: { select: { userId: true } } },
-    });
-    const clipUserMap = new Map(clips.map((c) => [c.id, c.video.userId]));
-
-    const userTotals = new Map<number, number>();
-    for (const row of rows) {
-      const uid = clipUserMap.get(row.clipId);
-      if (uid !== undefined) {
-        userTotals.set(uid, (userTotals.get(uid) ?? 0) + (row._sum.amount ?? 0));
-      }
-    }
-
-    return Array.from(userTotals.entries())
-      .map(([userId, total]) => ({ userId, total }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, limit);
   constructor(
-    private prisma: PrismaService,
-    private currencyConversion: CurrencyConversionService,
-    private redisService: RedisService,
-    private config: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly currencyConversion: CurrencyConversionService,
+    private readonly redisService: RedisService,
+    private readonly config: ConfigService,
   ) {}
 
   private getCacheKey(userId: number, targetCurrency: Currency): string {
@@ -110,7 +29,11 @@ export class EarningsAggregationService {
     const currencies = Object.values(Currency);
     for (const currency of currencies) {
       const key = this.getCacheKey(userId, currency);
-      await this.redisService.del(key);
+      try {
+        await this.redisService.del(key);
+      } catch (err) {
+        this.logger.error(`Redis error deleting cache: ${err.message}`);
+      }
     }
   }
 
@@ -160,10 +83,14 @@ export class EarningsAggregationService {
   ) {
     const cacheKey = this.getCacheKey(userId, targetCurrency);
 
-    const cached = await this.redisService.get(cacheKey);
-    if (cached) {
-      this.logger.log(`Cache hit for user ${userId} earnings total in ${targetCurrency}`);
-      return JSON.parse(cached);
+    try {
+      const cached = await this.redisService.get(cacheKey);
+      if (cached) {
+        this.logger.log(`Cache hit for user ${userId} earnings total in ${targetCurrency}`);
+        return JSON.parse(cached);
+      }
+    } catch (err) {
+      this.logger.error(`Redis error reading cache: ${err.message}`);
     }
 
     this.logger.log(`Cache miss for user ${userId} earnings total in ${targetCurrency}`);
@@ -180,7 +107,11 @@ export class EarningsAggregationService {
       currency: targetCurrency,
     };
 
-    await this.redisService.setex(cacheKey, this.config.earningsCacheTtlSeconds, JSON.stringify(result));
+    try {
+      await this.redisService.setex(cacheKey, this.config.earningsCacheTtlSeconds ?? 3600, JSON.stringify(result));
+    } catch (err) {
+      this.logger.error(`Redis error writing cache: ${err.message}`);
+    }
 
     return result;
   }
@@ -396,7 +327,9 @@ export class EarningsAggregationService {
   async softDelete(earningId: number, userId: number) {
     const earning = await this.prisma.earning.findUnique({
       where: { id: earningId },
-      include: { clip: { include: { video: { select: { userId: true } } } } },
+      include: {
+        clip: { include: { video: { select: { userId: true } } } },
+      },
     });
 
     if (!earning || earning.clip.video.userId !== userId) {
