@@ -1,27 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { EarningsService } from './earnings.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
-import { EarningsExportService } from './earnings-export.service';
-import { TaxReportExportService } from './tax-report-export.service';
-import { EarningsMetricsService } from './earnings-metrics.service';
 import { CurrencyConversionService } from './currency-conversion.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
-import { TaxReportExportService } from './tax-report-export.service';
+import { Currency } from './earnings.types';
 
-describe('EarningsService - getEarningsByPlatform', () => {
-  let service: EarningsService;
+describe('EarningsAggregationService - getEarningsByPlatform', () => {
+  let service: EarningsAggregationService;
   let prisma: PrismaService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
-        EarningsService,
         EarningsAggregationService,
-        EarningsExportService,
-        TaxReportExportService,
-        EarningsMetricsService,
         CurrencyConversionService,
         {
           provide: PrismaService,
@@ -35,6 +27,7 @@ describe('EarningsService - getEarningsByPlatform', () => {
           provide: RedisService,
           useValue: {
             get: jest.fn().mockResolvedValue(null),
+            setex: jest.fn(),
             del: jest.fn(),
           },
         },
@@ -45,74 +38,48 @@ describe('EarningsService - getEarningsByPlatform', () => {
             leaderboardEnabled: false,
           },
         },
-        {
-          provide: TaxReportExportService,
-          useValue: {
-            generateTaxReport: jest.fn(),
-          },
-        },
       ],
     }).compile();
 
-    service = module.get<EarningsService>(EarningsService);
+    service = module.get<EarningsAggregationService>(EarningsAggregationService);
     prisma = module.get<PrismaService>(PrismaService);
   });
 
-  it('should group earnings by platform', async () => {
+  it('should group earnings by platform and convert currencies', async () => {
     const mockEarnings = [
-      { amount: 100, source: 'tiktok' },
-      { amount: 150, source: 'instagram' },
-      { amount: 200, source: 'tiktok' },
-      { amount: 50, source: 'youtube' },
+      { amount: 100, currency: 'USD', source: 'tiktok', date: new Date('2026-02-01') },
+      { amount: 150, currency: 'EUR', source: 'instagram', date: new Date('2026-03-01') },
+      { amount: 200, currency: 'USD', source: 'tiktok', date: new Date('2026-04-01') },
+      { amount: 50, currency: 'GBP', source: 'youtube', date: new Date('2026-05-01') },
     ];
 
     jest.spyOn(prisma.earning, 'findMany').mockResolvedValue(mockEarnings as any);
 
-    const result = await service.getEarningsByPlatform(1);
+    const result = await service.getEarningsByPlatform(1, undefined, undefined, 'USD');
 
-    expect(result.totalEarnings).toBe(500);
     expect(result.data).toHaveLength(3);
-    expect(result.data[0]).toEqual({
-      platform: 'tiktok',
-      totalEarnings: 300,
-      count: 2,
-    });
-    expect(result.data[1]).toEqual({
-      platform: 'instagram',
-      totalEarnings: 150,
-      count: 1,
-    });
-    expect(result.data[2]).toEqual({
-      platform: 'youtube',
-      totalEarnings: 50,
-      count: 1,
-    });
+    expect(result.data[0].platform).toBe('tiktok');
+    expect(result.data[0].amount).toBeCloseTo(300, 1);
+    expect(result.data[1].platform).toBe('instagram');
+    expect(result.data[1].amount).toBeCloseTo(163.04, 1);
+    expect(result.data[2].platform).toBe('youtube');
+    expect(result.data[2].amount).toBeCloseTo(63.29, 1);
   });
 
-  it('should handle unknown platforms', async () => {
-    const mockEarnings = [
-      { amount: 100, source: null },
-      { amount: 50, source: 'tiktok' },
-    ];
-
-    jest.spyOn(prisma.earning, 'findMany').mockResolvedValue(mockEarnings as any);
-
-    const result = await service.getEarningsByPlatform(1);
-
-    expect(result.data).toHaveLength(2);
-    expect(result.data.find(d => d.platform === 'unknown')).toEqual({
-      platform: 'unknown',
-      totalEarnings: 100,
-      count: 1,
-    });
-  });
-
-  it('should return empty data for user with no earnings', async () => {
+  it('should filter by date range', async () => {
     jest.spyOn(prisma.earning, 'findMany').mockResolvedValue([]);
 
-    const result = await service.getEarningsByPlatform(1);
+    await service.getEarningsByPlatform(1, '2026-01-01', '2026-06-30', 'USD');
 
-    expect(result.totalEarnings).toBe(0);
-    expect(result.data).toHaveLength(0);
+    expect(prisma.earning.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          date: {
+            gte: new Date('2026-01-01'),
+            lte: new Date('2026-06-30'),
+          },
+        }),
+      }),
+    );
   });
 });

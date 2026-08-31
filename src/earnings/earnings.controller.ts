@@ -220,6 +220,9 @@ export class EarningsController {
     summary: 'Get earnings broken down by platform',
     description: 'Returns earnings grouped by source platform (tiktok, instagram, etc.).',
   })
+  @ApiQuery({ name: 'from', required: false, type: String, description: 'ISO 8601 start date (e.g. 2026-01-01)' })
+  @ApiQuery({ name: 'to', required: false, type: String, description: 'ISO 8601 end date (e.g. 2026-08-24)' })
+  @ApiQuery({ name: 'currency', required: false, enum: Currency, description: 'Target currency (default: USD)' })
   @ApiResponse({
     status: 200,
     description: 'Platform earnings breakdown',
@@ -232,18 +235,33 @@ export class EarningsController {
             type: 'object',
             properties: {
               platform: { type: 'string', example: 'tiktok' },
-              totalEarnings: { type: 'number', example: 500.0 },
-              count: { type: 'number', example: 12 },
+              amount: { type: 'number', example: 500.0 },
+              currency: { type: 'string', example: 'USD' },
             },
           },
         },
-        totalEarnings: { type: 'number', example: 1250.5 },
       },
     },
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  async getEarningsByPlatform(@Req() req: AuthRequest) {
-    return this.earningsAggregationService.getEarningsByPlatform(req.user.userId);
+  async getEarningsByPlatform(
+    @Req() req: AuthRequest,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('currency') currency?: string,
+  ) {
+    if (currency) {
+      const targetCurrency = currency.toUpperCase() as Currency;
+      if (!Object.values(Currency).includes(targetCurrency)) {
+        throw new BadRequestException(`Unsupported currency: ${currency}`);
+      }
+    }
+    return this.earningsAggregationService.getEarningsByPlatform(
+      req.user.userId,
+      from,
+      to,
+      currency,
+    );
   }
 
   // ── Export ───────────────────────────────────────────────────────────────
