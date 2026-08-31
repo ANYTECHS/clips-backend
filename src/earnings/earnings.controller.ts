@@ -59,6 +59,27 @@ export class EarningsController {
 
   // ── Aggregation ─────────────────────────────────────────────────────────
 
+  @Get()
+  @ApiOperation({
+    summary: 'Get user earnings total (cached)',
+    description: 'Returns the cached total earnings for the authenticated user.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Cached user earnings total',
+    schema: {
+      type: 'object',
+      properties: {
+        total: { type: 'number', example: 2500.5 },
+        currency: { type: 'string', example: 'USD' },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  async getEarningsTotal(@Req() req: AuthRequest) {
+    return this.earningsService.getUserTotalEarningsCached(req.user.userId);
+  }
+
   @Get('dashboard')
   @ApiOperation({
     summary: 'Get earnings dashboard',

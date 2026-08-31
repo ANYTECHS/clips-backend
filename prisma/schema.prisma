@@ -4,6 +4,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -542,6 +543,8 @@ model NftMetadataRefresh {
 
   @@index([tokenId])
   @@index([tokenId, refreshedAt])
+}
+
 /// Tracks submitted Soroban / Stellar transaction hashes until confirmed or
 /// failed (Issue #846). Status is one of: pending | confirmed | failed.
 model TrackedTransaction {
@@ -560,6 +563,8 @@ model TrackedTransaction {
   @@index([status])
   @@index([lastCheckedAt])
   @@index([userId])
+}
+
 /// Historical royalty claims by NFT creators (Issue #840).
 /// Populated from on-chain `RoyaltyClaimed` events by the Soroban indexer.
 model RoyaltyClaim {
