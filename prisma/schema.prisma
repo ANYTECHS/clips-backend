@@ -97,9 +97,39 @@ model Clip {
   earnings      Earning[]
   clipPosts     ClipPost[]
   royalty       ClipRoyalty?
+  mintStatus    NftMintStatus?
 
   @@index([videoId])
   @@index([selected])
+}
+
+/// Tracks the full minting lifecycle for a single clip.
+/// One row is created when minting begins and updated as stages progress.
+model NftMintStatus {
+  id               Int       @id @default(autoincrement())
+  clipId           Int       @unique
+  /// Current lifecycle stage.
+  /// Values: 'none' | 'upload' | 'prepare' | 'submit' | 'confirm' | 'fail'
+  stage            String    @default("none")
+  /// On-chain transaction hash (set after submit stage)
+  txHash           String?
+  /// Number of retry attempts so far
+  retryCount       Int       @default(0)
+  /// Next allowed retry timestamp (for exponential backoff)
+  nextRetryAt      DateTime?
+  /// Human-readable failure reason when stage = 'fail'
+  failureReason    String?
+  /// Whether permanently failed (max retries exceeded)
+  permanentFailure Boolean   @default(false)
+  /// IPFS CID / metadata URI (set after upload stage)
+  metadataUri      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  clip             Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@index([stage])
+  @@index([permanentFailure])
 }
 
 model ClipRoyalty {

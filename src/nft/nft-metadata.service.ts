@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { NftMetadata } from './ipfs-upload.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 
-interface ClipData {
+export interface ClipData {
   id: number;
   title: string | null;
   caption: string | null;
@@ -23,9 +23,31 @@ interface ClipData {
   creatorHandle?: string;
 }
 
+/** Result of building metadata plus uploading it to IPFS */
+export interface MetadataUploadResult {
+  metadata: NftMetadata;
+  cid: string;
+  metadataUri: string;
+  clipId: number;
+}
+
+/** Preview response wraps metadata with a flag indicating it has not been uploaded yet */
+export interface MetadataPreviewResult {
+  metadata: NftMetadata;
+  preview: true;
+  clipId: number;
+}
+
 /**
- * Builds the NFT metadata JSON (OpenSea-compatible) for a given clip
- * before it is uploaded to IPFS.
+ * Builds and manages the NFT metadata JSON (OpenSea-compatible) for a given
+ * clip before it is uploaded to IPFS.
+ *
+ * Closes #862 — centralises all metadata JSON generation including:
+ * - Standard NFT fields (name, description, image, animation_url)
+ * - Rich attributes (duration, virality, tags, platforms, royalty)
+ * - Royalty information (bps, percent, recipient, asset)
+ * - Preview endpoint support
+ * - Upload result attachment
  */
 @Injectable()
 export class NftMetadataService {
@@ -97,6 +119,39 @@ export class NftMetadataService {
       viralityScore: clip.viralityScore ?? 0,
       originalDuration: clip.duration,
       createdAt: clip.createdAt.toISOString(),
+    };
+  }
+
+  /**
+   * Build a metadata preview for a clip without uploading to IPFS.
+   * Useful for the GET /nfts/:id/metadata-preview endpoint.
+   *
+   * Closes #862 — document metadata preview endpoint.
+   */
+  buildPreview(clip: ClipData): MetadataPreviewResult {
+    return {
+      metadata: this.build(clip),
+      preview: true,
+      clipId: clip.id,
+    };
+  }
+
+  /**
+   * Attach an upload result (CID + URI) to a metadata object.
+   * Called by NftMintService after uploading to IPFS.
+   *
+   * Closes #862 — document metadata upload response containing IPFS CID/URI.
+   */
+  attachUploadResult(
+    clip: ClipData,
+    cid: string,
+    metadataUri: string,
+  ): MetadataUploadResult {
+    return {
+      metadata: this.build(clip),
+      cid,
+      metadataUri,
+      clipId: clip.id,
     };
   }
 }
