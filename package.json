@@ -116,6 +116,8 @@
     "moduleNameMapper": {
       "^@prisma/client$": "<rootDir>/__mocks__/@prisma/client.ts",
       "^cockatiel$": "<rootDir>/__mocks__/cockatiel.ts",
+      "^@clipcash/shared$": "<rootDir>/shared/index.ts",
+      "^@clipcash/shared/(.*)$": "<rootDir>/shared/$1",
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "collectCoverageFrom": [
