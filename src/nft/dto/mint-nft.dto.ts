@@ -23,8 +23,8 @@ export class MintNftDto {
     example: 42,
     minimum: 1,
   })
-  @IsInt()
-  @Min(1)
+  @IsInt({ message: 'clipId must be an integer' })
+  @Min(1, { message: 'clipId must be a positive integer (≥ 1)' })
   @Type(() => Number)
   clipId: number;
 
@@ -34,8 +34,8 @@ export class MintNftDto {
       'Stellar wallet address of the NFT creator (receives creator royalty)',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: 'creatorWallet must be a string' })
+  @IsNotEmpty({ message: 'creatorWallet (Stellar address) is required' })
   creatorWallet: string;
 
   /** Optional IPFS / Arweave metadata URI — built automatically if omitted */
@@ -45,7 +45,7 @@ export class MintNftDto {
     example: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
   })
   @IsOptional()
-  @IsUrl()
+  @IsUrl({}, { message: 'metadataUri must be a valid URL (e.g. ipfs://... or https://...)' })
   metadataUri?: string;
 
   /**
@@ -62,9 +62,9 @@ export class MintNftDto {
     maximum: 1500,
   })
   @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1500)
+  @IsInt({ message: 'royaltyBps must be an integer' })
+  @Min(0, { message: 'royaltyBps must be at least 0 (0%)' })
+  @Max(1500, { message: 'royaltyBps must not exceed 1500 (15%)' })
   @Type(() => Number)
   royaltyBps?: number;
 
@@ -78,7 +78,7 @@ export class MintNftDto {
     example: 'Creator',
   })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'creatorLabel must be a string' })
   creatorLabel?: string;
 
   /**
@@ -92,6 +92,6 @@ export class MintNftDto {
     example: '10% creator royalty + 2% platform fee on every secondary sale.',
   })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'royaltyDescription must be a string' })
   royaltyDescription?: string;
 }
