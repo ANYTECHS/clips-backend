@@ -30,6 +30,7 @@ import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
 import {
+  PayoutOnChainStatusResponseDto,
   PayoutProcessResponseDto,
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
@@ -340,6 +341,7 @@ export class PayoutsController {
     status: 200,
     description:
       'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+    type: PayoutOnChainStatusResponseDto,
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async getOnChainStatus(

@@ -372,6 +372,7 @@ export class PayoutsService {
       select: {
         id: true,
         status: true,
+        method: true,
         onChainTxHash: true,
         confirmedAt: true,
       },
@@ -381,7 +382,8 @@ export class PayoutsService {
       throw new NotFoundException('Payout record not found');
     }
 
-    let onChain = { found: false as const };
+    let onChain: { found: boolean; successful?: boolean; confirmedAt?: Date } =
+      { found: false };
 
     if (payout.onChainTxHash && payout.method === 'stellar') {
       try {
