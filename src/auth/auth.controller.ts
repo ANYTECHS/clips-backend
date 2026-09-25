@@ -507,10 +507,43 @@ export class AuthController {
   @Post('logout')
   @ApiOperation({
     summary: 'Logout user',
-    description: 'Revokes refresh token and clears cookies',
+    description:
+      'Revokes the refresh token and clears auth cookies. No bearer token is required: ' +
+      'the refresh token is read from the request body or, if omitted, from the `refresh_token` cookie. ' +
+      'Idempotent — succeeds even if no token is supplied.',
   })
-  @ApiBody({ type: RefreshTokenDto })
-  @ApiResponse({ status: 204, description: 'Logout successful' })
+  @ApiBody({
+    type: RefreshTokenDto,
+    required: false,
+    examples: {
+      body: {
+        summary: 'Refresh token in body',
+        value: { refreshToken: 'd1f0c3a2-7b4e-4c9a-9f1e-2a6b8c0d4e5f' },
+      },
+      cookie: { summary: 'Refresh token in cookie (empty body)', value: {} },
+    },
+  })
+  @ApiResponse({
+    status: 204,
+    description: 'Logout successful; cookies cleared',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Validation failed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed',
+        error: 'Bad Request',
+        details: [
+          {
+            field: 'refreshToken',
+            errors: ['refreshToken must be a string'],
+          },
+        ],
+      },
+    },
+  })
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @Body(new ValidationPipe({ transform: true })) dto: RefreshTokenDto,
