@@ -177,11 +177,12 @@ export class PayoutsController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid request, insufficient balance, or amount below the minimum payout threshold',
+      'Invalid request, insufficient balance, or amount below the minimum payout threshold ' +
+      '(MIN_STELLAR_PAYOUT, USD equivalent, default 5)',
     schema: {
       example: {
         statusCode: 400,
-        message: ['Minimum payout for USD is 5. Requested amount: 3.', 'Maximum payout for USD is 10000.'],
+        message: 'Minimum payout amount is 5 USD equivalent. Requested: 3 USD.',
         error: 'Bad Request',
       },
     },

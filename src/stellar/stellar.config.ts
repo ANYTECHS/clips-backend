@@ -3,7 +3,8 @@ import { Injectable } from '@nestjs/common';
 /**
  * All Stellar-related configuration read from environment variables.
  *
- * STELLAR_HORIZON_URL        — Horizon server URL (default: testnet)
+ * STELLAR_NETWORK            — "testnet" (default) or "public" (mainnet)
+ * STELLAR_HORIZON_URL        — Horizon server URL override (default: derived from STELLAR_NETWORK)
  * STELLAR_RECEIVER_ADDRESS   — ClipCash platform account that receives payments
  * STELLAR_ASSET_CODE         — Asset code to accept (e.g. "XLM" or "USDC")
  * STELLAR_ASSET_ISSUER       — Issuer address for non-native assets (empty = XLM)
@@ -26,8 +27,13 @@ export class StellarConfig {
   readonly planAmounts: Record<string, string>;
 
   constructor() {
+    const isPublic =
+      (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase() === 'public';
     this.horizonUrl =
-      process.env.STELLAR_HORIZON_URL ?? 'https://horizon-testnet.stellar.org';
+      process.env.STELLAR_HORIZON_URL ??
+      (isPublic
+        ? 'https://horizon.stellar.org'
+        : 'https://horizon-testnet.stellar.org');
     this.receiverAddress = process.env.STELLAR_RECEIVER_ADDRESS ?? '';
     this.assetCode = process.env.STELLAR_ASSET_CODE ?? 'XLM';
     this.assetIssuer = process.env.STELLAR_ASSET_ISSUER ?? '';
