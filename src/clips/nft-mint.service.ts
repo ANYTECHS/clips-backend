@@ -97,7 +97,7 @@ export class NftMintService {
     if (!addrValidation.valid) throw new BadRequestException(addrValidation.message ?? `Invalid wallet address`);
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress) throw new ConflictException(`Clip ${clipId} already minted`);
+    if (clip.mintAddress || clip.nftStatus === 'minted') throw new ConflictException(`Clip ${clipId} already minted`);
     if (this.isPosted(clip.postStatus)) throw new BadRequestException(`Posted clips cannot be minted`);
     let metadataUri = clip.metadataUri;
     if (!metadataUri) metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
@@ -221,7 +221,9 @@ export class NftMintService {
 
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress) throw new ConflictException(`Clip ${clipId} is already minted`);
+    if (clip.mintAddress || clip.nftStatus === 'minted') {
+      throw new ConflictException(`Clip ${clipId} is already minted`);
+    }
     if (this.isPosted(clip.postStatus)) {
       throw new BadRequestException(`Posted clips cannot be minted. Clip ${clipId} has already been posted.`);
     }
