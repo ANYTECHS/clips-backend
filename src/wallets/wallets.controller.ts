@@ -227,7 +227,20 @@ export class WalletsController {
       'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
       'If a wallet with the same address+chain already exists it is re-activated.',
   })
-  @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
+  @ApiResponse({
+    status: 200,
+    description: 'Wallet connected successfully',
+    schema: {
+      example: {
+        id: 1,
+        userId: 7,
+        address: 'GBRP...OX2H',
+        chain: 'stellar',
+        type: 'freighter',
+        isActive: true,
+      },
+    },
+  })
   @ApiBadRequestResponse({
     description: 'Invalid wallet data or signature verification failed',
   })
