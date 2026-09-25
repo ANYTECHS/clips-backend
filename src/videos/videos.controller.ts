@@ -5,14 +5,18 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { ClipsService } from '../clips/clips.service';
 import { Auth } from '../auth/decorators/auth.decorator';
 
 @ApiTags('videos')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiBadRequestResponse({ description: 'Invalid request parameters' })
+@ApiUnauthorizedResponse({ description: 'JWT token required' })
+@ApiNotFoundResponse({ description: 'Video not found' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Auth()
 @Controller('videos')
