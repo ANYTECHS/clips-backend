@@ -22,6 +22,12 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiBody,
+  ApiBadRequestResponse,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiConflictResponse,
+  ApiTooManyRequestsResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -48,6 +54,12 @@ import {
 import { CsrfService } from '../csrf/csrf.service';
 
 @ApiTags('auth')
+@ApiBadRequestResponse({ description: 'Invalid input or validation error' })
+@ApiUnauthorizedResponse({ description: 'Authentication required' })
+@ApiForbiddenResponse({ description: 'Insufficient permissions' })
+@ApiNotFoundResponse({ description: 'Resource not found' })
+@ApiConflictResponse({ description: 'Resource already exists' })
+@ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('auth')
 export class AuthController {

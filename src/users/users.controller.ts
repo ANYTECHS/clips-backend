@@ -11,7 +11,10 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiConflictResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
@@ -21,7 +24,11 @@ import { UserResponseDto } from './dto/user-responses.dto';
 
 @ApiTags('users')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiBadRequestResponse({ description: 'Invalid request parameters' })
+@ApiUnauthorizedResponse({ description: 'JWT token required' })
+@ApiForbiddenResponse({ description: 'Insufficient permissions' })
+@ApiNotFoundResponse({ description: 'User not found' })
+@ApiConflictResponse({ description: 'Resource already exists' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('users')
 @Auth()
