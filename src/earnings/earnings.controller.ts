@@ -24,6 +24,7 @@ import {
   ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { EarningsService } from './earnings.service';
@@ -47,6 +48,7 @@ interface AuthRequest extends Request {
  */
 @ApiTags('earnings')
 @ApiBearerAuth('access-token')
+@ApiStandardErrors()
 @Auth()
 @Controller('earnings')
 export class EarningsController {

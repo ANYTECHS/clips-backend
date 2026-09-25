@@ -24,6 +24,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
@@ -48,6 +49,7 @@ const validationErrorSchema = API_ERROR_SCHEMA;
 
 @ApiTags('payout')
 @ApiBearerAuth('access-token')
+@ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
 @ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })
 @Controller('payouts')
