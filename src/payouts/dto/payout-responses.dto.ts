@@ -107,6 +107,62 @@ export class PayoutProcessResponseDto {
   confirmedAt?: Date;
 }
 
+export class HorizonTxStatusDto {
+  @ApiProperty({
+    example: true,
+    description: 'Whether the transaction was found on the Stellar network',
+  })
+  found: boolean;
+
+  @ApiPropertyOptional({
+    example: true,
+    description:
+      'Whether the transaction succeeded on-chain (present when found)',
+  })
+  successful?: boolean;
+
+  @ApiPropertyOptional({
+    example: '2026-07-27T12:05:00.000Z',
+    description: 'Ledger close time of the transaction (present when found)',
+  })
+  confirmedAt?: Date;
+}
+
+export class PayoutOnChainStatusResponseDto {
+  @ApiProperty({ example: 1, description: 'Payout ID' })
+  id: number;
+
+  @ApiProperty({
+    example: 'completed',
+    enum: ['pending', 'completed', 'failed'],
+    description:
+      'Payout status. pending = awaiting on-chain confirmation, completed = confirmed on-chain, failed = transaction failed or was not found',
+  })
+  status: string;
+
+  @ApiProperty({
+    example: 'a1b2c3d4e5f6...',
+    nullable: true,
+    type: String,
+    description: 'On-chain Stellar transaction hash',
+  })
+  onChainTxHash: string | null;
+
+  @ApiProperty({
+    example: '2026-07-27T12:05:00.000Z',
+    nullable: true,
+    type: Date,
+    description: 'Time the background verification job confirmed the payout',
+  })
+  confirmedAt: Date | null;
+
+  @ApiProperty({
+    type: HorizonTxStatusDto,
+    description: 'Live transaction status queried from Horizon',
+  })
+  onChain: HorizonTxStatusDto;
+}
+
 export class RejectPayoutDto {
   @ApiPropertyOptional({
     description: 'Reason for rejecting the payout',
