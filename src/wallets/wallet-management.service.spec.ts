@@ -364,6 +364,6 @@ describe('WalletManagementService.connect', () => {
     });
 
     expect(result.address).not.toBe(fullAddress);
-    expect(result.address).toContain('****');
+    expect(result.address).toContain('...');
   });
 });
