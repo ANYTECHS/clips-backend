@@ -94,7 +94,7 @@ export class NftRoyaltyResponseDto {
 
   @ApiProperty({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GC6X********UTZF3',
+    example: 'GABC...X92K',
   })
   recipient: string;
 }
@@ -299,7 +299,7 @@ export class NftRoyaltyInfoDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GC6X********UTZF3',
+    example: 'GABC...X92K',
   })
   recipient?: string;
 }
@@ -324,6 +324,7 @@ export class NftMetadataResponseDto {
       { trait_type: 'Clip Duration', value: 34 },
       { trait_type: 'Virality Score', value: 87 },
       { trait_type: 'Creation Date', value: '2026-07-20T09:30:00.000Z' },
+      { trait_type: 'Posted Platforms', value: 'tiktok, youtube' },
       { trait_type: 'Royalty BPS', value: 1000 },
       { trait_type: 'Royalty Percent', value: 10 },
     ],
@@ -335,7 +336,7 @@ export class NftMetadataResponseDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address receiving the fee',
-    example: 'GC6X********UTZF3',
+    example: 'GABC...X92K',
   })
   fee_recipient?: string;
 
@@ -345,6 +346,9 @@ export class NftMetadataResponseDto {
   })
   royalty: NftRoyaltyInfoDto;
 
+  @ApiProperty({ example: 34, description: 'Clip duration in seconds' })
+  duration: number;
+
   @ApiPropertyOptional({ example: 87, description: 'Clip virality score' })
   viralityScore?: number;
 
@@ -353,4 +357,11 @@ export class NftMetadataResponseDto {
 
   @ApiPropertyOptional({ example: '2026-07-20T09:30:00.000Z', description: 'Creation timestamp' })
   createdAt?: string;
+
+  @ApiProperty({
+    example: ['tiktok', 'youtube'],
+    description: 'Platforms the clip targets',
+    type: [String],
+  })
+  platforms: string[];
 }

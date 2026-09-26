@@ -116,9 +116,11 @@ export class NftMetadataService {
         asset: asset.code,
         ...(asset.contractId ? { assetContractId: asset.contractId } : {}),
       },
+      duration: clip.duration,
       viralityScore: clip.viralityScore ?? 0,
       originalDuration: clip.duration,
       createdAt: clip.createdAt.toISOString(),
+      platforms: clip.platforms ?? [],
     };
   }
 
