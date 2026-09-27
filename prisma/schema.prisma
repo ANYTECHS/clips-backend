@@ -177,6 +177,10 @@ model Earning {
   createdAt             DateTime  @default(now())
   deletedAt             DateTime?
   clip                  Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@index([deletedAt])
+  @@index([date])
 }
 
 model UserPlatform {

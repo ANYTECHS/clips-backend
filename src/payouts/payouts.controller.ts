@@ -390,12 +390,13 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Download payout receipt as PDF',
     description:
-      'Downloads the payout receipt as a PDF file. Receipt must exist for the payout.',
+      'Downloads the payout receipt as a PDF file for a completed payout owned by the authenticated user. ' +
+      'Requires authentication. Only the payout owner can access the receipt.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
-    description: 'PDF receipt file',
+    description: 'PDF receipt file (application/pdf)',
     content: {
       'application/pdf': {
         schema: {
@@ -405,8 +406,12 @@ export class PayoutsController {
       },
     },
   })
-  @ApiNotFoundResponse({ description: 'Payout or receipt not found' })
-  @ApiBadRequestResponse({ description: 'Receipt generation failed' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — missing or invalid access token' })
+  @ApiNotFoundResponse({ description: 'Payout not found or not owned by the authenticated user' })
+  @ApiConflictResponse({
+    description:
+      'Receipt is not yet available — payout is not completed, or receipt metadata has not been generated yet',
+  })
   async getPayoutReceipt(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,

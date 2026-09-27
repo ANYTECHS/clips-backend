@@ -14,6 +14,7 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
 import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { PayoutValidationService } from './payout-validation.service';
+import { MAX_BULK_PAYOUT_BATCH_SIZE } from './payouts.constants';
 
 @Injectable()
 export class PayoutProcessingService {
@@ -328,11 +329,26 @@ export class PayoutProcessingService {
   async batchProcessPayouts(payoutIds: number[]): Promise<{
     processed: number; failed: number; results: Array<{ id: number; status: string; error?: string }>;
   }> {
+    if (!Array.isArray(payoutIds) || payoutIds.length === 0) {
+      throw new BadRequestException('At least one payout ID is required');
+    }
+
+    if (payoutIds.length > MAX_BULK_PAYOUT_BATCH_SIZE) {
+      throw new BadRequestException(
+        `Maximum batch size is ${MAX_BULK_PAYOUT_BATCH_SIZE} payout IDs`,
+      );
+    }
+
+    const uniqueIds = [...new Set(payoutIds)];
     const results: Array<{ id: number; status: string; error?: string }> = [];
     let processed = 0;
     let failed = 0;
 
-    for (const payoutId of payoutIds) {
+    this.logger.log(
+      `Bulk payout processing started for ${uniqueIds.length} payout(s)`,
+    );
+
+    for (const payoutId of uniqueIds) {
       try {
         await this.prisma.$transaction(async (tx) => {
           const payout = await tx.payout.findUnique({
@@ -342,6 +358,10 @@ export class PayoutProcessingService {
 
           if (!payout) {
             throw new NotFoundException('Payout record not found');
+          }
+
+          if (payout.deletedAt !== null) {
+            throw new BadRequestException('Payout has been deleted and is not eligible');
           }
 
           if (payout.status !== 'approved') {
@@ -452,6 +472,10 @@ export class PayoutProcessingService {
         failed++;
       }
     }
+
+    this.logger.log(
+      `Bulk payout processing finished: processed=${processed}, failed=${failed}`,
+    );
 
     return { processed, failed, results };
   }

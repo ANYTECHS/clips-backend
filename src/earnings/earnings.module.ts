@@ -3,6 +3,7 @@ import { EarningsService } from './earnings.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { EarningsExportService } from './earnings-export.service';
 import { EarningsController } from './earnings.controller';
+import { AdminEarningsController } from './admin-earnings.controller';
 import { AnomalyDetectionService } from './anomaly-detection.service';
 import { AnomalyDetectionProcessor } from './anomaly-detection.processor';
 import { EarningsGateway } from './earnings.gateway';
@@ -25,7 +26,7 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule,
     EarningsGatewayModule,
   ],
-  controllers: [EarningsController],
+  controllers: [EarningsController, AdminEarningsController],
   providers: [
     EarningsService,
     EarningsAggregationService,

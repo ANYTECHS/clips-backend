@@ -558,8 +558,8 @@ export class PayoutsService {
     }
 
     if (payout.status !== 'completed') {
-      throw new BadRequestException(
-        'Receipt is only available for completed payouts',
+      throw new ConflictException(
+        'Receipt is not yet available — payout is not completed',
       );
     }
 
@@ -569,7 +569,9 @@ export class PayoutsService {
     });
 
     if (!receipt) {
-      throw new NotFoundException('Receipt not found for this payout');
+      throw new ConflictException(
+        'Receipt is not yet available for this payout',
+      );
     }
 
     // Generate PDF on-demand

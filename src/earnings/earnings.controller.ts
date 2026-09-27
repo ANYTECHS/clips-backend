@@ -23,15 +23,23 @@ import {
   ApiUnauthorizedResponse,
   ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
+  ApiNotFoundResponse,
+  ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { EarningsService } from './earnings.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { EarningsExportService } from './earnings-export.service';
 import { LeaderboardService, LeaderboardResponse } from './leaderboard.service';
 import { Currency } from './earnings.types';
 import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
+import {
+  LeaderboardQueryDto,
+  LeaderboardResponseDto,
+  LeaderboardVisibilityDto,
+} from './dto/leaderboard.dto';
 
 interface AuthRequest extends Request {
   user: { userId: number };
@@ -326,47 +334,34 @@ export class EarningsController {
   // ── Leaderboard ─────────────────────────────────────────────────────────
 
   @Get('leaderboard')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Get top creators leaderboard',
+    summary: 'Get top creators earnings leaderboard',
     description:
-      'Returns the top earning creators who have opted in to the leaderboard. ' +
-      'Only includes users with showOnLeaderboard=true and at least one earning.',
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: 'Number of top creators to return (default: 100, max: 500)',
-    type: 'number',
-    example: 100,
+      'Returns paginated top-earning creators who explicitly opted in via showOnLeaderboard=true. ' +
+      'Soft-deleted earnings are excluded. By default display names are anonymized as "Creator #N" ' +
+      'and earnings amounts are exact; set anonymizeEarnings=true to bucket amounts. ' +
+      'Results are cached for ~1 hour.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Top creators leaderboard',
-    schema: {
-      type: 'object',
-      properties: {
-        data: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              rank: { type: 'number', example: 1 },
-              userId: { type: 'number', example: 123 },
-              username: { type: 'string', example: 'creator123' },
-              totalEarnings: { type: 'number', example: 5000 },
-            },
-          },
-        },
-        updatedAt: { type: 'string', format: 'date-time' },
-      },
-    },
+    description: 'Paginated leaderboard of opted-in creators',
+    type: LeaderboardResponseDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Leaderboard feature flag is disabled',
   })
   @ApiInternalServerErrorResponse({ description: 'Internal server error' })
   async getLeaderboard(
-    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query() query: LeaderboardQueryDto,
   ): Promise<LeaderboardResponse> {
-    return this.leaderboardService.getLeaderboard(limit);
+    return this.leaderboardService.getLeaderboard({
+      page: query.page,
+      limit: query.limit,
+      anonymize: query.anonymize,
+      anonymizeEarnings: query.anonymizeEarnings,
+    });
   }
 
   @Get('leaderboard/rank')
@@ -374,7 +369,8 @@ export class EarningsController {
   @ApiOperation({
     summary: "Get user's rank on the leaderboard",
     description:
-      "Returns the authenticated user's rank, total earnings, and leaderboard visibility setting.",
+      "Returns the authenticated user's rank, total earnings, and leaderboard visibility setting. " +
+      'Rank is null when the user has not opted in or has zero earnings.',
   })
   @ApiResponse({
     status: 200,
@@ -396,8 +392,10 @@ export class EarningsController {
   @Post('leaderboard/visibility')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Update leaderboard visibility',
-    description: 'Enable or disable leaderboard visibility for the authenticated user.',
+    summary: 'Update leaderboard visibility (privacy opt-in)',
+    description:
+      'Enable or disable leaderboard participation for the authenticated user. ' +
+      'Only users with showOnLeaderboard=true appear on GET /earnings/leaderboard.',
   })
   @ApiResponse({
     status: 200,
@@ -412,7 +410,7 @@ export class EarningsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async updateLeaderboardVisibility(
     @Req() req: AuthRequest,
-    @Body() body: { showOnLeaderboard: boolean },
+    @Body() body: LeaderboardVisibilityDto,
   ) {
     return this.leaderboardService.setLeaderboardVisibility(
       req.user.userId,
@@ -427,11 +425,16 @@ export class EarningsController {
   @ApiOperation({
     summary: 'Soft-delete an earning record',
     description:
-      'Marks the earning record as deleted (soft delete). Only the owning user can delete their earnings.',
+      'Sets deletedAt instead of permanently deleting the record. ' +
+      'Soft-deleted earnings are excluded from normal queries and aggregations. ' +
+      'Already-deleted or non-owned records return 404. ' +
+      'Admins can restore via POST /admin/earnings/:earningId/restore.',
   })
   @ApiParam({ name: 'earningId', type: Number, description: 'Earning record ID' })
-  @ApiResponse({ status: 200, description: 'Earning deleted successfully' })
-  @ApiBadRequestResponse({ description: 'Earning not found or does not belong to user' })
+  @ApiResponse({ status: 200, description: 'Earning soft-deleted successfully' })
+  @ApiNotFoundResponse({
+    description: 'Earning not found, already soft-deleted, or does not belong to user',
+  })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async deleteEarning(
     @Req() req: AuthRequest,
