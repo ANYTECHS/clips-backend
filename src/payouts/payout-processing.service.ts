@@ -11,7 +11,8 @@ import * as StellarSdk from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
 import { PayoutReceiptService } from './payout-receipt.service';
-import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
+import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { PayoutValidationService } from './payout-validation.service';
 
@@ -24,6 +25,7 @@ export class PayoutProcessingService {
     private readonly stellarService: StellarService,
     private readonly payoutReceiptService: PayoutReceiptService,
     private readonly payoutValidationService: PayoutValidationService,
+    private readonly retryStrategy: PayoutRetryStrategyService,
     @InjectQueue(PAYOUT_RETRY_QUEUE) private readonly payoutRetryQueue: Queue,
   ) {}
 
@@ -293,36 +295,89 @@ export class PayoutProcessingService {
       this.logger.error(`Stellar payout failed for ${payoutId}:`, error);
 
       const newRetryCount = payout.retryCount + 1;
-      const shouldRetry = newRetryCount < MAX_PAYOUT_RETRIES;
+      const failureReason = error instanceof Error ? error.message : String(error);
+      const shouldRetry = this.retryStrategy.shouldRetry(newRetryCount + 1);
+      const nextRetryAt = shouldRetry
+        ? this.retryStrategy.getNextRetryTime(newRetryCount + 1)
+        : null;
 
       await this.prisma.payout.update({
         where: { id: payoutId },
         data: {
-          status: 'failed',
+          status: shouldRetry ? 'pending_retry' : 'failed',
           retryCount: newRetryCount,
           lastAttemptAt: new Date(),
+          failureReason: failureReason.slice(0, 1000),
+          nextRetryAt,
         },
       });
 
-      if (shouldRetry) {
-        const delay = Math.pow(PAYOUT_RETRY_BACKOFF_BASE, newRetryCount) * 1000;
+      if (shouldRetry && nextRetryAt) {
+        const delayMs = Math.max(
+          0,
+          nextRetryAt.getTime() - Date.now(),
+        );
         this.logger.log(
-          `Scheduling retry ${newRetryCount} for payout ${payoutId} in ${delay}ms`,
+          `Scheduling retry ${newRetryCount + 1} for payout ${payoutId} in ${delayMs}ms (nextRetryAt=${nextRetryAt.toISOString()})`,
         );
 
         await this.payoutRetryQueue.add(
           'retry-payout',
           { payoutId },
-          { delay, attempts: MAX_PAYOUT_RETRIES - newRetryCount },
+          {
+            delay: delayMs,
+            attempts: this.retryStrategy.getMaxRetries(),
+            backoff: { type: 'exponential', delay: 60000 },
+          },
         );
       } else {
         this.logger.warn(
-          `Payout ${payoutId} has reached max retries (${MAX_PAYOUT_RETRIES}) and will not be retried`,
+          `Payout ${payoutId} has reached max retries (${this.retryStrategy.getMaxRetries()}) and will not be retried`,
         );
       }
 
       throw new InternalServerErrorException('Failed to process Stellar payout');
     }
+  }
+
+  /**
+   * Manual retry for failed crypto transfers.
+   * Allows POST /payouts/:id/retry for failed/pending_retry payouts.
+   */
+  async retryPayout(payoutId: number, userId?: number) {
+    const payout = await this.prisma.payout.findFirst({
+      where: userId ? { id: payoutId, userId } : { id: payoutId },
+      select: { id: true, status: true, retryCount: true },
+    });
+    if (!payout) {
+      throw new NotFoundException('Payout record not found');
+    }
+    if (!['failed', 'pending_retry'].includes(payout.status)) {
+      throw new BadRequestException(
+        `Only failed payouts can be retried (current status: ${payout.status})`,
+      );
+    }
+    if (!this.retryStrategy.shouldRetry(payout.retryCount + 1)) {
+      throw new BadRequestException(
+        `Max retries (${this.retryStrategy.getMaxRetries()}) exceeded`,
+      );
+    }
+    const nextRetryAt = this.retryStrategy.getNextRetryTime(
+      payout.retryCount + 1,
+    );
+    await this.prisma.payout.update({
+      where: { id: payoutId },
+      data: { status: 'pending_retry', nextRetryAt, failureReason: null },
+    });
+    await this.payoutRetryQueue.add(
+      'retry-payout',
+      { payoutId },
+      {
+        delay: Math.max(0, nextRetryAt.getTime() - Date.now()),
+        attempts: this.retryStrategy.getMaxRetries(),
+      },
+    );
+    return { id: payoutId, status: 'pending_retry', nextRetryAt };
   }
 
   async batchProcessPayouts(payoutIds: number[]): Promise<{
