@@ -285,6 +285,51 @@ export class EarningsController {
     );
   }
 
+  @Get('monthly')
+  @ApiOperation({
+    summary: 'Get monthly earnings summary',
+    description:
+      'Returns the MonthlyEarning summary for year/month (UTC). ' +
+      'Generated automatically on the 1st of each month; falls back to live computation if not yet generated. ' +
+      'Includes total, platform breakdown grouped by currency, and currency info.',
+  })
+  @ApiQuery({ name: 'year', required: true, type: Number, description: 'Full year, e.g. 2026', example: 2026 })
+  @ApiQuery({ name: 'month', required: true, type: Number, description: 'Month 1-12', example: 9 })
+  @ApiResponse({
+    status: 200,
+    description: 'Monthly summary with total, platformBreakdown, currency',
+    schema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'number', example: 1 },
+        year: { type: 'number', example: 2026 },
+        month: { type: 'number', example: 9 },
+        totalAmount: { type: 'number', example: 1250.5 },
+        currency: { type: 'string', example: 'USD' },
+        platformBreakdown: { type: 'object', example: { royalty: 800, subscription: 450.5 } },
+        generated: { type: 'boolean', example: true },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid year/month' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  async getMonthlySummary(
+    @Req() req: AuthRequest,
+    @Query('year') yearStr: string,
+    @Query('month') monthStr: string,
+  ) {
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    if (!Number.isInteger(year) || !Number.isInteger(month)) {
+      throw new BadRequestException('year and month query params are required (e.g. ?year=2026&month=9)');
+    }
+    return this.earningsAggregationService.getMonthlySummary(
+      req.user.userId,
+      year,
+      month,
+    );
+  }
+
   // ── Export ───────────────────────────────────────────────────────────────
 
   @Get('export')
