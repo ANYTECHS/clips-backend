@@ -27,6 +27,7 @@ import { PayoutStateMachineService } from './payout-state-machine.service';
 import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
+import { PayoutExportService } from './payout-export.service';
 import { CommonModule } from '../common/common.module';
 
 @Module({
@@ -55,6 +56,7 @@ import { CommonModule } from '../common/common.module';
   providers: [
     PayoutsService,
     PayoutReceiptService,
+    PayoutExportService,
     FeeService,
     PayoutMethodService,
     SoftDeleteService,

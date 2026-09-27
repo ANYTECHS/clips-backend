@@ -166,7 +166,9 @@ export class PayoutsService {
       amount: payout.amount,
       status: payout.status,
       createdAt: payout.createdAt,
+      fee: payout.feeAmount,
       feeAmount: payout.feeAmount,
+      netAmount: payout.finalAmount,
       finalAmount: payout.finalAmount,
     };
   }
@@ -264,7 +266,9 @@ export class PayoutsService {
       method: payout.method,
       status: payout.status,
       createdAt: payout.createdAt,
+      fee: payout.feeAmount,
       feeAmount: payout.feeAmount,
+      netAmount: payout.finalAmount,
       finalAmount: payout.finalAmount,
     };
   }
@@ -275,7 +279,7 @@ export class PayoutsService {
   ): Promise<any[]> {
     const filterStatus = this.parseStatusFilter(status);
 
-    return this.prisma.payout.findMany({
+    const payouts = await this.prisma.payout.findMany({
       where: {
         userId,
         ...(filterStatus ? { status: filterStatus } : {}),
@@ -301,6 +305,12 @@ export class PayoutsService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    return payouts.map((p) => ({
+      ...p,
+      fee: p.feeAmount,
+      netAmount: p.finalAmount,
+    }));
   }
 
   async getPayoutById(
@@ -337,7 +347,11 @@ export class PayoutsService {
       throw new NotFoundException('Payout record not found');
     }
 
-    return payout;
+    return {
+      ...payout,
+      fee: payout.feeAmount,
+      netAmount: payout.finalAmount,
+    };
   }
 
   private parseStatusFilter(status?: string): string | undefined {
