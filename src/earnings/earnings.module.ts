@@ -15,6 +15,7 @@ import { RedisModule } from '../redis/redis.module';
 import { ConfigModule } from '../config/config.module';
 import { CommonModule } from '../common/common.module';
 import { AuthModule } from '../auth/auth.module';
+import { DailyEarningsModule } from './daily-earnings.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { AuthModule } from '../auth/auth.module';
     CommonModule,
     AuthModule,
     EarningsGatewayModule,
+    DailyEarningsModule,
   ],
   controllers: [EarningsController],
   providers: [

@@ -18,6 +18,7 @@ import { ConfigService } from '../config/config.service';
 import { PayoutReceiptService } from './payout-receipt.service';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 const TX_HASH = 'abc123deadbeef';
 const CONFIRMED_AT = new Date('2025-01-15T10:00:00.000Z');
@@ -53,11 +54,17 @@ const mockQueue = {
 
 const mockPayoutRetryQueue = { add: jest.fn() };
 
+const mockShutdownService = {
+  register: jest.fn(),
+  registerQueue: jest.fn(),
+};
+
 function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingModule> {
   return Test.createTestingModule({
     providers: [
       StellarConfirmationProcessor,
       PayoutsService,
+      { provide: GracefulShutdownService, useValue: mockShutdownService },
       { provide: PrismaService, useValue: mockPrismaService },
       { provide: StellarService, useValue: mockStellarService },
       { provide: CircuitBreakerService, useValue: { execute: jest.fn() } },
@@ -109,8 +116,14 @@ describe('StellarConfirmationProcessor', () => {
 
   describe('onModuleInit', () => {
     it('should schedule a repeatable confirmation poll job', async () => {
+      Object.defineProperty(processor, 'worker', {
+        configurable: true,
+        get: () => ({ name: STELLAR_CONFIRMATION_QUEUE }),
+      });
       await processor.onModuleInit();
 
+      expect(mockShutdownService.register).toHaveBeenCalled();
+      expect(mockShutdownService.registerQueue).toHaveBeenCalledWith(mockQueue);
       expect(mockQueue.add).toHaveBeenCalledWith(
         STELLAR_CONFIRMATION_JOB,
         {},
