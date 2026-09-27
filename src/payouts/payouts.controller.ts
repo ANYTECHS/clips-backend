@@ -15,6 +15,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOperation,
@@ -34,9 +35,12 @@ import {
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
 } from './dto/payout-responses.dto';
+import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
+import { OnChainStatusResponseDto } from './dto/on-chain-status.dto';
 import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
+import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
 
 import { API_ERROR_SCHEMA } from '../common/dtos';
 
@@ -89,7 +93,7 @@ export class PayoutsController {
       'Request to withdraw a specific amount up to the available balance. ' +
       'Amount must be positive and not exceed available balance. ' +
       'Payout status is determined by amount: ' +
-      'below approval threshold → approved, above → pending_review.',
+      'below approval threshold → approved, above → under_review.',
   })
   @ApiBody({
     type: CreatePayoutRequestDto,
@@ -274,14 +278,17 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'List payouts for the authenticated user',
     description:
-      'Returns payout history for the authenticated user. Results can be filtered by payout status.',
+      'Returns paginated payout history for the authenticated user only. ' +
+      'Supports filtering by status (`pending`, `processing`, `completed`, `failed`, `cancelled`, plus review lifecycle statuses).',
   })
   @ApiQuery({
     name: 'status',
     required: false,
-    description: 'Filter by payout status',
+    description:
+      'Filter by payout status. `cancelled` is accepted as an alias of `canceled`.',
     enum: [
       'pending',
+      'under_review',
       'pending_review',
       'pending_approval',
       'approved',
@@ -290,27 +297,70 @@ export class PayoutsController {
       'failed',
       'rejected',
       'canceled',
+      'cancelled',
     ],
     example: 'completed',
   })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-based, default 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Items per page (default 20, max 100)',
+    example: 20,
+  })
   @ApiResponse({
     status: 200,
-    description: 'List of payouts including on-chain tracking fields (status, onChainTxHash, confirmedAt)',
-    type: PayoutResponseDto,
-    isArray: true,
+    description:
+      'Paginated list of the caller\'s payouts including onChainTxHash and confirmedAt',
+    schema: {
+      example: {
+        items: [
+          {
+            id: 1,
+            amount: 120,
+            currency: 'USD',
+            method: 'stellar',
+            status: 'completed',
+            onChainTxHash: 'a1b2c3d4e5f6...',
+            confirmedAt: '2026-07-26T12:05:00.000Z',
+            createdAt: '2026-07-26T12:00:00.000Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPrevPage: false,
+      },
+    },
   })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — JWT required', schema: API_ERROR_SCHEMA })
+  @ApiForbiddenResponse({ description: 'Forbidden', schema: API_ERROR_SCHEMA })
   async listPayouts(
     @Req() req: RequestWithUser,
-    @Query('status') status?: string,
-  ) {
-    return this.payoutsService.getPayouts(req.user.userId, status);
+    @Query() query: ListPayoutsQueryDto,
+  ): Promise<PaginatedResponseDto<PayoutResponseDto>> {
+    return this.payoutsService.getPayouts(
+      req.user.userId,
+      query.status,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   @Get(':id')
   @ApiOperation({
     summary: 'Get a specific payout by ID',
     description:
-      'Returns the current payout status and any stored Stellar transaction metadata.',
+      'Returns payout details for the authenticated owner only. Includes status, onChainTxHash, and confirmedAt.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
@@ -318,8 +368,32 @@ export class PayoutsController {
     description:
       'Payout details including current status, on-chain transaction hash, and confirmation timestamp',
     type: PayoutResponseDto,
+    content: {
+      'application/json': {
+        examples: {
+          completed: {
+            summary: 'Completed Stellar payout',
+            value: {
+              id: 1,
+              amount: 120,
+              currency: 'USD',
+              method: 'stellar',
+              status: 'completed',
+              onChainTxHash: 'a1b2c3d4e5f6...',
+              confirmedAt: '2026-07-26T12:05:00.000Z',
+              createdAt: '2026-07-26T12:00:00.000Z',
+            },
+          },
+        },
+      },
+    },
   })
-  @ApiNotFoundResponse({ description: 'Payout not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — JWT required', schema: API_ERROR_SCHEMA })
+  @ApiForbiddenResponse({ description: 'Forbidden', schema: API_ERROR_SCHEMA })
+  @ApiNotFoundResponse({
+    description: 'Payout not found (missing or not owned by caller)',
+    schema: API_ERROR_SCHEMA,
+  })
   async getPayout(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,
@@ -329,19 +403,63 @@ export class PayoutsController {
 
   @Get(':id/on-chain-status')
   @ApiOperation({
-    summary: 'Get real-time on-chain status for a Stellar payout',
+    summary: 'Verify and return on-chain transaction details for a Stellar payout',
     description:
-      'Queries Horizon directly for the live on-chain confirmation status of a Stellar payout transaction. ' +
-      'Returns the DB record enriched with real-time data from the Stellar network, including whether the ' +
-      'transaction was found, succeeded, and when it was confirmed.',
+      'Queries Horizon for the stored onChainTxHash, verifies transaction success, destination, and amount, ' +
+      'updates payout status (completed/failed), and returns confirmation details including confirmedAt.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
     description:
-      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+      'On-chain verification result with onChainTxHash and confirmation status',
+    type: OnChainStatusResponseDto,
+    content: {
+      'application/json': {
+        examples: {
+          confirmed: {
+            summary: 'Confirmed on-chain',
+            value: {
+              id: 1,
+              status: 'completed',
+              onChainTxHash: 'a1b2c3d4e5f6...',
+              confirmedAt: '2026-07-26T12:05:00.000Z',
+              onChain: {
+                found: true,
+                successful: true,
+                confirmedAt: '2026-07-26T12:05:00.000Z',
+                destination: 'GABCDEF...',
+                transferredAmount: 120,
+              },
+            },
+          },
+        },
+      },
+    },
   })
-  @ApiNotFoundResponse({ description: 'Payout not found' })
+  @ApiNotFoundResponse({
+    description:
+      'Payout not found, or transaction-not-found when the hash is missing from Horizon / not stored',
+    schema: {
+      example: {
+        statusCode: 404,
+        error: 'Not Found',
+        message: 'transaction-not-found',
+      },
+    },
+  })
+  @ApiConflictResponse({
+    description:
+      'verification-conflict — on-chain destination or amount does not match the payout',
+    schema: {
+      example: {
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'verification-conflict',
+        details: 'Amount mismatch: expected 120, got 100',
+      },
+    },
+  })
   async getOnChainStatus(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,

@@ -14,6 +14,7 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
 import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { PayoutValidationService } from './payout-validation.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 
 @Injectable()
 export class PayoutProcessingService {
@@ -24,6 +25,7 @@ export class PayoutProcessingService {
     private readonly stellarService: StellarService,
     private readonly payoutReceiptService: PayoutReceiptService,
     private readonly payoutValidationService: PayoutValidationService,
+    private readonly stellarPayoutVerification: StellarPayoutVerificationService,
     @InjectQueue(PAYOUT_RETRY_QUEUE) private readonly payoutRetryQueue: Queue,
   ) {}
 
@@ -47,7 +49,12 @@ export class PayoutProcessingService {
       throw new NotFoundException('Payout record not found');
     }
 
-    if (payout.status !== 'approved' && payout.status !== 'pending' && payout.status !== 'pending_review') {
+    if (
+      payout.status !== 'approved' &&
+      payout.status !== 'pending' &&
+      payout.status !== 'under_review' &&
+      payout.status !== 'pending_review'
+    ) {
       throw new BadRequestException(
         `Payout must be approved or pending before Stellar initiation (current status: ${payout.status})`,
       );
@@ -229,7 +236,11 @@ export class PayoutProcessingService {
       const txHash = submitResult.hash;
 
       this.logger.log(`Verifying transaction ${txHash} for payout ${payoutId}`);
-      const verification = await this.verifyTransaction(txHash);
+      const verification = await this.verifyTransaction(
+        txHash,
+        payout.wallet.address,
+        payout.finalAmount ?? payout.amount,
+      );
 
       if (!verification.successful) {
         await this.prisma.earningsAuditLog.create({
@@ -387,7 +398,11 @@ export class PayoutProcessingService {
           const txHash = submitResult.hash;
 
           this.logger.log(`Verifying transaction ${txHash} for batch payout ${payoutId}`);
-          const verification = await this.verifyTransaction(txHash);
+          const verification = await this.verifyTransaction(
+            txHash,
+            payout.wallet.address,
+            payout.finalAmount ?? payout.amount,
+          );
 
           if (!verification.successful) {
             await tx.earningsAuditLog.create({
@@ -538,17 +553,28 @@ export class PayoutProcessingService {
 
   private async verifyTransaction(
     txHash: string,
+    expectedDestination?: string,
+    expectedAmount?: number,
   ): Promise<{ successful: boolean; confirmedAt?: Date }> {
     const maxPolls = 3;
     const pollIntervalMs = 1000;
 
     for (let attempt = 1; attempt <= maxPolls; attempt++) {
       try {
-        const status = await this.stellarService.getTransactionStatus(txHash);
-        if (status.found) {
+        const result = await this.stellarPayoutVerification.verifyPayoutTransaction(
+          txHash,
+          {
+            expectedDestination,
+            expectedAmount,
+            throwOnNotFound: false,
+            throwOnConflict: false,
+          },
+        );
+
+        if (result.found) {
           return {
-            successful: !!status.successful,
-            confirmedAt: status.confirmedAt,
+            successful: result.outcome === 'confirmed',
+            confirmedAt: result.confirmedAt,
           };
         }
       } catch (err) {

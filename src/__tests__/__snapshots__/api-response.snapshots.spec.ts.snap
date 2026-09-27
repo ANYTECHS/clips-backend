@@ -1,0 +1,66 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`API response snapshots (#1024) Clips list matches ClipResponseDto / Swagger list item shape 1`] = `
+{
+  "hasNextPage": false,
+  "hasPrevPage": false,
+  "items": [
+    {
+      "clipUrl": "https://res.cloudinary.com/demo/video/upload/v1/clip.mp4",
+      "createdAt": "2026-07-27T12:00:00.000Z",
+      "id": 42,
+      "mintAddress": null,
+      "mintedAt": null,
+      "nftStatus": "none",
+      "royaltyBps": 1000,
+      "selected": false,
+      "thumbnail": "https://res.cloudinary.com/demo/image/upload/v1/thumb.jpg",
+      "updatedAt": "2026-07-27T12:05:00.000Z",
+      "videoId": 7,
+      "viralityScore": 88,
+    },
+  ],
+  "limit": 20,
+  "page": 1,
+  "total": 1,
+  "totalPages": 1,
+}
+`;
+
+exports[`API response snapshots (#1024) Earnings matches documented earnings dashboard response schema 1`] = `
+{
+  "breakdown": {
+    "royalties": 800,
+    "subscriptions": 450.5,
+  },
+  "currency": "USD",
+  "history": [
+    {
+      "amount": 100,
+      "currency": "USD",
+      "date": "2026-07-01T00:00:00.000Z",
+      "type": "royalty",
+    },
+  ],
+  "paidOut": 200,
+  "pendingPayout": 50,
+  "totalEarned": 1250.5,
+}
+`;
+
+exports[`API response snapshots (#1024) Earnings matches documented earnings total response schema 1`] = `
+{
+  "currency": "USD",
+  "total": 2500.5,
+}
+`;
+
+exports[`API response snapshots (#1024) Wallet information matches documented wallet list item shape with masked address 1`] = `
+{
+  "address": "GAAA********AAAWHF",
+  "chain": "stellar",
+  "connectedAt": "2026-07-27T12:00:00.000Z",
+  "id": 1,
+  "type": "freighter",
+}
+`;
