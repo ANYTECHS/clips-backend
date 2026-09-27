@@ -73,6 +73,22 @@ export class CurrencyConversionService {
     return Object.keys(this.conversionRates);
   }
 
+  isSupported(currency: string): boolean {
+    return (currency?.toUpperCase() || '') in this.conversionRates;
+  }
+
+  /**
+   * Validate currency, throwing a 400-style error with supported list.
+   * Keeps aggregations from mixing unknown currencies silently.
+   */
+  validateCurrencyOrThrow(currency: string): void {
+    if (!this.isSupported(currency)) {
+      throw new Error(
+        `Unsupported currency: ${currency}. Supported: ${this.getSupportedCurrencies().join(', ')}`,
+      );
+    }
+  }
+
   /**
    * Update conversion rates (for future use with external API)
    */
