@@ -118,6 +118,7 @@
       "^cockatiel$": "<rootDir>/__mocks__/cockatiel.ts",
       "^@clipcash/shared$": "<rootDir>/shared/index.ts",
       "^@clipcash/shared/(.*)$": "<rootDir>/shared/$1",
+      "^fluent-ffmpeg$": "<rootDir>/../test/__mocks__/fluent-ffmpeg.ts",
       "^(\\.{1,2}/.*)\\.js$": "$1"
     },
     "collectCoverageFrom": [
