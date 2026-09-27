@@ -156,10 +156,10 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Request a payout with specified amount and method',
     description:
-      'Initiates a creator payout. Requires JWT. The requested amount must meet ' +
-      'the minimum payout threshold (default 5 USD equivalent, configurable via ' +
-      'the MIN_STELLAR_PAYOUT environment variable); requests below the threshold ' +
-      'are rejected with a 400 validation error.',
+      'Initiates a creator payout. Requires JWT. The requested amount must fall ' +
+      'within the configured minimum and maximum payout limits for the currency ' +
+      '(defaults: MIN_PAYOUT_USD=5, MAX_PAYOUT_USD=10000; override with ' +
+      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON).',
   })
   @ApiBody({
     type: CreatePayoutDto,
@@ -177,12 +177,25 @@ export class PayoutsController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid request, insufficient balance, or amount below the minimum payout threshold',
+      'Invalid request, insufficient balance, or amount outside min/max payout limits',
     schema: {
-      example: {
-        statusCode: 400,
-        message: ['Minimum payout for USD is 5. Requested amount: 3.', 'Maximum payout for USD is 10000.'],
-        error: 'Bad Request',
+      examples: {
+        belowMinimum: {
+          summary: 'Below minimum payout',
+          value: {
+            statusCode: 400,
+            message: 'Minimum payout for USD is 5. Requested amount: 3.',
+            error: 'Bad Request',
+          },
+        },
+        aboveMaximum: {
+          summary: 'Above maximum payout',
+          value: {
+            statusCode: 400,
+            message: 'Maximum payout for USD is 10000. Requested amount: 15000.',
+            error: 'Bad Request',
+          },
+        },
       },
     },
   })
@@ -196,7 +209,6 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
-      dto.destinations,
     );
   }
 
@@ -229,7 +241,6 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
-      dto.destinations,
     );
   }
 

@@ -138,6 +138,7 @@ describe('EarningsService', () => {
         userId: 5,
         earningId: 10,
         amount: 150,
+        currency: 'USD',
       });
     });
   });

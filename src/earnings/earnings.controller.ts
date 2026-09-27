@@ -62,7 +62,11 @@ export class EarningsController {
   @Get()
   @ApiOperation({
     summary: 'Get user earnings total (cached)',
-    description: 'Returns the cached total earnings for the authenticated user.',
+    description:
+      'Returns the cached total earnings for the authenticated user. ' +
+      'Also used as the REST companion for live dashboard totals; ' +
+      'subscribe to WebSocket namespace `/earnings` for `earnings.updated` events ' +
+      'with payload `{ event, userId, currency, amount, total }` (JWT via handshake.auth.token).',
   })
   @ApiResponse({
     status: 200,
@@ -289,17 +293,67 @@ export class EarningsController {
 
   @Get('export')
   @ApiOperation({
-    summary: 'Export earnings as CSV',
+    summary: 'Export earnings as CSV for tax reporting',
     description:
-      'Downloads a CSV file containing earnings records. ' +
-      'Optionally filter by date range.',
+      'Downloads a CSV file of the authenticated user\'s earnings for an optional date range. ' +
+      'Supported format: csv. Empty results still return a header-only CSV file. ' +
+      'Columns: date, clipTitle, amount, currency, source, transactionId.',
   })
-  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter start date (ISO 8601)', example: '2025-01-01' })
-  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter end date (ISO 8601)', example: '2025-12-31' })
-  @ApiQuery({ name: 'format', required: false, type: String, description: 'Export format — only "csv" is supported', example: 'csv' })
-  @ApiResponse({ status: 200, description: 'CSV file attachment' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @ApiBadRequestResponse({ description: 'Unsupported export format' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description: 'Filter start date (ISO 8601)',
+    example: '2025-01-01',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'Filter end date (ISO 8601)',
+    example: '2025-12-31',
+  })
+  @ApiQuery({
+    name: 'format',
+    required: false,
+    type: String,
+    description: 'Export format — only "csv" is supported',
+    example: 'csv',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'CSV file attachment (Content-Type: text/csv). Header-only when no earnings match.',
+    content: {
+      'text/csv': {
+        schema: { type: 'string', example: 'date,clipTitle,amount,currency,source,transactionId\n' },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT (Bearer access-token)' })
+  @ApiBadRequestResponse({
+    description: 'Invalid date range or unsupported export format',
+    schema: {
+      examples: {
+        invalidRange: {
+          summary: 'startDate after endDate',
+          value: {
+            statusCode: 400,
+            message: 'Invalid date range: startDate must be on or before endDate.',
+            error: 'Bad Request',
+          },
+        },
+        unsupportedFormat: {
+          summary: 'Unsupported format',
+          value: {
+            statusCode: 400,
+            message: 'Unsupported export format "pdf". Only "csv" is supported.',
+            error: 'Bad Request',
+          },
+        },
+      },
+    },
+  })
   async exportEarnings(
     @Req() req: AuthRequest,
     @Res() res: Response,

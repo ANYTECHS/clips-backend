@@ -134,7 +134,12 @@ describe('EarningsController', () => {
       mockEarningsAggregationService.getEarningsByPlatform.mockResolvedValue(platformData);
 
       const result = await controller.getEarningsByPlatform(mockRequest(1));
-      expect(mockEarningsAggregationService.getEarningsByPlatform).toHaveBeenCalledWith(1);
+      expect(mockEarningsAggregationService.getEarningsByPlatform).toHaveBeenCalledWith(
+        1,
+        undefined,
+        undefined,
+        undefined,
+      );
       expect(result).toEqual(platformData);
     });
   });
@@ -143,7 +148,7 @@ describe('EarningsController', () => {
 
   describe('exportEarnings', () => {
     it('streams CSV with correct headers', async () => {
-      const csv = 'date,clip title,amount,currency,source,transactionId\n2025-01-01T00:00:00.000Z,My Clip,25.5,USD,royalty,';
+      const csv = 'date,clipTitle,amount,currency,source,transactionId\n2025-01-01T00:00:00.000Z,My Clip,25.5,USD,royalty,42';
       mockEarningsExportService.exportEarningsCsv.mockResolvedValue({
         filename: 'earnings-export-2025-01-01.csv',
         content: csv,

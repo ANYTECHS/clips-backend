@@ -142,15 +142,19 @@ export class PayoutsService {
         (totalEarnings._sum.amount ?? 0) - (totalPaidOut._sum.amount ?? 0);
 
       await this.assertMinimumPayout(availableBalance, currency);
+      const payoutAmount = this.payoutLimitsService.resolvePayoutAmount(
+        availableBalance,
+        currency,
+      );
 
-      const fee = await this.feeService.calculateFee(availableBalance, 'stellar');
-      const status = this.payoutApprovalService.resolveInitialStatus(availableBalance);
+      const fee = await this.feeService.calculateFee(payoutAmount, 'stellar');
+      const status = this.payoutApprovalService.resolveInitialStatus(payoutAmount);
 
       return tx.payout.create({
         data: {
           userId,
           walletId: wallet.id,
-          amount: availableBalance,
+          amount: payoutAmount,
           currency,
           method: 'stellar',
           status,
