@@ -57,13 +57,12 @@ export const NFT_MINT_JOB_OPTIONS = {
   removeOnFail: false,
   priority: NFT_MINT_QUEUE_PRIORITY,
 } as const;
+
 /**
  * Deduplication options for enqueuing a mint job.
  * Usage: queue.add(NFT_MINT_JOB, data, getNftMintDedupOptions(clipId)).
  * BullMQ drops a second add with the same id (surfaced as HTTP 409 duplicate-mint).
  */
-function getNftMintDedupOptions(clipId: number) {
+export function getNftMintDedupOptions(clipId: number) {
   return { deduplication: { id: getNftMintJobId(clipId) } } as const;
 }
-
-export { getNftMintDedupOptions };
