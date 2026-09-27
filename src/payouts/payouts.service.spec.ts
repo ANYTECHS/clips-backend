@@ -11,6 +11,9 @@ import { PayoutApprovalService } from './payout-approval.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { ConfigService } from '../config/config.service';
 import { CurrencyService } from '../common/services/currency.service';
+import { PayoutValidationService } from './payout-validation.service';
+import { PayoutProcessingService } from './payout-processing.service';
+import { PayoutLimitsService } from './payout-limits.service';
 import {
   ConflictException,
   BadRequestException,
@@ -89,6 +92,12 @@ describe('PayoutsService', () => {
     convert: jest.fn(async (amount: number) => ({ amount, rate: 1 })),
   };
 
+  // Per-currency limits are covered in payout-validation.service.spec.ts;
+  // keep them permissive here so these tests exercise the other rules.
+  const mockPayoutLimitsService = {
+    getLimits: jest.fn(() => ({ min: 0, max: Number.POSITIVE_INFINITY })),
+  };
+
   const mockPlatformAddress = StellarSdk.Keypair.random().publicKey();
 
   beforeEach(async () => {
@@ -132,6 +141,15 @@ describe('PayoutsService', () => {
           provide: EarningsService,
           useValue: {
             processCreatorEarnings: jest.fn(),
+            // Derive the balance from the same aggregates requestPayout() uses.
+            getUserTotalEarnings: jest.fn(async () => {
+              const earned = await mockPrismaService.earning.aggregate();
+              const paidOut = await mockPrismaService.payout.aggregate();
+              return {
+                availableBalance:
+                  (earned?._sum?.amount ?? 0) - (paidOut?._sum?.amount ?? 0),
+              };
+            }),
           },
         },
         {
@@ -142,6 +160,12 @@ describe('PayoutsService', () => {
           provide: CurrencyService,
           useValue: mockCurrencyService,
         },
+        {
+          provide: PayoutLimitsService,
+          useValue: mockPayoutLimitsService,
+        },
+        PayoutValidationService,
+        PayoutProcessingService,
       ],
     }).compile();
 
