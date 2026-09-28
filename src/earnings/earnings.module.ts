@@ -11,6 +11,7 @@ import { EarningsGateway } from './earnings.gateway';
 import { EarningsGatewayModule } from './earnings.gateway.module';
 import { LeaderboardService } from './leaderboard.service';
 import { CurrencyConversionService } from './currency-conversion.service';
+import { MonthlyEarningsCronService } from './monthly-earnings-cron.service';
 import { TaxReportExportService } from './tax-report-export.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RedisModule } from '../redis/redis.module';
@@ -40,6 +41,7 @@ import { DailyEarningsModule } from './daily-earnings.module';
     LeaderboardService,
     CurrencyConversionService,
     TaxReportExportService,
+    MonthlyEarningsCronService,
   ],
   exports: [
     EarningsCacheService,

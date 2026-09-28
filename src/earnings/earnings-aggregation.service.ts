@@ -349,8 +349,46 @@ export class EarningsAggregationService {
     };
   }
 
-  async softDelete(earningId: number, userId: number) {
-    const earning = await this.prisma.earning.findUnique({
+  async getMonthlySummary(userId: number, year: number, month: number) {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw new Error('Invalid year. Use YYYY between 2000-2100.');
+    }
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new Error('Invalid month. Use 1-12.');
+    }
+    const summary = await this.prisma.monthlyEarning.findUnique({
+      where: { userId_year_month: { userId, year, month } },
+    });
+    if (!summary) {
+      // Fallback: compute live from period (UTC) when cron has not run yet
+      const from = new Date(Date.UTC(year, month - 1, 1));
+      const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+      const period = await this.getEarningsByPeriod(
+        userId,
+        from,
+        to,
+        Currency.USD,
+      );
+      return {
+        userId,
+        year,
+        month,
+        totalAmount: period.total,
+        currency: period.currency,
+        platformBreakdown: period.items.reduce(
+          (acc: Record<string, number>, i: any) => {
+            acc[i.source || 'unknown'] = (acc[i.source || 'unknown'] || 0) + i.amount;
+            return acc;
+          },
+          {},
+        ),
+        generated: false,
+      };
+    }
+    return { ...summary, generated: true };
+  }
+
+  async softDelete(earningId: number, userId: number) {    const earning = await this.prisma.earning.findUnique({
       where: { id: earningId },
       include: {
         clip: { include: { video: { select: { userId: true } } } },
