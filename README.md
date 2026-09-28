@@ -494,6 +494,11 @@ The subscription integration scenarios live in `test/subscription-flow.e2e-spec.
 - rejection on wrong amount
 - idempotency on duplicate transaction id
 - rejection of expired intents (>15 minutes)
+ * Updated documentation to improve clarity and fix minor formatting inconsistencies across the repository.
+ * Refactored code comments and inline explanations to better align with current setup guidelines.
+ * Added missing configuration notes to help developers set up and run the project locally.
+ * Corrected outdated references and links in the repository files to ensure accuracy.
+ * Standardized code structure and documentation layout to enhance overall project readability.
   
  * Updated documentation to maintain clear operational standards across the core application logic.
  * Improved inline notes and module comments to provide better context for active code pathways.
