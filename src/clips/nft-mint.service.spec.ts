@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@nest
 import { NftMintService } from './nft-mint.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { ConfigService } from '../config/config.service';
+import { buildClipRecordWithNftStatus } from '../../test/fixtures/clip.fixture';
 
 // ── Mock @stellar/stellar-sdk at module level so Contract() never validates ──
 // Shared mock functions so tests can control return values directly.
@@ -96,22 +97,12 @@ function makeService(): NftMintService {
   );
 }
 
-const baseClip = {
+const baseClip = buildClipRecordWithNftStatus('none', {
   id: 5,
   title: 'Amazing Clip',
   caption: 'A test clip',
-  clipUrl: 'https://cdn.example.com/video.mp4',
-  thumbnail: 'https://cdn.example.com/thumb.jpg',
-  duration: 27,
-  viralityScore: 88,
-  createdAt: new Date('2026-03-01T00:00:00.000Z'),
   postStatus: { tiktok: true },
-  nftStatus: null,
-  metadataUri: null,
-  royaltyBps: null,
-  mintAddress: null,
-  clipPosts: [],
-};
+});
 
 const configMock = {
   creatorRoyaltyBps: 1000,
