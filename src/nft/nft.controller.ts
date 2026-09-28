@@ -103,6 +103,10 @@ import {
   ClaimRoyaltiesInsufficientBalanceDto,
 } from './dto/claim-royalties.dto';
 import {
+  GetClaimableRoyaltiesResponseDto,
+  GetClaimableRoyaltiesQueryDto,
+} from './dto/get-claimable-royalties.dto';
+import {
   RoyaltyClaimHistoryQueryDto,
   RoyaltyClaimHistoryResponseDto,
 } from './dto/royalty-claim-history.dto';
@@ -2047,6 +2051,62 @@ export class NftController {
   }
 
   /**
+   * GET /nfts/:id/claim-royalties
+   * Retrieves the current claimable royalty balance for a specific recipient
+   * without actually claiming it. Useful for showing available balance in the UI.
+   * Requires authentication if no recipient query parameter is provided (uses authenticated user's wallet).
+   */
+  @Auth()
+  @Get(':id/claim-royalties')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get claimable royalties for an NFT',
+    description:
+      'Queries the on-chain claimable royalty balance for a specific recipient and optional asset. ' +
+      'Returns the balance in stroops and the formatted amount (e.g., XLM). ' +
+      'Useful for displaying available balance before the creator initiates a claim. ' +
+      'Closes #839 — allow creators to query claimable royalties.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiQuery({ name: 'recipient', type: String, required: false, description: 'Royalty recipient wallet address. Defaults to authenticated user\'s wallet.' })
+  @ApiQuery({ name: 'assetContractId', type: String, required: false, description: 'Asset contract ID (SAC). Defaults to native XLM.' })
+  @ApiOkResponse({
+    description: 'Claimable royalties retrieved successfully',
+    type: GetClaimableRoyaltiesResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid token ID or wallet address',
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
+  @ApiNotFoundResponse({ description: 'Clip not found or no royalty data' })
+  @ApiServiceUnavailableResponse({
+    description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
+  })
+  async getClaimableRoyalties(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: GetClaimableRoyaltiesQueryDto,
+    @Req() req: Request,
+  ): Promise<GetClaimableRoyaltiesResponseDto> {
+    // Use provided recipient or fall back to authenticated user's wallet
+    const recipient = query.recipient || (req as any).user?.stellarWallet;
+    
+    if (!recipient) {
+      throw new BadRequestException(
+        'Recipient wallet address required. Provide via query param or authenticate with a wallet.',
+      );
+    }
+
+    const result = await this.claimRoyaltyService.getClaimableRoyaltiesInfo(
+      id,
+      recipient,
+      query.assetContractId,
+    );
+
+    return result;
+  }
+
+  /**
    * POST /nfts/:id/claim-royalties
    * Builds an unsigned Soroban `claim_royalties` transaction for the
    * creator to sign. Verifies a non-zero claimable balance before building
@@ -2087,6 +2147,19 @@ export class NftController {
   ): Promise<ClaimRoyaltiesResponseDto> {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(id, userId);
+
+    // Verify claimant authorization
+    const authCheck = await this.claimRoyaltyService.verifyClaimantAuthorization(
+      id,
+      dto.walletAddress,
+    );
+
+    if (!authCheck.authorized) {
+      throw new ForbiddenException(
+        authCheck.reason || 'Not authorized to claim royalties for this token',
+      );
+    }
+
     return this.claimRoyaltyService.prepareClaimRoyaltiesTx(
       id,
       dto.walletAddress,
