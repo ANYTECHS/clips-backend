@@ -68,6 +68,11 @@ export class PayoutDestinationDto {
 export class CreatePayoutDto {
   @ApiProperty({
     description:
+      'Amount to withdraw. Must be within the configured min/max payout limits ' +
+      'for the currency (defaults: MIN_PAYOUT_USD=5, MAX_PAYOUT_USD=10000; ' +
+      'per-currency via MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON). ' +
+      'Amounts outside the range are rejected with a 400 validation error.',
+    example: 100.0,
       'Amount to withdraw. Must meet the minimum payout threshold ' +
       '(default 5 USD equivalent, configurable via MIN_STELLAR_PAYOUT); ' +
       'amounts below the threshold are rejected with a 400 validation error.',
@@ -80,7 +85,9 @@ export class CreatePayoutDto {
   amount: number;
 
   @ApiProperty({
-    description: 'ISO 4217 currency code (e.g. USD, XLM)',
+    description:
+      'ISO 4217 currency code. Supported currencies with default limits: USD ' +
+      '(and any currency configured via MIN_PAYOUT_*/MAX_PAYOUT_* or PAYOUT_LIMITS).',
     example: 'USD',
   })
   @TrimString()

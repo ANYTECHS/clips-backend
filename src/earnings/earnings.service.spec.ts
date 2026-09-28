@@ -142,6 +142,13 @@ describe('EarningsService', () => {
         source: 'test',
       });
 
+      expect(redis.del).toHaveBeenCalledWith('earnings:total:5', 'earnings:user:5:total');
+      expect(eventEmitter.emit).toHaveBeenCalledWith('earnings.updated', {
+        userId: 5,
+        earningId: 10,
+        amount: 150,
+        currency: 'USD',
+      });
       expect(cache.invalidate).toHaveBeenCalledWith(42);
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'earnings.updated',

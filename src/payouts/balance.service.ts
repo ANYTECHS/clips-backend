@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PayoutValidationService } from './payout-validation.service';
 
 export interface AvailableBalance {
   totalEarnings: number;
@@ -17,7 +18,10 @@ export interface AvailableBalance {
 export class BalanceService {
   private readonly logger = new Logger(BalanceService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly payoutValidationService: PayoutValidationService,
+  ) {}
 
   /**
    * Calculate available balance for a user atomically.
@@ -33,7 +37,6 @@ export class BalanceService {
       throw new NotFoundException('User not found');
     }
 
-    // Get total earnings (non-deleted, non-anomalies)
     const earningsResult = await this.prisma.earning.aggregate({
       where: {
         clip: {
@@ -46,7 +49,6 @@ export class BalanceService {
 
     const totalEarnings = earningsResult._sum.amount ?? 0;
 
-    // Get total paid out (completed payouts only)
     const paidResult = await this.prisma.payout.aggregate({
       where: {
         userId,
@@ -57,7 +59,6 @@ export class BalanceService {
 
     const totalPaidOut = paidResult._sum.finalAmount ?? 0;
 
-    // Get total pending + approved (reserved balance)
     const pendingResult = await this.prisma.payout.aggregate({
       where: {
         userId,
@@ -91,21 +92,20 @@ export class BalanceService {
   }
 
   /**
-   * Validate that a requested payout amount is within available balance.
-   * @param userId User requesting the payout
-   * @param requestedAmount Amount requested in USD
-   * @throws BadRequestException if amount is invalid
+   * Validate that a requested payout amount is within available balance
+   * and within configured min/max payout limits for the currency.
    */
   async validatePayoutAmount(
     userId: number,
     requestedAmount: number,
+    currency = 'USD',
   ): Promise<void> {
-    // Validate amount is positive
     if (requestedAmount <= 0) {
       throw new BadRequestException('Payout amount must be greater than 0');
     }
 
-    // Validate against available balance
+    this.payoutValidationService.assertPayoutLimits(requestedAmount, currency);
+
     const balance = await this.getAvailableBalance(userId);
 
     if (requestedAmount > balance.availableBalance) {
@@ -128,11 +128,8 @@ export class BalanceService {
     payoutMethodId?: number,
     walletId?: number,
   ): Promise<number> {
-    // Validate the amount first
-    await this.validatePayoutAmount(userId, requestedAmount);
+    await this.validatePayoutAmount(userId, requestedAmount, 'USD');
 
-    // Use transaction to atomically create payout record
-    // This prevents double-spending in concurrent requests
     const payout = await this.prisma.withTransaction(async (tx) => {
       return await tx.payout.create({
         data: {
@@ -154,10 +151,6 @@ export class BalanceService {
     return payout.id;
   }
 
-  /**
-   * Check if concurrent payouts would exceed available balance.
-   * This is a defensive check before processing multiple concurrent requests.
-   */
   async canProcessConcurrent(
     userId: number,
     amounts: number[],

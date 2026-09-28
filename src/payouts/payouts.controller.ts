@@ -295,6 +295,10 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Request a payout (single or split destinations)',
     description:
+      'Initiates a creator payout. Requires JWT. The requested amount must fall ' +
+      'within the configured minimum and maximum payout limits for the currency ' +
+      '(defaults: MIN_PAYOUT_USD=5, MAX_PAYOUT_USD=10000; override with ' +
+      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON).',
       'Initiates a creator payout. Requires JWT. Validates amount, currency, and method; ' +
       'checks available balance and the minimum payout threshold (default 5 USD equivalent). ' +
       'Optionally accepts a `destinations` array to split the payout between fiat and Stellar ' +
@@ -355,6 +359,22 @@ export class PayoutsController {
   })
   @ApiBadRequestResponse({
     description:
+      'Invalid request, insufficient balance, or amount outside min/max payout limits',
+    schema: {
+      examples: {
+        belowMinimum: {
+          summary: 'Below minimum payout',
+          value: {
+            statusCode: 400,
+            message: 'Minimum payout for USD is 5. Requested amount: 3.',
+            error: 'Bad Request',
+          },
+        },
+        aboveMaximum: {
+          summary: 'Above maximum payout',
+          value: {
+            statusCode: 400,
+            message: 'Maximum payout for USD is 10000. Requested amount: 15000.',
       'Invalid request, insufficient balance, invalid split, or amount below the minimum payout threshold',
     schema: {
       examples: {
@@ -447,7 +467,6 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
-      dto.destinations,
     );
   }
 
@@ -492,7 +511,6 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
-      dto.destinations,
     );
   }
 

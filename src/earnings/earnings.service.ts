@@ -161,6 +161,7 @@ export class EarningsService {
         userId,
         earningId: earning.id,
         amount: earning.amount,
+        currency: earning.currency,
       });
     }
 

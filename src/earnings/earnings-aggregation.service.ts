@@ -1,3 +1,4 @@
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Currency, EarningsBreakdown } from './earnings.types';
@@ -45,8 +46,15 @@ export class EarningsAggregationService {
   }
 
   private validatePeriod(startDate: Date, endDate: Date) {
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      throw new BadRequestException(
+        'Invalid date range: startDate and endDate must be valid ISO 8601 dates.',
+      );
+    }
     if (startDate > endDate) {
-      throw new Error('Start date must be before end date');
+      throw new BadRequestException(
+        'Invalid date range: startDate must be on or before endDate.',
+      );
     }
   }
 
