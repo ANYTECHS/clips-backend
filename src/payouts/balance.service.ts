@@ -63,7 +63,13 @@ export class BalanceService {
       where: {
         userId,
         status: {
-          in: ['pending', 'pending_review', 'approved', 'processing'],
+          in: [
+            'pending',
+            'under_review',
+            'pending_review',
+            'approved',
+            'processing',
+          ],
         },
       },
       _sum: { amount: true },

@@ -146,7 +146,7 @@ await prisma.wallet.upsert({
 | Payout | Yes | `SoftDeleteService.restorePayout` |
 | Payout method | Yes | `SoftDeleteService.restorePayoutMethod` |
 | Wallet | Yes (reconnect) | Connecting the same address/chain upserts and sets `deletedAt: null` |
-| Earning | Case-by-case | Clear `deletedAt` only via controlled admin/adjustment flows |
+| Earning | Yes (admin) | `POST /admin/earnings/:earningId/restore` via `EarningsAggregationService.restore` |
 
 Permanent delete methods on `SoftDeleteService` bypass restore permanently — use only under retention policy.
 
@@ -170,7 +170,8 @@ Swagger annotations for these routes document `404` (and `409` where applicable)
 ### Admin recovery endpoints
 
 - Payout approve/reject admin controllers operate on payout workflow state; they are not a general trash UI.
-- Restoration today is primarily via `SoftDeleteService` (and wallet reconnect). If HTTP admin recovery endpoints are added later:
+- Earnings soft-delete recovery: `POST /admin/earnings/:earningId/restore` (admin auth) clears `deletedAt` and invalidates the owner's earnings cache.
+- Additional restoration for payouts/methods is available via `SoftDeleteService`. If more HTTP admin recovery endpoints are added later:
   - Guard with admin auth.
   - Document under an `admin` Swagger tag.
   - Return the restored resource with `deletedAt: null`.
