@@ -13,6 +13,8 @@ import { ConfigService } from '../config/config.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { MailService } from '../auth/mail.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import {
   ConflictException,
@@ -32,6 +34,8 @@ describe('PayoutsService', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
+      count: jest.fn(),
       aggregate: jest.fn(),
     },
     wallet: {
@@ -162,6 +166,38 @@ describe('PayoutsService', () => {
         },
         {
           provide: PayoutLimitsService,
+          useValue: {
+            getLimits: jest.fn().mockReturnValue({ min: 5, max: 10000 }),
+          },
+        },
+        {
+          provide: PayoutValidationService,
+          useValue: {
+            assertMinimumPayout: jest.fn().mockResolvedValue(undefined),
+            assertPayoutLimits: jest.fn(),
+          },
+        },
+        {
+          provide: PayoutProcessingService,
+          useValue: {
+            processPayout: jest.fn(),
+            batchProcessPayouts: jest.fn(),
+            pollPendingStellarPayouts: jest.fn(),
+            initiateStellarPayout: jest.fn(),
+          },
+        },
+        {
+          provide: StellarPayoutVerificationService,
+          useValue: {
+            verifyPayoutTransaction: jest.fn(),
+          },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendEmail: jest.fn().mockResolvedValue(undefined),
+          },
+        },
           useValue: mockPayoutLimitsService,
         },
         PayoutValidationService,
@@ -291,42 +327,62 @@ describe('PayoutsService', () => {
   });
 
   describe('getPayouts', () => {
-    it('should return all payouts for user', async () => {
+    it('should return paginated payouts for user', async () => {
       const payouts = [
         { id: 1, amount: 100, status: 'completed' },
         { id: 2, amount: 50, status: 'pending' },
       ];
       mockPrismaService.payout.findMany.mockResolvedValue(payouts);
+      mockPrismaService.payout.count.mockResolvedValue(2);
 
       const result = await service.getPayouts(1);
-      expect(result).toHaveLength(2);
+      expect(result.items).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(result.page).toBe(1);
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { userId: 1 },
+          skip: 0,
+          take: 20,
         }),
       );
     });
 
     it('should filter payouts by status', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([]);
+      mockPrismaService.payout.count.mockResolvedValue(0);
 
       await service.getPayouts(1, 'pending');
 
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1, status: 'pending' },
+          where: { userId: 1, status: { in: ['pending'] } },
         }),
       );
     });
 
-    it('should pass through unknown status values to the query', async () => {
+    it('should accept cancelled as an alias of canceled', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([]);
+      mockPrismaService.payout.count.mockResolvedValue(0);
+
+      await service.getPayouts(1, 'cancelled');
+
+      expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 1, status: { in: ['canceled', 'cancelled'] } },
+        }),
+      );
+    });
+
+    it('should pass through processing status to the query', async () => {
+      mockPrismaService.payout.findMany.mockResolvedValue([]);
+      mockPrismaService.payout.count.mockResolvedValue(0);
 
       await service.getPayouts(1, 'processing');
 
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1, status: 'processing' },
+          where: { userId: 1, status: { in: ['processing'] } },
         }),
       );
     });

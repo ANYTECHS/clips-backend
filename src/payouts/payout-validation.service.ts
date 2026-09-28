@@ -119,6 +119,20 @@ export class PayoutValidationService {
 
   async ensureNoOpenPayout(userId: number): Promise<void> {
     const existingPending = await this.prisma.payout.findFirst({
+      where: {
+        userId,
+        status: {
+          in: [
+            'pending',
+            'under_review',
+            'pending_review',
+            'pending_approval',
+            'approved',
+            'processing',
+          ],
+        },
+      },
+      select: { id: true },
       where: { userId, status: { in: [...OPEN_PAYOUT_STATUSES] } },
     });
 

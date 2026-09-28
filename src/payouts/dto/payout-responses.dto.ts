@@ -24,10 +24,39 @@ export class PayoutResponseDto {
 
   @ApiProperty({
     example: 'pending',
+    enum: [
+      'pending',
+      'under_review',
+      'pending_review',
+      'pending_approval',
+      'approved',
+      'processing',
+      'completed',
+      'failed',
+      'rejected',
+      'canceled',
+      'cancelled',
+    ],
+    description:
+      'Current payout status. Lifecycle: pending → under_review → approved|rejected → processing → completed|failed',
     enum: PAYOUT_STATUS_VALUES,
     description: PAYOUT_STATUS_SWAGGER_DESCRIPTION,
   })
   status: string;
+
+  @ApiPropertyOptional({
+    example: 7,
+    description: 'Admin user ID who approved or rejected the payout',
+    nullable: true,
+  })
+  approvedBy?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Insufficient documentation',
+    description: 'Rejection reason when status is rejected',
+    nullable: true,
+  })
+  rejectionReason?: string | null;
 
   @ApiPropertyOptional({
     example: 'a1b2c3d4e5f6...',
