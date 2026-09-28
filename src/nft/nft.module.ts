@@ -31,6 +31,8 @@ import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { SorobanContractController } from './soroban-contract.controller';
+import { NftCollectionService } from './nft-collection.service';
+import { NftCollectionController } from './nft-collection.controller';
 
 @Module({
   imports: [
@@ -64,6 +66,7 @@ import { SorobanContractController } from './soroban-contract.controller';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftCollectionService,
   ],
   controllers: [
     NftController,
@@ -71,6 +74,7 @@ import { SorobanContractController } from './soroban-contract.controller';
     BatchRoyaltyController,
     ClipRoyaltyController,
     SorobanContractController,
+    NftCollectionController,
   ],
   exports: [
     NftService,
@@ -92,6 +96,7 @@ import { SorobanContractController } from './soroban-contract.controller';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftCollectionService,
   ],
 })
 export class NftModule {}

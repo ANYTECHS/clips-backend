@@ -124,6 +124,9 @@ export class RoyaltyRecipientDto {
 }
 
 export class NftMintResponseDto {
+  @ApiProperty({ example: 'viral-clips', description: 'NFT collection containing this token' })
+  collectionId: string;
+
   @ApiProperty({ example: '42', description: 'Clip ID that was minted' })
   clipId: string;
 
@@ -162,6 +165,12 @@ export class NftMintResponseDto {
 }
 
 export class NftPrepareMintResponseDto {
+  @ApiProperty({
+    description: 'NFT collection slug associated with this token',
+    example: 'viral-clips',
+  })
+  collectionId: string;
+
   @ApiProperty({
     description: 'Unsigned Soroban transaction XDR for the client wallet to sign',
     example:

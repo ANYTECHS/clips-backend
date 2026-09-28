@@ -71,6 +71,7 @@ model Video {
 
 model Clip {
   id            Int        @id @default(autoincrement())
+  collectionId  String     @default("viral-clips")
   videoId       Int
   clipUrl       String
   thumbnail     String?
@@ -95,6 +96,7 @@ model Clip {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  collection    NftCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Restrict)
   earnings      Earning[]
   clipPosts     ClipPost[]
   royalty       ClipRoyalty?
@@ -102,6 +104,22 @@ model Clip {
 
   @@index([videoId])
   @@index([selected])
+  @@index([collectionId, mintAddress])
+}
+
+model NftCollection {
+  collectionId String   @id
+  name         String
+  description  String
+  type         String
+  metadata     Json     @default("{}")
+  royaltyBps   Int?
+  maxSupply    Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  clips        Clip[]
+
+  @@index([type])
 }
 
 /// Tracks the full minting lifecycle for a single clip.
@@ -184,8 +202,6 @@ model Earning {
   @@index([deletedAt])
   @@index([clipId, date])
   @@index([clipId])
-  @@index([deletedAt])
-  @@index([date])
 }
 
 model UserPlatform {
