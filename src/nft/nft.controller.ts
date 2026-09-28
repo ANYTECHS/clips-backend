@@ -492,7 +492,32 @@ export class NftController {
     },
   })
   @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description:
+      'Duplicate mint request - a mint job for this clip already exists (Issue #923). ' +
+      'The nft-mint queue deduplicates by jobId (`nft-mint-clip-{clipId}`); resubmit only after the existing job completes or fails.',
+    schema: {
+      example: {
+        statusCode: 409,
+        message:
+          'Mint job already exists for clip 42 (jobId: nft-mint-clip-42).',
+        error: 'Conflict',
+      },
+    },
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). Retry after the window resets.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+        error: 'Too Many Requests',
+      },
+    },
+  })
   async mint(
+
     @Body() dto: MintNftDto,
     @Req() req: Request,
   ): Promise<MintResult> {
@@ -626,7 +651,19 @@ export class NftController {
   @ApiServiceUnavailableResponse({
     description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
   })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). Retry after the window resets.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+        error: 'Too Many Requests',
+      },
+    },
+  })
   async prepareMint(
+
     @Body() dto: CreateMintPreparationDto,
     @Req() req: Request,
   ) {
