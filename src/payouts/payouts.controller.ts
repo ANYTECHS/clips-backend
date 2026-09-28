@@ -37,6 +37,10 @@ import {
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
 } from './dto/payout-responses.dto';
+import {
+  PayoutRequestResponseDto,
+  SplitPayoutRequestResponseDto,
+} from './dto/payout-request-response.dto';
 import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
 import { OnChainStatusResponseDto } from './dto/on-chain-status.dto';
 import { PayoutReceiptDto } from './dto/receipt-responses.dto';
@@ -58,6 +62,7 @@ interface RequestWithUser extends Request {
 
 const validationErrorSchema = API_ERROR_SCHEMA;
 
+@ApiTags('Payouts')
 const payoutError = (statusCode: number, error: string, message: string) => ({
   value: { statusCode, message, error },
 });
@@ -288,19 +293,35 @@ export class PayoutsController {
 
   @Post('request')
   @ApiOperation({
-    summary: 'Request a payout with specified amount and method',
+    summary: 'Request a payout (single or split destinations)',
     description:
-      'Initiates a creator payout. Requires JWT. The requested amount must meet ' +
-      'the minimum payout threshold (default 5 USD equivalent, configurable via ' +
-      'the MIN_STELLAR_PAYOUT environment variable); requests below the threshold ' +
-      'are rejected with a 400 validation error.',
+      'Initiates a creator payout. Requires JWT. Validates amount, currency, and method; ' +
+      'checks available balance and the minimum payout threshold (default 5 USD equivalent). ' +
+      'Optionally accepts a `destinations` array to split the payout between fiat and Stellar ' +
+      '(percentages must sum to 100). Creates one or more Payout rows with status `pending` ' +
+      'inside a database transaction. Duplicate open requests are rejected.',
   })
   @ApiBody({
     type: CreatePayoutDto,
     examples: {
       stellar: {
-        summary: 'Stellar payout request',
-        value: { amount: 120, currency: 'USD', method: 'stellar' },
+        summary: 'Single Stellar payout',
+        value: { amount: 50, currency: 'USD', method: 'stellar' },
+      },
+      fiat: {
+        summary: 'Single fiat payout',
+        value: { amount: 75, currency: 'USD', method: 'fiat' },
+      },
+      split: {
+        summary: 'Split 70% fiat / 30% Stellar',
+        value: {
+          amount: 100,
+          currency: 'USD',
+          destinations: [
+            { method: 'fiat', percentage: 70 },
+            { method: 'stellar', percentage: 30 },
+          ],
+        },
       },
       fiat: {
         summary: 'Bank transfer payout request',
@@ -311,10 +332,61 @@ export class PayoutsController {
   @ApiResponse({
     status: 201,
     description: 'Pending payout request created successfully',
-    type: PayoutResponseDto,
+    type: PayoutRequestResponseDto,
+    schema: {
+      examples: {
+        single: {
+          summary: 'Single destination',
+          value: { payoutId: 'payout_123', status: 'pending' },
+        },
+        split: {
+          summary: 'Split destinations',
+          value: {
+            payouts: [
+              { payoutId: 'payout_124', status: 'pending', method: 'fiat', amount: 70 },
+              { payoutId: 'payout_125', status: 'pending', method: 'stellar', amount: 30 },
+            ],
+            totalAmount: 100,
+            currency: 'USD',
+          },
+        },
+      },
+    },
   })
   @ApiBadRequestResponse({
     description:
+      'Invalid request, insufficient balance, invalid split, or amount below the minimum payout threshold',
+    schema: {
+      examples: {
+        validation: {
+          value: {
+            statusCode: 400,
+            message: ['Minimum payout for USD is 5. Requested amount: 3.'],
+            error: 'Bad Request',
+          },
+        },
+        insufficientBalance: {
+          value: {
+            statusCode: 400,
+            message: 'Insufficient balance. Available: 20 USD',
+            error: 'Bad Request',
+          },
+        },
+        invalidSplit: {
+          value: {
+            statusCode: 400,
+            message: 'Destination percentages must sum to 100. Received: 90',
+            error: 'Bad Request',
+          },
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — missing or invalid bearer token',
+    schema: API_ERROR_SCHEMA,
+  })
+  @ApiConflictResponse({ description: 'Pending payout already exists' })
       'Request failed validation: malformed body, amount below the minimum or above the maximum payout, ' +
       'insufficient balance, or no Stellar wallet / default payout method configured.',
     content: {
@@ -383,17 +455,29 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Request a split payout with fiat and crypto destinations',
     description:
-      'Initiates a creator payout split between fiat (bank) and crypto (Stellar) wallets. ' +
-      'The request amount is divided among specified destinations based on percentages. ' +
-      'Each destination must have a percentage that sums to 100%.',
+      'Convenience alias for POST /payouts/request with a destinations array. ' +
+      'Percentages must sum to 100%. Separate Payout records are created atomically.',
   })
   @ApiBody({
     type: CreatePayoutDto,
+    examples: {
+      split: {
+        summary: '70% fiat / 30% Stellar',
+        value: {
+          amount: 100,
+          currency: 'USD',
+          destinations: [
+            { method: 'fiat', percentage: 70 },
+            { method: 'stellar', percentage: 30 },
+          ],
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 201,
     description: 'Split payout requests created successfully',
-    type: [PayoutResponseDto],
+    type: SplitPayoutRequestResponseDto,
   })
   @ApiBadRequestResponse({
     description:

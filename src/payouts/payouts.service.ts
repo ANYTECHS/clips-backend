@@ -165,10 +165,73 @@ export class PayoutsService {
     };
   }
 
+  /**
+   * Create one or more pending payout requests (Issues #980 / #981).
+   *
+   * Single-destination: pass `method`.
+   * Split fiat/crypto: pass `destinations` whose percentages sum to 100
+   * (or absolute amounts that sum to `amount`). Separate Payout rows are
+   * created atomically inside a single DB transaction.
+   */
   async requestPayoutWithDetails(
     userId: number,
     amount: number,
     currency: string,
+    method?: 'fiat' | 'stellar',
+    destinations?: Array<{
+      method: 'fiat' | 'stellar';
+      percentage?: number;
+      amount?: number;
+    }>,
+  ): Promise<
+    | {
+        payoutId: string;
+        status: string;
+        id: number;
+        amount: number;
+        currency: string;
+        method: string;
+        createdAt: Date;
+        feeAmount?: number;
+        finalAmount?: number;
+      }
+    | {
+        payouts: Array<{
+          payoutId: string;
+          status: string;
+          id: number;
+          amount: number;
+          currency: string;
+          method: string;
+        }>;
+        totalAmount: number;
+        currency: string;
+      }
+  > {
+    const normalizedCurrency = (currency ?? this.defaultPayoutCurrency).toUpperCase();
+    const splits = this.resolvePayoutDestinations(amount, method, destinations);
+
+    const existingPending = await this.prisma.payout.findFirst({
+      where: { userId, status: { in: [...OPEN_PAYOUT_STATUSES] } },
+    });
+
+    if (existingPending) {
+      throw new ConflictException(
+        'A payout request is already pending for this user',
+      );
+    }
+
+    await this.assertMinimumPayout(amount, normalizedCurrency);
+    this.assertPayoutLimits(amount, normalizedCurrency);
+
+    const earningsSummary = await this.earningsService.getUserTotalEarnings(userId);
+    const availableBalance = earningsSummary.availableBalance;
+
+    if (amount > availableBalance) {
+      throw new BadRequestException(
+        `Insufficient balance. Available: ${availableBalance} ${normalizedCurrency}`,
+      );
+    }
     method: 'fiat' | 'stellar',
   ): Promise<{
     id: number;
@@ -191,37 +254,194 @@ export class PayoutsService {
       currency,
     );
 
-    let walletId: number | null = null;
-    let payoutMethodId: number | null = null;
+    const created = await this.prisma.$transaction(async (tx) => {
+      const rows = [];
 
+      for (const split of splits) {
+        const { walletId, payoutMethodId } = await this.resolveDestinationIds(
+          userId,
+          split.method,
+          tx,
+        );
+
+        const feeCalculation = await this.feeService.calculateFee(
+          split.amount,
+          split.method,
+        );
+
+        // Issue #980: new requests start as pending.
+        const payout = await tx.payout.create({
+          data: {
+            userId,
+            walletId,
+            payoutMethodId,
+            amount: split.amount,
+            currency: normalizedCurrency,
+            method: split.method,
+            status: 'pending',
+            feeAmount: feeCalculation.feeAmount,
+            feePercentage: feeCalculation.feePercentage,
+            finalAmount: feeCalculation.finalAmount,
+          },
+        });
+
+        rows.push(payout);
+      }
+
+      return rows;
+    });
+
+    this.logger.log(
+      `Payout request(s) created for user ${userId}: ` +
+        created.map((p) => `${p.id}:${p.method}:${p.amount}`).join(', '),
+    );
+
+    if (created.length === 1) {
+      const payout = created[0];
+      return {
+        payoutId: `payout_${payout.id}`,
+        status: payout.status,
+        id: payout.id,
+        amount: payout.amount,
+        currency: payout.currency,
+        method: payout.method,
+        createdAt: payout.createdAt,
+        feeAmount: payout.feeAmount ?? undefined,
+        finalAmount: payout.finalAmount ?? undefined,
+      };
+    }
+
+    return {
+      payouts: created.map((payout) => ({
+        payoutId: `payout_${payout.id}`,
+        status: payout.status,
+        id: payout.id,
+        amount: payout.amount,
+        currency: payout.currency,
+        method: payout.method,
+      })),
+      totalAmount: amount,
+      currency: normalizedCurrency,
+    };
+  }
+
+  /**
+   * Normalise a single-method or multi-destination request into concrete
+   * per-destination amounts. Percentages must sum to 100 (±0.01); absolute
+   * amounts must sum to the parent request amount.
+   */
+  private resolvePayoutDestinations(
+    totalAmount: number,
+    method?: 'fiat' | 'stellar',
+    destinations?: Array<{
+      method: 'fiat' | 'stellar';
+      percentage?: number;
+      amount?: number;
+    }>,
+  ): Array<{ method: 'fiat' | 'stellar'; amount: number }> {
+    if (!destinations || destinations.length === 0) {
+      if (!method) {
+        throw new BadRequestException(
+          'Either method or destinations is required',
+        );
+      }
+      return [{ method, amount: totalAmount }];
+    }
+
+    const methods = new Set(destinations.map((d) => d.method));
+    if (methods.size !== destinations.length) {
+      throw new BadRequestException(
+        'Duplicate destination methods are not allowed in a split payout',
+      );
+    }
+
+    const usingPercentage = destinations.every(
+      (d) => d.percentage !== undefined && d.percentage !== null,
+    );
+    const usingAmount = destinations.every(
+      (d) => d.amount !== undefined && d.amount !== null,
+    );
+
+    if (!usingPercentage && !usingAmount) {
+      throw new BadRequestException(
+        'Each destination must specify either percentage or amount consistently',
+      );
+    }
+
+    if (usingPercentage) {
+      const percentSum = destinations.reduce(
+        (sum, d) => sum + (d.percentage ?? 0),
+        0,
+      );
+      if (Math.abs(percentSum - 100) > 0.01) {
+        throw new BadRequestException(
+          `Destination percentages must sum to 100. Received: ${percentSum}`,
+        );
+      }
+
+      const splits = destinations.map((d, index) => {
+        const raw = (totalAmount * (d.percentage ?? 0)) / 100;
+        // Round intermediate legs to cents; put remainder on the last leg so
+        // floating-point drift never creates a shortfall/overage.
+        const amount =
+          index === destinations.length - 1
+            ? 0 // filled below
+            : Math.round(raw * 100) / 100;
+        return { method: d.method, amount };
+      });
+      const allocated = splits
+        .slice(0, -1)
+        .reduce((sum, s) => sum + s.amount, 0);
+      splits[splits.length - 1].amount =
+        Math.round((totalAmount - allocated) * 100) / 100;
+      return splits;
     if (method === 'stellar') {
       walletId = (await this.payoutValidationService.getActiveStellarWallet(userId)).id;
     } else if (method === 'fiat') {
       payoutMethodId = (await this.payoutValidationService.getDefaultPayoutMethod(userId)).id;
     }
 
-    const feeCalculation = await this.feeService.calculateFee(amount, method);
-    const status = this.payoutApprovalService.resolveInitialStatus(amount);
+    const amountSum = destinations.reduce((sum, d) => sum + (d.amount ?? 0), 0);
+    if (Math.abs(amountSum - totalAmount) > 0.01) {
+      throw new BadRequestException(
+        `Destination amounts must sum to ${totalAmount}. Received: ${amountSum}`,
+      );
+    }
 
-    const payout = await this.prisma.payout.create({
-      data: {
-        userId,
-        walletId,
-        payoutMethodId,
-        amount,
-        currency,
-        method,
-        status,
-        feeAmount: feeCalculation.feeAmount,
-        feePercentage: feeCalculation.feePercentage,
-        finalAmount: feeCalculation.finalAmount,
-      },
+    return destinations.map((d) => ({
+      method: d.method,
+      amount: d.amount as number,
+    }));
+  }
+
+  private async resolveDestinationIds(
+    userId: number,
+    method: 'fiat' | 'stellar',
+    tx: any,
+  ): Promise<{ walletId: number | null; payoutMethodId: number | null }> {
+    if (method === 'stellar') {
+      const wallet = await tx.wallet.findFirst({
+        where: { userId, chain: 'stellar', deletedAt: null },
+      });
+
+      if (!wallet) {
+        throw new BadRequestException(
+          'No active Stellar wallet found. Please connect a wallet first.',
+        );
+      }
+      return { walletId: wallet.id, payoutMethodId: null };
+    }
+
+    const payoutMethod = await tx.payoutMethod.findFirst({
+      where: { userId, isDefault: true, deletedAt: null },
     });
 
-    this.logger.log(
-      `Payout request created: ${payout.id} for user ${userId}, amount: ${amount} ${currency}`,
-    );
-
+    if (!payoutMethod) {
+      throw new BadRequestException(
+        'No default payout method found. Please add a payout method first.',
+      );
+    }
+    return { walletId: null, payoutMethodId: payoutMethod.id };
     return {
       id: payout.id,
       amount: payout.amount,

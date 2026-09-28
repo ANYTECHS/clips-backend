@@ -32,9 +32,12 @@ import { Public } from '../auth/decorators/public.decorator';
 import { EarningsService } from './earnings.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { EarningsExportService } from './earnings-export.service';
+import { DailyEarningsAggregationService } from './daily-earnings-aggregation.service';
 import { LeaderboardService, LeaderboardResponse } from './leaderboard.service';
 import { Currency } from './earnings.types';
 import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
+import { DailyEarningsQueryDto } from './dto/daily-earnings-query.dto';
+import { DailyEarningsResponseDto } from './dto/daily-earnings-response.dto';
 import {
   LeaderboardQueryDto,
   LeaderboardResponseDto,
@@ -62,6 +65,7 @@ export class EarningsController {
     private readonly earningsService: EarningsService,
     private readonly earningsAggregationService: EarningsAggregationService,
     private readonly earningsExportService: EarningsExportService,
+    private readonly dailyEarningsAggregationService: DailyEarningsAggregationService,
     private readonly leaderboardService: LeaderboardService,
   ) {}
 
@@ -147,6 +151,72 @@ export class EarningsController {
       limit ?? 20,
       currency ?? Currency.USD,
     );
+  }
+
+  @Get('daily')
+  @ApiOperation({
+    summary: 'Get daily aggregated earnings',
+    description:
+      'Returns pre-aggregated DailyEarning rows for the authenticated user. ' +
+      'Totals are produced by the midnight UTC BullMQ job and grouped by user and currency. ' +
+      'Optional `from` / `to` (UTC) and `currency` filters narrow the result set.',
+  })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    type: String,
+    description: 'Inclusive start date (UTC, ISO 8601)',
+    example: '2026-09-01',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    type: String,
+    description: 'Inclusive end date (UTC, ISO 8601)',
+    example: '2026-09-27',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    type: String,
+    description: 'ISO 4217 currency filter',
+    example: 'USD',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Aggregated daily earnings',
+    type: DailyEarningsResponseDto,
+    schema: {
+      example: {
+        items: [
+          {
+            id: 1,
+            date: '2026-09-26T00:00:00.000Z',
+            currency: 'USD',
+            totalAmount: 125.5,
+            totalInBaseCurrency: 125.5,
+            earningCount: 12,
+            clipCount: 4,
+          },
+        ],
+        filters: {
+          from: '2026-09-01T00:00:00.000Z',
+          to: '2026-09-27T00:00:00.000Z',
+          currency: 'USD',
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  async getDailyEarnings(
+    @Req() req: AuthRequest,
+    @Query() query: DailyEarningsQueryDto,
+  ): Promise<DailyEarningsResponseDto> {
+    return this.dailyEarningsAggregationService.getDailyEarnings(req.user.userId, {
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+      currency: query.currency,
+    });
   }
 
   @Get('total')
