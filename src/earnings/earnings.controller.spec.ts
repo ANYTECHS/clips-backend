@@ -224,8 +224,17 @@ describe('EarningsController', () => {
       const leaderboard = { data: [], updatedAt: new Date().toISOString() };
       mockLeaderboardService.getLeaderboard.mockResolvedValue(leaderboard);
 
-      const result = await controller.getLeaderboard(10);
-      expect(mockLeaderboardService.getLeaderboard).toHaveBeenCalledWith(10);
+      const result = await controller.getLeaderboard({
+        page: 1,
+        limit: 10,
+        anonymize: true,
+      });
+      expect(mockLeaderboardService.getLeaderboard).toHaveBeenCalledWith({
+        page: 1,
+        limit: 10,
+        anonymize: true,
+        anonymizeEarnings: undefined,
+      });
       expect(result).toEqual(leaderboard);
     });
   });

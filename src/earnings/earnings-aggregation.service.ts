@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Currency, EarningsBreakdown } from './earnings.types';
 import { CurrencyConversionService } from './currency-conversion.service';
@@ -349,12 +349,8 @@ export class EarningsAggregationService {
       },
     });
 
-    if (!earning || earning.clip.video.userId !== userId) {
-      throw new Error(`Earning ${earningId} not found`);
-    }
-
-    if (earning.deletedAt !== null) {
-      throw new Error(`Earning ${earningId} not found`);
+    if (!earning || earning.clip.video.userId !== userId || earning.deletedAt !== null) {
+      throw new NotFoundException(`Earning ${earningId} not found`);
     }
 
     await this.prisma.earning.update({
@@ -363,8 +359,48 @@ export class EarningsAggregationService {
     });
 
     await this.invalidateUserEarningsCache(userId);
-    this.logger.log(`Soft-deleted earning ${earningId} for user ${userId} and invalidated cache`);
+    this.logger.log(
+      `Soft-deleted earning ${earningId} for user ${userId} and invalidated cache`,
+    );
 
     return { message: 'Earning deleted successfully' };
+  }
+
+  /**
+   * Admin recovery: clear deletedAt so the earning re-enters normal queries
+   * and aggregation jobs.
+   */
+  async restore(earningId: number) {
+    const earning = await this.prisma.earning.findUnique({
+      where: { id: earningId },
+      include: {
+        clip: { include: { video: { select: { userId: true } } } },
+      },
+    });
+
+    if (!earning) {
+      throw new NotFoundException(`Earning ${earningId} not found`);
+    }
+
+    if (earning.deletedAt === null) {
+      throw new NotFoundException(
+        `Earning ${earningId} is not soft-deleted`,
+      );
+    }
+
+    const restored = await this.prisma.earning.update({
+      where: { id: earningId },
+      data: { deletedAt: null },
+    });
+
+    const ownerId = earning.clip.video.userId;
+    await this.invalidateUserEarningsCache(ownerId);
+    this.logger.log(`Restored earning ${earningId} for user ${ownerId}`);
+
+    return {
+      message: 'Earning restored successfully',
+      id: restored.id,
+      deletedAt: restored.deletedAt,
+    };
   }
 }

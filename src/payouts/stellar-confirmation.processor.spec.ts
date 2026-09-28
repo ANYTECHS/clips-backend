@@ -19,6 +19,10 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { PayoutValidationService } from './payout-validation.service';
+import { PayoutProcessingService } from './payout-processing.service';
+import { PayoutLimitsService } from './payout-limits.service';
+import { CurrencyService } from '../common/services/currency.service';
 
 const TX_HASH = 'abc123deadbeef';
 const CONFIRMED_AT = new Date('2025-01-15T10:00:00.000Z');
@@ -58,6 +62,12 @@ const mockShutdownService = {
   register: jest.fn(),
   registerQueue: jest.fn(),
 };
+const payoutCollaborators = [
+  PayoutValidationService,
+  PayoutProcessingService,
+  { provide: PayoutLimitsService, useValue: { getLimits: jest.fn() } },
+  { provide: CurrencyService, useValue: { convert: jest.fn() } },
+];
 
 function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingModule> {
   return Test.createTestingModule({
@@ -90,6 +100,7 @@ function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingMo
       },
       { provide: getQueueToken(STELLAR_CONFIRMATION_QUEUE), useValue: mockQueue },
       { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
+      ...payoutCollaborators,
       ...Object.entries(overrides).map(([token, useValue]) => ({ provide: token, useValue })),
     ],
   }).compile();
@@ -174,6 +185,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
         { provide: EarningsService, useValue: {} },
         { provide: ConfigService, useValue: { minStellarPayout: 5 } },
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
+        ...payoutCollaborators,
       ],
     }).compile();
 

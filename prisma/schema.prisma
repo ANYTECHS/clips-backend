@@ -183,6 +183,9 @@ model Earning {
   @@index([date, currency])
   @@index([deletedAt])
   @@index([clipId, date])
+  @@index([clipId])
+  @@index([deletedAt])
+  @@index([date])
 }
 
 model UserPlatform {
