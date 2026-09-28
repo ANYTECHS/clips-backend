@@ -1,0 +1,86 @@
+# #1029 — Artillery load test for BullMQ clip-generation queue workers.
+#
+# Simulates 100+ clip-generation jobs against the documented API endpoints:
+#   POST /clips/generate          -> 201 (queued), 400 (invalid), 429 (rate limited)
+#   GET  /jobs/:jobId/progress    -> 200 job progress
+#
+# Run:
+#   TOKEN=<jwt> npx artillery run loadtest/clip-generation.artillery.yml
+#
+# Do NOT expose this configuration through public Swagger.
+config:
+  target: "http://localhost:3000"
+  phases:
+    # Burst: 100 jobs in the first 2 seconds (>= 100 simultaneous jobs).
+    - name: "Burst — 100+ clip jobs"
+      duration: 2
+      arrivalCount: 100
+    # Sustained pressure to measure queue wait time vs processing time.
+    - name: "Sustained load"
+      duration: 20
+      arrivalRate: 10
+      rampTo: 20
+    # Cool-down: drain the queue and sample worker throughput.
+    - name: "Drain"
+      duration: 10
+      arrivalRate: 2
+  http:
+    # Set keepAlive so BullMQ-facing connections are reused.
+    noProxy: true
+  processor: "./clip-generation.processor.js"
+  plugins:
+    ensure:
+      maxErrorRate: 1
+    metrics-by-endpoint:
+      defaults:
+        printInterval: 5
+  ensure:
+    thresholds:
+      - http.response_time.p95: 5000
+      - http.response_time.max: 15000
+      - "http.codes.201": ">= 1"
+  variables:
+    # Replace with a real JWT, or export TOKEN before running.
+    token: "eyJhbGciOiJIUzI1NiJ9.replace-me"
+
+scenarios:
+  - name: "Enqueue clip-generation jobs and poll progress"
+    flow:
+      # Queue a clip-generation job (documented: 201 queued / 429 rate limited).
+      - post:
+          url: "/clips/generate"
+          json:
+            videoId: 7
+            prompt: "load-test clip"
+          headers:
+            Authorization: "Bearer {{ $env.TOKEN }}"
+            Content-Type: "application/json"
+          capture:
+            - json: "$.jobId"
+              as: "jobId"
+          if: "j === 0"
+          then:
+            - think: 1
+
+      # Poll the documented job status endpoint (200 with progress).
+      - get:
+          url: "/jobs/{{ jobId }}/progress"
+          headers:
+            Authorization: "Bearer {{ $env.TOKEN }}"
+          afterResponse: "recordQueueWaitTime"
+          think: 2
+
+  - name: "Measure 429 rate-limit contract under saturation"
+    weight: 1
+    flow:
+      - loop:
+          - post:
+              url: "/clips/generate"
+              json:
+                videoId: 8
+              headers:
+                Authorization: "Bearer {{ $env.TOKEN }}"
+                Content-Type: "application/json"
+          - think: 1
+        over:
+          count: 6

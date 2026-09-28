@@ -7,19 +7,16 @@ import {
 import { CLIP_GENERATION_FAILED_EVENT } from './clips.events';
 import { CLIP_JOB_OPTIONS } from './clip-generation.queue';
 
-// ── Mock heavy dependencies ───────────────────────────────────────────────────
-
-jest.mock('./ffmpeg.util', () => ({
-  cutClip: jest.fn().mockResolvedValue('out.mp4'),
-  getVideoMetadata: jest.fn().mockResolvedValue({ duration: 30 }),
-}));
-
 jest.mock('./virality-score.util', () => ({
   calculateViralityScore: jest.fn().mockReturnValue(75),
 }));
 
-import { cutClip } from './ffmpeg.util';
 import { MockCloudinaryService } from '../../test/mocks/cloudinary.mock';
+import {
+  cleanupFFmpegMockAfterTest,
+  mockFFmpegError,
+  mockFFmpegSuccess,
+} from '../../test/helpers/ffmpeg-mock.helper';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -100,21 +97,21 @@ function makeProcessor() {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ClipGenerationProcessor', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFFmpegSuccess();
+  });
+
+  afterEach(() => cleanupFFmpegMockAfterTest());
 
   describe('process()', () => {
-    it('calls cutClip with correct float-safe args', async () => {
-      const { processor } = makeProcessor();
+    it('cuts and uploads a clip using the controlled FFmpeg output', async () => {
+      const { processor, cloudinaryService } = makeProcessor();
+      const readFileSpy = jest.spyOn(cloudinaryService, 'readFileToBuffer');
+
       await processor.process(makeJob());
 
-      expect(cutClip).toHaveBeenCalledWith(
-        expect.objectContaining({
-          inputPath: '/tmp/in.mp4',
-          outputPath: '/tmp/out.mp4',
-          startTime: 12.5,
-          endTime: 45.7,
-        }),
-      );
+      expect(readFileSpy).toHaveBeenCalledWith('/tmp/out.mp4');
     });
 
     it('returns a Clip with viralityScore populated', async () => {
@@ -128,7 +125,7 @@ describe('ClipGenerationProcessor', () => {
     });
 
     it('propagates errors so BullMQ can retry', async () => {
-      (cutClip as jest.Mock).mockRejectedValueOnce(new Error('OOM'));
+      mockFFmpegError('OOM');
       const { processor } = makeProcessor();
 
       await expect(processor.process(makeJob())).rejects.toThrow('OOM');
