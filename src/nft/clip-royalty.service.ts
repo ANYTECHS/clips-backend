@@ -146,10 +146,28 @@ export class ClipRoyaltyService {
   }
 
   /**
-   * Calculate royalty payout for a sale
-   * @param salePrice The sale price in stroops or smallest unit
-   * @param royaltyBps Royalty basis points
-   * @returns Royalty amount
+   * Calculate royalty payout for a sale using safe arithmetic.
+   *
+   * ## Why safe arithmetic?
+   *
+   * This calculation uses `checkedRoyaltyAmount()` from safe-math.helper.ts,
+   * which employs BigInt arithmetic to prevent IEEE-754 precision loss on
+   * large sale prices. Without it, multiplying large numbers can silently
+   * produce incorrect royalty amounts.
+   *
+   * See `safe-math.helper.ts` for detailed overflow handling strategy.
+   *
+   * @param salePrice The sale price in stroops or smallest unit (must be non-negative integer)
+   * @param royaltyBps Royalty basis points (0-1500)
+   * @returns Royalty amount calculated safely with overflow protection
+   *
+   * @throws {BadRequestException} if salePrice is not a non-negative integer
+   * @throws {BadRequestException} if royaltyBps is not in valid range (0-1500)
+   * @throws {BadRequestException} if result exceeds Number.MAX_SAFE_INTEGER
+   *
+   * @example
+   * // For a 100 XLM sale (100_000_000 stroops) at 10% (1000 bps):
+   * const royalty = calculateRoyaltyAmount(100_000_000, 1000); // → 10_000_000 (10 XLM)
    */
   calculateRoyaltyAmount(salePrice: number, royaltyBps: number): number {
     if (!Number.isInteger(salePrice) || salePrice < 0) {
