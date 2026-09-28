@@ -1,0 +1,31 @@
+name: targeted-tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  targeted-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Soroban contract binding tests (#1028)
+        run: npm test -- tests/soroban-bindings
+      - name: Soft-delete tests (#1030)
+        run: npm test -- tests/soft-delete
+      - name: Pact contract tests (#1031)
+        run: npm test -- tests/pact
+      # Provider verification (runs the env-gated block in the pact suite)
+      # when a deployed provider URL is configured as a repository secret.
+      - name: Pact provider verification
+        if: ${{ vars.PACT_PROVIDER_URL != '' }}
+        env:
+          PACT_PROVIDER_URL: ${{ vars.PACT_PROVIDER_URL }}
+        run: npm test -- tests/pact
