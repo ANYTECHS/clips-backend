@@ -13,6 +13,14 @@ export interface DailyAggregationResult {
   earningsProcessed: number;
   /** Number of users whose lifetime summary was refreshed. */
   usersUpdated: number;
+  /** True when the day was already aggregated and this run was skipped. */
+  skipped?: boolean;
+}
+
+export interface DailyEarningsFilters {
+  from?: Date;
+  to?: Date;
+  currency?: string;
 }
 
 /** One user+currency bucket accumulated in memory before it is written. */
@@ -76,33 +84,131 @@ export class DailyEarningsAggregationService {
   async aggregateDay(day?: Date): Promise<DailyAggregationResult> {
     const date = day ? startOfUtcDay(day) : previousUtcDay(new Date());
     const nextDate = new Date(date.getTime() + 24 * 60 * 60 * 1000);
+    const dateKey = date.toISOString().slice(0, 10);
 
-    this.logger.log(
-      `Aggregating earnings for ${date.toISOString().slice(0, 10)} (UTC)`,
-    );
+    this.logger.log(`Aggregating earnings for ${dateKey} (UTC)`);
 
-    const buckets = await this.collectBuckets(date, nextDate);
-    const earningsProcessed = [...buckets.values()].reduce(
-      (sum, bucket) => sum + bucket.earningCount,
-      0,
-    );
+    // Redis lock prevents two workers aggregating the same UTC day at once.
+    // The unique (userId, date, currency) index + upsert prevents duplicate rows
+    // if the job is replayed after an outage.
+    const lockKey = `earnings:daily-agg:${dateKey}`;
+    const locked = await this.acquireAggregationLock(lockKey);
+    if (!locked) {
+      this.logger.warn(
+        `Skipping aggregation for ${dateKey}: another worker holds the lock`,
+      );
+      return {
+        date,
+        bucketsWritten: 0,
+        earningsProcessed: 0,
+        usersUpdated: 0,
+        skipped: true,
+      };
+    }
 
-    await this.writeBuckets(date, buckets);
+    try {
+      const buckets = await this.collectBuckets(date, nextDate);
+      const earningsProcessed = [...buckets.values()].reduce(
+        (sum, bucket) => sum + bucket.earningCount,
+        0,
+      );
 
-    const userIds = [...new Set([...buckets.values()].map((b) => b.userId))];
-    await this.refreshSummaries(userIds);
+      await this.writeBuckets(date, buckets);
 
-    this.logger.log(
-      `Aggregated ${earningsProcessed} earning(s) into ${buckets.size} bucket(s) ` +
-        `across ${userIds.length} user(s) for ${date.toISOString().slice(0, 10)}`,
-    );
+      const userIds = [...new Set([...buckets.values()].map((b) => b.userId))];
+      await this.refreshSummaries(userIds);
+
+      this.logger.log(
+        `Aggregated ${earningsProcessed} earning(s) into ${buckets.size} bucket(s) ` +
+          `across ${userIds.length} user(s) for ${dateKey}`,
+      );
+
+      return {
+        date,
+        bucketsWritten: buckets.size,
+        earningsProcessed,
+        usersUpdated: userIds.length,
+      };
+    } finally {
+      await this.releaseAggregationLock(lockKey);
+    }
+  }
+
+  /**
+   * Read pre-aggregated DailyEarning rows for a user (dashboard / reporting).
+   */
+  async getDailyEarnings(userId: number, filters: DailyEarningsFilters = {}) {
+    const currency = filters.currency?.toUpperCase();
+    const where: {
+      userId: number;
+      currency?: string;
+      date?: { gte?: Date; lte?: Date };
+    } = { userId };
+
+    if (currency) {
+      where.currency = currency;
+    }
+
+    if (filters.from || filters.to) {
+      where.date = {};
+      if (filters.from) {
+        where.date.gte = startOfUtcDay(filters.from);
+      }
+      if (filters.to) {
+        where.date.lte = startOfUtcDay(filters.to);
+      }
+    }
+
+    const items = await this.prisma.dailyEarning.findMany({
+      where,
+      orderBy: [{ date: 'desc' }, { currency: 'asc' }],
+      select: {
+        id: true,
+        date: true,
+        currency: true,
+        totalAmount: true,
+        totalInBaseCurrency: true,
+        earningCount: true,
+        clipCount: true,
+      },
+    });
 
     return {
-      date,
-      bucketsWritten: buckets.size,
-      earningsProcessed,
-      usersUpdated: userIds.length,
+      items,
+      filters: {
+        from: filters.from ? startOfUtcDay(filters.from).toISOString() : null,
+        to: filters.to ? startOfUtcDay(filters.to).toISOString() : null,
+        currency: currency ?? null,
+      },
     };
+  }
+
+  private async acquireAggregationLock(key: string): Promise<boolean> {
+    try {
+      const client = this.redis.getClient();
+      // SET key token NX EX 300 — succeed only if the key does not exist.
+      const result = await client.set(key, '1', 'EX', 300, 'NX');
+      return result === 'OK';
+    } catch (error) {
+      // If Redis is down, proceed and rely on the unique index instead of
+      // blocking the nightly job entirely.
+      this.logger.warn(
+        `Could not acquire aggregation lock ${key}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+      return true;
+    }
+  }
+
+  private async releaseAggregationLock(key: string): Promise<void> {
+    try {
+      await this.redis.del(key);
+    } catch (error) {
+      this.logger.warn(
+        `Could not release aggregation lock ${key}: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /**

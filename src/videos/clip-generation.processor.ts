@@ -1,9 +1,10 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Logger, Optional } from '@nestjs/common';
+import { Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import { VideoProgressGateway } from './video-progress.gateway';
 import { PrismaService } from '../prisma/prisma.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 export interface ClipGenerationJobData {
   videoId: string;
@@ -36,14 +37,19 @@ export interface ClipGenerationJobData {
  * Closes #738
  */
 @Processor(CLIP_GENERATION_QUEUE)
-export class ClipGenerationProcessor extends WorkerHost {
+export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(ClipGenerationProcessor.name);
 
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly progressGateway?: VideoProgressGateway,
+    @Optional() private readonly shutdownService?: GracefulShutdownService,
   ) {
     super();
+  }
+
+  onModuleInit(): void {
+    this.shutdownService?.register(this.worker);
   }
 
   async process(job: Job<ClipGenerationJobData>): Promise<void> {
