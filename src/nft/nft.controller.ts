@@ -919,7 +919,7 @@ export class NftController {
    */
   @Auth()
   @Get(':mintAddress/royalty')
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Get on-chain royalty info for an NFT',
     description:
@@ -2358,7 +2358,7 @@ export class NftController {
 
   @Get(':id/mint-status')
   @UseGuards(LoginGuard)
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiTags('NFT Mint Status')
   @ApiOperation({
     summary: 'Get NFT mint lifecycle status',
@@ -2406,7 +2406,7 @@ export class NftController {
 
   @Post(':id/validate-metadata')
   @UseGuards(LoginGuard)
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
   @ApiTags('NFT Metadata Validation')
   @ApiOperation({
