@@ -31,6 +31,7 @@ import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
 import {
+  FeePreviewResponseDto,
   PayoutOnChainStatusResponseDto,
   PayoutProcessResponseDto,
   PayoutResponseDto,
@@ -41,6 +42,8 @@ import { OnChainStatusResponseDto } from './dto/on-chain-status.dto';
 import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
+import { FeeService } from './fee.service';
+import { PayoutExportService } from './payout-export.service';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
 
 import { API_ERROR_SCHEMA } from '../common/dtos';
@@ -69,6 +72,8 @@ export class PayoutsController {
   constructor(
     private readonly payoutsService: PayoutsService,
     private readonly balanceService: BalanceService,
+    private readonly feeService: FeeService,
+    private readonly payoutExportService: PayoutExportService,
   ) {}
 
   @Get('balance')
@@ -93,6 +98,122 @@ export class PayoutsController {
   })
   async getBalance(@Req() req: RequestWithUser) {
     return this.balanceService.getAvailableBalance(req.user.userId);
+  }
+
+  @Get('fees/preview')
+  @ApiOperation({
+    summary: 'Preview payout fee before confirmation',
+    description:
+      'Calculates the platform/withdrawal fee for a given amount and payout method ' +
+      'without creating a payout. Fees differ by method (fixed, percentage, or combined). ' +
+      'Net payout is always amount − fee and is never negative.',
+  })
+  @ApiQuery({
+    name: 'amount',
+    required: true,
+    type: Number,
+    example: 100,
+    description: 'Gross payout amount',
+  })
+  @ApiQuery({
+    name: 'method',
+    required: true,
+    example: 'stellar',
+    description: 'Payout method used to look up fee configuration',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    example: 'USD',
+    description: 'Currency code (default USD)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Fee breakdown',
+    type: FeePreviewResponseDto,
+    schema: {
+      example: { amount: 100, fee: 2, netAmount: 98, currency: 'USD' },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid amount or fee would produce a non-positive net payout',
+  })
+  async previewFee(
+    @Query('amount') amount: string,
+    @Query('method') method: string,
+    @Query('currency') currency?: string,
+  ) {
+    return this.feeService.previewFee(
+      parseFloat(amount),
+      method,
+      currency ?? 'USD',
+    );
+  }
+
+  @Get('export')
+  @ApiOperation({
+    summary: 'Export payout history as CSV or PDF',
+    description:
+      'Downloads the authenticated user\'s payout history. ' +
+      'Includes status, amount, currency, payout method, fee, net amount, ' +
+      'and transaction ID when available. Only the caller\'s payouts are included.',
+  })
+  @ApiQuery({
+    name: 'format',
+    required: true,
+    enum: ['csv', 'pdf'],
+    description: 'Export file format',
+    example: 'csv',
+  })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Inclusive start date (ISO 8601)',
+    example: '2026-01-01',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'Inclusive end date (ISO 8601)',
+    example: '2026-12-31',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Exported payout file (CSV or PDF binary)',
+    content: {
+      'text/csv': { schema: { type: 'string', format: 'binary' } },
+      'application/pdf': { schema: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid format or date filter',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Invalid export format "xlsx". Supported formats: csv, pdf',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  async exportPayouts(
+    @Req() req: RequestWithUser,
+    @Query('format') format: string,
+    @Query('startDate') startDate: string | undefined,
+    @Query('endDate') endDate: string | undefined,
+    @Res({ passthrough: false }) res: Response,
+  ): Promise<void> {
+    const result = await this.payoutExportService.exportPayouts(req.user.userId, {
+      format: format as 'csv' | 'pdf',
+      startDate,
+      endDate,
+    });
+
+    res.set({
+      'Content-Type': result.contentType,
+      'Content-Disposition': `attachment; filename="${result.filename}"`,
+    });
+    res.send(result.body);
   }
 
   @Post('request-partial')

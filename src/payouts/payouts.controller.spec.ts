@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PayoutsController } from './payouts.controller';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
+import { FeeService } from './fee.service';
+import { PayoutExportService } from './payout-export.service';
 
 describe('PayoutsController', () => {
   let controller: PayoutsController;
@@ -22,6 +24,14 @@ describe('PayoutsController', () => {
       providers: [
         { provide: PayoutsService, useValue: payoutsService },
         { provide: BalanceService, useValue: balanceService },
+        {
+          provide: FeeService,
+          useValue: { previewFee: jest.fn(), calculateFee: jest.fn() },
+        },
+        {
+          provide: PayoutExportService,
+          useValue: { exportPayouts: jest.fn() },
+        },
       ],
     }).compile();
 

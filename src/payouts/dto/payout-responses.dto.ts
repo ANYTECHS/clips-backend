@@ -9,8 +9,38 @@ export class PayoutResponseDto {
   @ApiProperty({ example: 1, description: 'Payout ID' })
   id: number;
 
-  @ApiProperty({ example: 100.5, description: 'Payout amount' })
+  @ApiProperty({
+    example: 100.5,
+    description: 'Gross payout amount before fees',
+  })
   amount: number;
+
+  @ApiPropertyOptional({
+    example: 2,
+    description:
+      'Platform/withdrawal fee deducted from the gross amount. ' +
+      'Fees are calculated from PayoutFeeConfig for the payout method ' +
+      '(fixed, percentage, or combined) and stored when the payout is created.',
+  })
+  fee?: number | null;
+
+  @ApiPropertyOptional({
+    example: 2,
+    description: 'Alias of fee (persisted as feeAmount)',
+  })
+  feeAmount?: number | null;
+
+  @ApiPropertyOptional({
+    example: 98.5,
+    description: 'Net amount the user receives after fees (amount - fee)',
+  })
+  netAmount?: number | null;
+
+  @ApiPropertyOptional({
+    example: 98.5,
+    description: 'Alias of netAmount (persisted as finalAmount)',
+  })
+  finalAmount?: number | null;
 
   @ApiProperty({ example: 'USD', description: 'Currency code' })
   currency: string;
@@ -158,6 +188,39 @@ export class RejectPayoutDto {
     example: 'Insufficient documentation',
   })
   reason?: string;
+}
+
+/**
+ * Fee preview response — same shape whether shown before confirmation
+ * or returned on a created payout.
+ *
+ * @example
+ * { "amount": 100, "fee": 2, "netAmount": 98, "currency": "USD" }
+ */
+export class FeePreviewResponseDto {
+  @ApiProperty({ example: 100, description: 'Gross payout amount' })
+  amount: number;
+
+  @ApiProperty({ example: 100, description: 'Gross payout amount (alias)' })
+  grossAmount: number;
+
+  @ApiProperty({ example: 2, description: 'Fee charged for this payout method' })
+  fee: number;
+
+  @ApiProperty({ example: 2, description: 'Fee amount (alias)' })
+  feeAmount: number;
+
+  @ApiProperty({ example: 2, description: 'Configured fee percentage when applicable' })
+  feePercentage: number;
+
+  @ApiProperty({ example: 98, description: 'Net amount after fees' })
+  netAmount: number;
+
+  @ApiProperty({ example: 98, description: 'Net amount (alias)' })
+  finalAmount: number;
+
+  @ApiProperty({ example: 'USD' })
+  currency: string;
 }
 
 export class PayoutMethodResponseDto {

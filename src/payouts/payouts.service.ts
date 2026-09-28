@@ -158,7 +158,9 @@ export class PayoutsService {
       amount: payout.amount,
       status: payout.status,
       createdAt: payout.createdAt,
+      fee: payout.feeAmount,
       feeAmount: payout.feeAmount,
+      netAmount: payout.finalAmount,
       finalAmount: payout.finalAmount,
     };
   }
@@ -227,7 +229,9 @@ export class PayoutsService {
       method: payout.method,
       status: payout.status,
       createdAt: payout.createdAt,
+      fee: payout.feeAmount,
       feeAmount: payout.feeAmount,
+      netAmount: payout.finalAmount,
       finalAmount: payout.finalAmount,
     };
   }
@@ -249,6 +253,38 @@ export class PayoutsService {
         : {}),
     };
 
+    const payouts = await this.prisma.payout.findMany({
+      where: {
+        userId,
+        ...(filterStatus ? { status: filterStatus } : {}),
+      },
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        method: true,
+        status: true,
+        transactionId: true,
+        onChainTxHash: true,
+        confirmedAt: true,
+        retryCount: true,
+        stellarXdr: true,
+        feeAmount: true,
+        feePercentage: true,
+        finalAmount: true,
+        paidAt: true,
+        approvedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return payouts.map((p) => ({
+      ...p,
+      fee: p.feeAmount,
+      netAmount: p.finalAmount,
+    }));
     const select = {
       id: true,
       amount: true,
@@ -320,7 +356,11 @@ export class PayoutsService {
       throw new NotFoundException('Payout record not found');
     }
 
-    return payout;
+    return {
+      ...payout,
+      fee: payout.feeAmount,
+      netAmount: payout.finalAmount,
+    };
   }
 
   private parseStatusFilter(status?: string): string | undefined {

@@ -69,9 +69,14 @@ describe('PayoutsService', () => {
 
   const mockFeeService = {
     calculateFee: jest.fn().mockResolvedValue({
+      amount: 100,
+      grossAmount: 100,
+      fee: 0,
       feeAmount: 0,
       feePercentage: 0,
+      netAmount: 100,
       finalAmount: 100,
+      currency: 'USD',
     }),
   };
 
@@ -256,9 +261,14 @@ describe('PayoutsService', () => {
         _sum: { amount: 0 },
       });
       mockFeeService.calculateFee.mockResolvedValue({
+        amount: 3,
+        grossAmount: 3,
+        fee: 0,
         feeAmount: 0,
         feePercentage: 0,
+        netAmount: 3,
         finalAmount: 3,
+        currency: 'USD',
       });
       mockPrismaService.payout.create.mockResolvedValue({
         id: 9,
@@ -297,9 +307,14 @@ describe('PayoutsService', () => {
         _sum: { amount: 0 },
       });
       mockFeeService.calculateFee.mockResolvedValue({
+        amount: 20000,
+        grossAmount: 20000,
+        fee: 100,
         feeAmount: 100,
         feePercentage: 0.5,
+        netAmount: 19900,
         finalAmount: 19900,
+        currency: 'USD',
       });
       mockPrismaService.payout.create.mockResolvedValue({
         id: 9,
