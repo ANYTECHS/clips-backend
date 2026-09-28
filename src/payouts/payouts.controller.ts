@@ -823,6 +823,23 @@ export class PayoutsController {
     return this.payoutsService.processPayout(id);
   }
 
+  @Post(':id/retry')
+  @ApiOperation({
+    summary: 'Retry a failed crypto payout',
+    description:
+      'Manually re-queue a failed or pending_retry payout with exponential backoff. Sets nextRetryAt/failureReason.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiResponse({ status: 200, description: 'Payout re-queued for retry' })
+  @ApiBadRequestResponse({ description: 'Payout is not retryable or max retries exceeded' })
+  @ApiNotFoundResponse({ description: 'Payout not found' })
+  async retryPayout(
+    @Req() req: RequestWithUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.payoutsService.retryPayout(id, req.user.userId);
+  }
+
   @Post(':id/cancel')
   @ApiOperation({ summary: 'Cancel a pending payout request' })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })

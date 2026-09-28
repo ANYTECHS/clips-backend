@@ -737,6 +737,10 @@ export class PayoutsService {
     return this.payoutProcessingService.processPayout(payoutId);
   }
 
+  async retryPayout(payoutId: number, userId?: number) {
+    return this.payoutProcessingService.retryPayout(payoutId, userId);
+  }
+
   async approvePayout(
     payoutId: number,
     adminUserId?: number,
