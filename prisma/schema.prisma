@@ -639,3 +639,45 @@ model IndexerState {
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
 }
+
+/// Scheduled contract pause requests with 24-hour timelock (Issue #1048).
+///
+/// Lifecycle:
+///   1. Admin calls POST /blockchain/pause  → row created (activatedAt=null, cancelledAt=null)
+///   2. After scheduledFor has passed the indexer sets activatedAt when a Paused event arrives.
+///   3. Admin calls DELETE /blockchain/pause to cancel → cancelledAt set.
+///   4. When Unpaused event arrives → cancelledAt set on the active row.
+model ContractPauseSchedule {
+  id           Int       @id @default(autoincrement())
+
+  /// Stellar address of the admin who requested the pause.
+  requestedBy  String
+
+  /// Wall-clock time when the pause was requested.
+  requestedAt  DateTime  @default(now())
+
+  /// requestedAt + 24 hours — earliest time the pause may be activated.
+  scheduledFor DateTime
+
+  /// Set by the indexer when a Paused on-chain event is observed and the
+  /// timelock has elapsed.
+  activatedAt  DateTime?
+
+  /// Set when the admin cancels before activation, or when Unpaused event
+  /// is observed on-chain.
+  cancelledAt  DateTime?
+
+  /// Address that cancelled the pause (admin).
+  cancelledBy  String?
+
+  /// Optional free-text reason for the pause.
+  reason       String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([requestedAt])
+  @@index([scheduledFor])
+  @@index([activatedAt])
+  @@index([cancelledAt])
+}
