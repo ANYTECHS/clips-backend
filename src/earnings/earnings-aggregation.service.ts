@@ -297,6 +297,12 @@ export class EarningsAggregationService {
     to?: string,
     currency?: string,
   ) {
+    const targetCurrency = ((currency?.toUpperCase() || 'USD') as Currency);
+    if (!Object.values(Currency).includes(targetCurrency)) {
+      throw new Error(
+        `Unsupported currency: ${currency}. Supported: ${Object.values(Currency).join(', ')}`,
+      );
+    }
     const where: any = {
       clip: { video: { userId } },
       deletedAt: null,
@@ -321,9 +327,7 @@ export class EarningsAggregationService {
       },
     });
 
-    const targetCurrency = (currency?.toUpperCase() || 'USD') as Currency;
-
-    const platformMap = new Map<string, number>();
+    const platformMap = new Map<string, { amount: number; count: number }>();
 
     for (const earning of earnings) {
       const platform = earning.source || 'unknown';
@@ -333,19 +337,29 @@ export class EarningsAggregationService {
         targetCurrency,
       );
 
-      platformMap.set(platform, (platformMap.get(platform) || 0) + convertedAmount);
+      const prev = platformMap.get(platform) || { amount: 0, count: 0 };
+      platformMap.set(platform, {
+        amount: prev.amount + convertedAmount,
+        count: prev.count + 1,
+      });
     }
 
     const data = Array.from(platformMap.entries())
-      .map(([platform, amount]) => ({
+      .map(([platform, v]) => ({
         platform,
-        amount,
+        amount: v.amount,
         currency: targetCurrency,
+        totalEarnings: v.amount,
+        count: v.count,
       }))
       .sort((a, b) => b.amount - a.amount);
 
+    const totalEarnings = data.reduce((sum, d) => sum + d.amount, 0);
+
     return {
       data,
+      totalEarnings,
+      currency: targetCurrency,
     };
   }
 
