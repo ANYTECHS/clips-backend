@@ -253,7 +253,8 @@ export class HealthController {
   @ApiOperation({
     summary: 'Queue health check',
     description:
-      'Returns health metrics for all BullMQ queues including job counts, failure rates, and overall status.',
+      'Returns health metrics for all BullMQ queues including job counts, failure rates, and overall status. ' +
+      'Also includes cleanup metrics showing number of jobs removed by scheduled cleanup operations.',
   })
   @ApiResponse({
     status: 200,
