@@ -69,12 +69,16 @@ export class EarningsController {
 
   @Get()
   @ApiOperation({
-    summary: 'Get user earnings total (cached)',
-    description: 'Returns the cached total earnings for the authenticated user.',
+    summary: 'Get user earnings total',
+    description:
+      'Returns total earnings for the authenticated user. ' +
+      'Frequently requested totals may be served from a short-lived cache; ' +
+      'on cache miss or cache unavailability the value is loaded from PostgreSQL. ' +
+      'The response shape is identical regardless of data source.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Cached user earnings total',
+    description: 'User earnings total',
     schema: {
       type: 'object',
       properties: {

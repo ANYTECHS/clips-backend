@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { EarningsService } from './earnings.service';
+import { EarningsCacheService } from './earnings-cache.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { EarningsExportService } from './earnings-export.service';
 import { EarningsController } from './earnings.controller';
@@ -28,6 +29,7 @@ import { AuthModule } from '../auth/auth.module';
   ],
   controllers: [EarningsController, AdminEarningsController],
   providers: [
+    EarningsCacheService,
     EarningsService,
     EarningsAggregationService,
     EarningsExportService,
@@ -38,6 +40,7 @@ import { AuthModule } from '../auth/auth.module';
     TaxReportExportService,
   ],
   exports: [
+    EarningsCacheService,
     EarningsService,
     EarningsAggregationService,
     EarningsExportService,

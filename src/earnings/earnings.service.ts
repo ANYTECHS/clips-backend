@@ -1,9 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { RedisService } from '../redis/redis.service';
-import { ConfigService } from '../config/config.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { CurrencyService } from '../common/services/currency.service';
+import { EarningsCacheService } from './earnings-cache.service';
 
 export interface UserEarningsSummary {
   totalEarned: number;
@@ -27,22 +26,21 @@ export class EarningsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
-    private readonly config: ConfigService,
+    private readonly cache: EarningsCacheService,
     private readonly eventEmitter: EventEmitter2,
     private readonly currencyService: CurrencyService,
   ) {}
 
+  /**
+   * Full earnings summary for a user.
+   * Served from Redis when available; falls back to PostgreSQL on miss or Redis failure.
+   * Response shape is identical regardless of cache source.
+   */
   async getUserTotalEarnings(userId: number, tx?: any): Promise<UserEarningsSummary> {
-    const cacheKey = `earnings:total:${userId}`;
     if (!tx) {
-      try {
-        const cached = await this.redis.get(cacheKey);
-        if (cached) {
-          return JSON.parse(cached);
-        }
-      } catch (err) {
-        this.logger.error(`Redis error reading balance cache: ${err.message}`);
+      const cached = await this.cache.getSummary(userId);
+      if (cached) {
+        return cached;
       }
     }
 
@@ -69,29 +67,20 @@ export class EarningsService {
     };
 
     if (!tx) {
-      try {
-        await this.redis.setex(
-          cacheKey,
-          this.config.earningsCacheTtlSeconds ?? 3600,
-          JSON.stringify(result),
-        );
-      } catch (err) {
-        this.logger.error(`Redis error writing balance cache: ${err.message}`);
-      }
+      await this.cache.setSummary(userId, result);
     }
 
     return result;
   }
 
+  /**
+   * Lightweight cached total used by GET /earnings.
+   * Identical response whether data comes from Redis or PostgreSQL.
+   */
   async getUserTotalEarningsCached(userId: number): Promise<{ total: number; currency: string }> {
-    const cacheKey = `earnings:user:${userId}:total`;
-    try {
-      const cached = await this.redis.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached);
-      }
-    } catch (err) {
-      this.logger.error(`Redis error reading user earnings total cache: ${err.message}`);
+    const cached = await this.cache.getTotal(userId);
+    if (cached) {
+      return cached;
     }
 
     const total = await this.getUserTotalEarningsFromDb(userId);
@@ -100,16 +89,7 @@ export class EarningsService {
       currency: 'USD',
     };
 
-    try {
-      await this.redis.setex(
-        cacheKey,
-        this.config.earningsCacheTtlSeconds ?? 3600,
-        JSON.stringify(result),
-      );
-    } catch (err) {
-      this.logger.error(`Redis error writing user earnings total cache: ${err.message}`);
-    }
-
+    await this.cache.setTotal(userId, result);
     return result;
   }
 
@@ -122,15 +102,7 @@ export class EarningsService {
   }
 
   async invalidateUserEarningsCache(userId: number): Promise<void> {
-    const keys = [
-      `earnings:total:${userId}`,
-      `earnings:user:${userId}:total`,
-    ];
-    try {
-      await this.redis.del(...keys);
-    } catch (err) {
-      this.logger.error(`Failed to invalidate cache for user ${userId}: ${err.message}`);
-    }
+    await this.cache.invalidate(userId);
   }
 
   async getAvailableBalance(userId: number): Promise<number> {
