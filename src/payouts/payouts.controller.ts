@@ -30,6 +30,7 @@ import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
 import {
+  PayoutOnChainStatusResponseDto,
   PayoutProcessResponseDto,
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
@@ -39,12 +40,20 @@ import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
 
 import { API_ERROR_SCHEMA } from '../common/dtos';
+import {
+  PAYOUT_STATUS_SWAGGER_DESCRIPTION,
+  PAYOUT_STATUS_VALUES,
+} from './payouts.constants';
 
 interface RequestWithUser extends Request {
   user: { userId: number };
 }
 
 const validationErrorSchema = API_ERROR_SCHEMA;
+
+const payoutError = (statusCode: number, error: string, message: string) => ({
+  value: { statusCode, message, error },
+});
 
 @ApiTags('payout')
 @ApiBearerAuth('access-token')
@@ -168,6 +177,10 @@ export class PayoutsController {
         summary: 'Stellar payout request',
         value: { amount: 120, currency: 'USD', method: 'stellar' },
       },
+      fiat: {
+        summary: 'Bank transfer payout request',
+        value: { amount: 250, currency: 'USD', method: 'fiat' },
+      },
     },
   })
   @ApiResponse({
@@ -177,16 +190,57 @@ export class PayoutsController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid request, insufficient balance, or amount below the minimum payout threshold',
-    schema: {
-      example: {
-        statusCode: 400,
-        message: ['Minimum payout for USD is 5. Requested amount: 3.', 'Maximum payout for USD is 10000.'],
-        error: 'Bad Request',
+      'Request failed validation: malformed body, amount below the minimum or above the maximum payout, ' +
+      'insufficient balance, or no Stellar wallet / default payout method configured.',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        examples: {
+          dtoValidation: {
+            summary: 'Malformed body',
+            value: {
+              statusCode: 400,
+              message: ['amount must be a valid number', 'method must be one of: fiat, stellar'],
+              error: 'Bad Request',
+            },
+          },
+          belowMinimum: {
+            summary: 'Below minimum payout',
+            ...payoutError(400, 'Bad Request', 'Minimum payout amount is 5 USD equivalent. Requested: 3 USD.'),
+          },
+          aboveMaximum: {
+            summary: 'Above per-currency maximum',
+            ...payoutError(400, 'Bad Request', 'Maximum payout for USD is 10000. Requested amount: 12000.'),
+          },
+          insufficientBalance: {
+            summary: 'Insufficient balance',
+            ...payoutError(400, 'Bad Request', 'Insufficient balance. Available: 80 USD'),
+          },
+          noWallet: {
+            summary: 'No Stellar wallet connected',
+            ...payoutError(400, 'Bad Request', 'No active Stellar wallet found. Please connect a wallet first.'),
+          },
+          noPayoutMethod: {
+            summary: 'No default payout method',
+            ...payoutError(400, 'Bad Request', 'No default payout method found. Please add a payout method first.'),
+          },
+        },
       },
     },
   })
-  @ApiConflictResponse({ description: 'Pending payout already exists' })
+  @ApiConflictResponse({
+    description: 'The user already has an open payout (pending, pending_review, pending_approval, approved or processing)',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        example: {
+          statusCode: 409,
+          message: 'A payout request is already pending for this user',
+          error: 'Conflict',
+        },
+      },
+    },
+  })
   async requestPayout(
     @Req() req: RequestWithUser,
     @Body() dto: CreatePayoutDto,
@@ -256,7 +310,42 @@ export class PayoutsController {
   @ApiBadRequestResponse({
     description:
       'Validation failed, payout is not ready, or the platform balance is insufficient',
-    schema: validationErrorSchema,
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        examples: {
+          wrongStatus: {
+            summary: 'Payout not in an initiable status',
+            ...payoutError(400, 'Bad Request', 'Payout must be approved or pending before Stellar initiation (current status: completed)'),
+          },
+          amountMismatch: {
+            summary: 'Amount differs from the payout record',
+            ...payoutError(400, 'Bad Request', 'Requested amount does not match payout amount'),
+          },
+          invalidDestination: {
+            summary: 'Invalid destination address',
+            ...payoutError(400, 'Bad Request', 'Invalid destination Stellar address'),
+          },
+          platformBalance: {
+            summary: 'Platform wallet underfunded',
+            ...payoutError(400, 'Bad Request', 'Insufficient platform balance. Available: 42 XLM'),
+          },
+        },
+      },
+    },
+  })
+  @ApiConflictResponse({
+    description: 'An unsigned Stellar transaction has already been prepared for this payout',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        example: {
+          statusCode: 409,
+          message: 'A Stellar payout transaction is already pending for this payout',
+          error: 'Conflict',
+        },
+      },
+    },
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async initiateStellarPayout(
@@ -279,18 +368,8 @@ export class PayoutsController {
   @ApiQuery({
     name: 'status',
     required: false,
-    description: 'Filter by payout status',
-    enum: [
-      'pending',
-      'pending_review',
-      'pending_approval',
-      'approved',
-      'processing',
-      'completed',
-      'failed',
-      'rejected',
-      'canceled',
-    ],
+    description: `Filter by payout status.\n\n${PAYOUT_STATUS_SWAGGER_DESCRIPTION}`,
+    enum: PAYOUT_STATUS_VALUES,
     example: 'completed',
   })
   @ApiResponse({
@@ -340,6 +419,7 @@ export class PayoutsController {
     status: 200,
     description:
       'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+    type: PayoutOnChainStatusResponseDto,
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async getOnChainStatus(
@@ -362,7 +442,27 @@ export class PayoutsController {
     type: PayoutProcessResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Payout is not approved or on-chain verification failed',
+    description: 'Payout is not approved, is already completed, has no wallet, or is below the minimum',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        examples: {
+          notApproved: {
+            summary: 'Payout not approved',
+            ...payoutError(400, 'Bad Request', 'Payout must be approved before processing (current status: pending_review)'),
+          },
+          alreadyCompleted: {
+            summary: 'Payout already completed',
+            ...payoutError(400, 'Bad Request', 'Payout is already in completed status'),
+          },
+        },
+      },
+    },
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'Stellar submission or on-chain verification failed. The payout is marked `failed` and a retry is scheduled with exponential backoff until MAX_PAYOUT_RETRIES is reached.',
+    schema: validationErrorSchema,
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async processPayout(@Param('id', ParseIntPipe) id: number) {
