@@ -230,6 +230,74 @@ export class AdminContractService {
     };
   }
 
+  async getTotalSupply(): Promise<{
+    totalSupply: number;
+    contractId: string;
+    network: string;
+  }> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call('total_supply');
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
+    try {
+      simulation = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.simulateTransaction(tx),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to query total_supply: ${msg}`);
+      throw new InternalServerErrorException(
+        `Failed to query total NFT supply: ${msg}`,
+      );
+    }
+
+    const result = simulation as {
+      error?: string;
+      results?: Array<{ xdr: string }>;
+    };
+    if (result.error || !result.results?.[0]?.xdr) {
+      throw new InternalServerErrorException(
+        result.error || 'No return value from total_supply contract call',
+      );
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(
+      result.results[0].xdr,
+      'base64',
+    );
+    const supply = StellarSdk.scValToNative(returnValue);
+    const totalSupply = typeof supply === 'bigint' ? Number(supply) : supply;
+    if (
+      typeof totalSupply !== 'number' ||
+      !Number.isInteger(totalSupply) ||
+      totalSupply < 0 ||
+      totalSupply > 0xffffffff
+    ) {
+      throw new InternalServerErrorException(
+        'Contract returned an invalid u32 total_supply value',
+      );
+    }
+
+    return {
+      totalSupply,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
   /**
    * Simulate a no-argument, no-auth contract view call and return its
    * decoded native value.
