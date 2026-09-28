@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -16,6 +15,16 @@ import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { PayoutValidationService } from './payout-validation.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 
+import {
+  PAYOUT_STATUSES,
+  UNCONFIRMED_STELLAR_PAYOUT_STATUSES,
+} from './payouts.constants';
+
+/**
+ * Executes payouts against the Stellar network: builds, submits and verifies
+ * transactions, schedules retries and polls Horizon for confirmation. All
+ * eligibility rules are delegated to PayoutValidationService.
+ */
 @Injectable()
 export class PayoutProcessingService {
   private readonly logger = new Logger(PayoutProcessingService.name);
@@ -98,35 +107,24 @@ export class PayoutProcessingService {
     if (!payoutWalletAddress) {
       throw new BadRequestException('No wallet associated with this payout');
     }
+    await this.payoutValidationService.assertStellarInitiable(payout, amount);
 
-    const destinationCheck = this.stellarService.validateAddress(payoutWalletAddress);
-    if (!destinationCheck.valid) {
-      throw new BadRequestException('Invalid destination Stellar address');
-    }
+    const platformAddress = this.payoutValidationService.getPlatformWalletAddress();
+    const payoutWalletAddress = this.payoutValidationService.assertValidDestination(
+      payout.wallet?.address,
+    );
 
     const platformBalance = await this.stellarService.getAccountBalance(platformAddress);
-    if (platformBalance < amount) {
-      throw new BadRequestException(
-        `Insufficient platform balance. Available: ${platformBalance} XLM`,
-      );
-    }
+    this.payoutValidationService.assertSufficientPlatformBalance(platformBalance, amount);
 
+    // Build an *unsigned* payment transaction for the platform (or ops) to sign later.
     const server = new StellarSdk.Horizon.Server(this.stellarService.horizonUrl);
     const sourceAccount = await server.loadAccount(platformAddress);
-
-    const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-      fee: StellarSdk.BASE_FEE,
-      networkPassphrase: this.stellarService.networkPassphrase,
-    })
-      .addOperation(
-        StellarSdk.Operation.payment({
-          destination: payoutWalletAddress,
-          asset: StellarSdk.Asset.native(),
-          amount: amount.toString(),
-        }),
-      )
-      .setTimeout(60)
-      .build();
+    const transaction = this.buildPaymentTransaction(
+      sourceAccount,
+      payoutWalletAddress,
+      amount,
+    );
 
     const transactionId = transaction.hash().toString('hex');
     const stellarXdr = transaction.toXDR();
@@ -134,7 +132,7 @@ export class PayoutProcessingService {
     const updated = await this.prisma.payout.update({
       where: { id: payoutId },
       data: {
-        status: 'pending',
+        status: PAYOUT_STATUSES.PENDING,
         transactionId,
         stellarXdr,
         externalTransactionId: transactionId,
@@ -178,30 +176,10 @@ export class PayoutProcessingService {
       throw new NotFoundException('Payout record not found');
     }
 
-    if (payout.status === 'completed') {
-      throw new BadRequestException(`Payout is already in ${payout.status} status`);
-    }
+    this.payoutValidationService.assertNotCompleted(payout.status);
+    const { wallet } = await this.payoutValidationService.assertProcessable(payout);
 
-    if (payout.status !== 'approved') {
-      throw new BadRequestException(
-        `Payout must be approved before processing (current status: ${payout.status})`,
-      );
-    }
-
-    if (!payout.wallet) {
-      throw new BadRequestException('No wallet associated with this payout');
-    }
-
-    await this.payoutValidationService.assertMinimumPayout(payout.amount, payout.currency);
-
-    const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
-    if (!platformSecret) {
-      throw new InternalServerErrorException(
-        'STELLAR_PLATFORM_SECRET environment variable is not set',
-      );
-    }
-
-    const sourceKeyPair = StellarSdk.Keypair.fromSecret(platformSecret);
+    const sourceKeyPair = this.getPlatformKeypair();
     const server = new StellarSdk.Horizon.Server(this.stellarService.horizonUrl);
 
     try {
@@ -210,25 +188,16 @@ export class PayoutProcessingService {
         data: {
           retryCount: payout.retryCount + 1,
           lastAttemptAt: new Date(),
-          status: 'processing',
+          status: PAYOUT_STATUSES.PROCESSING,
         },
       });
 
       const sourceAccount = await server.loadAccount(sourceKeyPair.publicKey());
-
-      const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: StellarSdk.BASE_FEE,
-        networkPassphrase: this.stellarService.networkPassphrase,
-      })
-        .addOperation(
-          StellarSdk.Operation.payment({
-            destination: payout.wallet.address,
-            asset: StellarSdk.Asset.native(),
-            amount: payout.amount.toString(),
-          }),
-        )
-        .setTimeout(60)
-        .build();
+      const transaction = this.buildPaymentTransaction(
+        sourceAccount,
+        wallet.address,
+        payout.amount,
+      );
 
       transaction.sign(sourceKeyPair);
 
@@ -265,7 +234,7 @@ export class PayoutProcessingService {
       const completePayoutData = await this.prisma.payout.update({
         where: { id: payoutId },
         data: {
-          status: 'completed',
+          status: PAYOUT_STATUSES.COMPLETED,
           transactionId: transaction.hash().toString('hex'),
           externalTransactionId: txHash,
           onChainTxHash: txHash,
@@ -288,14 +257,14 @@ export class PayoutProcessingService {
         onChainTxHash: txHash,
         confirmedAt: confirmedTime,
         paidAt: confirmedTime,
-        status: 'completed',
+        status: PAYOUT_STATUSES.COMPLETED,
         recipientEmail: payout.user.email,
-        walletAddress: payout.wallet.address,
+        walletAddress: wallet.address,
       });
 
       return {
         id: payout.id,
-        status: 'completed',
+        status: PAYOUT_STATUSES.COMPLETED,
         transactionId: transaction.hash().toString('hex'),
         externalTransactionId: txHash,
         onChainTxHash: txHash,
@@ -309,7 +278,7 @@ export class PayoutProcessingService {
       await this.prisma.payout.update({
         where: { id: payoutId },
         data: {
-          status: 'failed',
+          status: PAYOUT_STATUSES.FAILED,
           retryCount: newRetryCount,
           lastAttemptAt: new Date(),
         },
@@ -355,42 +324,16 @@ export class PayoutProcessingService {
             throw new NotFoundException('Payout record not found');
           }
 
-          if (payout.status !== 'approved') {
-            throw new BadRequestException(
-              `Payout must be approved before processing (current status: ${payout.status})`,
-            );
-          }
+          const { wallet } = await this.payoutValidationService.assertProcessable(payout);
 
-          if (!payout.wallet) {
-            throw new BadRequestException('No wallet associated with this payout');
-          }
-
-          await this.payoutValidationService.assertMinimumPayout(payout.amount, payout.currency);
-
-          const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
-          if (!platformSecret) {
-            throw new InternalServerErrorException(
-              'STELLAR_PLATFORM_SECRET environment variable is not set',
-            );
-          }
-
-          const sourceKeyPair = StellarSdk.Keypair.fromSecret(platformSecret);
+          const sourceKeyPair = this.getPlatformKeypair();
           const server = new StellarSdk.Horizon.Server(this.stellarService.horizonUrl);
           const sourceAccount = await server.loadAccount(sourceKeyPair.publicKey());
-
-          const transaction = new StellarSdk.TransactionBuilder(sourceAccount, {
-            fee: StellarSdk.BASE_FEE,
-            networkPassphrase: this.stellarService.networkPassphrase,
-          })
-            .addOperation(
-              StellarSdk.Operation.payment({
-                destination: payout.wallet.address,
-                asset: StellarSdk.Asset.native(),
-                amount: payout.amount.toString(),
-              }),
-            )
-            .setTimeout(60)
-            .build();
+          const transaction = this.buildPaymentTransaction(
+            sourceAccount,
+            wallet.address,
+            payout.amount,
+          );
 
           transaction.sign(sourceKeyPair);
 
@@ -428,7 +371,7 @@ export class PayoutProcessingService {
           await tx.payout.update({
             where: { id: payoutId },
             data: {
-              status: 'completed',
+              status: PAYOUT_STATUSES.COMPLETED,
               transactionId: transaction.hash().toString('hex'),
               onChainTxHash: txHash,
               confirmedAt: confirmedTime,
@@ -449,19 +392,19 @@ export class PayoutProcessingService {
             onChainTxHash: txHash,
             confirmedAt: confirmedTime,
             paidAt: confirmedTime,
-            status: 'completed',
+            status: PAYOUT_STATUSES.COMPLETED,
             recipientEmail: payout.user.email,
-            walletAddress: payout.wallet.address,
+            walletAddress: wallet.address,
           });
         });
 
-        results.push({ id: payoutId, status: 'completed' });
+        results.push({ id: payoutId, status: PAYOUT_STATUSES.COMPLETED });
         processed++;
       } catch (error) {
         this.logger.error(`Batch payout failed for ${payoutId}:`, error);
         results.push({
           id: payoutId,
-          status: 'failed',
+          status: PAYOUT_STATUSES.FAILED,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
         failed++;
@@ -471,7 +414,38 @@ export class PayoutProcessingService {
     return { processed, failed, results };
   }
 
-  async confirmOneStellarPayout(
+  /**
+   * Poll Horizon for every Stellar payout still awaiting on-chain
+   * confirmation. A failure on one payout is logged and does not stop the
+   * rest of the batch.
+   */
+  async pollPendingStellarPayouts(): Promise<void> {
+    const pending = await this.prisma.payout.findMany({
+      where: {
+        method: 'stellar',
+        status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] },
+        onChainTxHash: { not: null },
+        confirmedAt: null,
+      },
+      select: { id: true, onChainTxHash: true, retryCount: true, userId: true, amount: true },
+    });
+
+    if (pending.length === 0) return;
+
+    this.logger.log(`Polling ${pending.length} pending Stellar payout(s) for on-chain confirmation`);
+
+    for (const payout of pending) {
+      try {
+        await this.confirmOneStellarPayout(payout.id, payout.onChainTxHash!, payout.retryCount, payout.userId, payout.amount);
+      } catch (error) {
+        this.logger.error(
+          `Confirmation poll failed for payout ${payout.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+
+  private async confirmOneStellarPayout(
     payoutId: number,
     txHash: string,
     currentPollCount: number,
@@ -485,11 +459,11 @@ export class PayoutProcessingService {
         const updated = await this.prisma.payout.updateMany({
           where: {
             id: payoutId,
-            status: { in: ['pending', 'processing'] },
+            status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] },
             confirmedAt: null,
           },
           data: {
-            status: 'completed',
+            status: PAYOUT_STATUSES.COMPLETED,
             confirmedAt: result.confirmedAt ?? new Date(),
           },
         });
@@ -506,8 +480,8 @@ export class PayoutProcessingService {
         }
       } else {
         const updated = await this.prisma.payout.updateMany({
-          where: { id: payoutId, status: { in: ['pending', 'processing'] } },
-          data: { status: 'failed' },
+          where: { id: payoutId, status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] } },
+          data: { status: PAYOUT_STATUSES.FAILED },
         });
 
         if (updated.count > 0) {
@@ -527,8 +501,8 @@ export class PayoutProcessingService {
     const newPollCount = currentPollCount + 1;
     if (newPollCount >= STELLAR_CONFIRMATION_MAX_POLLS) {
       const updated = await this.prisma.payout.updateMany({
-        where: { id: payoutId, status: { in: ['pending', 'processing'] } },
-        data: { status: 'failed', retryCount: newPollCount },
+        where: { id: payoutId, status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] } },
+        data: { status: PAYOUT_STATUSES.FAILED, retryCount: newPollCount },
       });
 
       if (updated.count > 0) {
@@ -549,6 +523,37 @@ export class PayoutProcessingService {
         data: { retryCount: newPollCount, lastAttemptAt: new Date() },
       });
     }
+  }
+
+  private getPlatformKeypair(): StellarSdk.Keypair {
+    const platformSecret = process.env.STELLAR_PLATFORM_SECRET;
+    if (!platformSecret) {
+      throw new InternalServerErrorException(
+        'STELLAR_PLATFORM_SECRET environment variable is not set',
+      );
+    }
+
+    return StellarSdk.Keypair.fromSecret(platformSecret);
+  }
+
+  private buildPaymentTransaction(
+    sourceAccount: ConstructorParameters<typeof StellarSdk.TransactionBuilder>[0],
+    destination: string,
+    amount: number,
+  ): StellarSdk.Transaction {
+    return new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination,
+          asset: StellarSdk.Asset.native(),
+          amount: amount.toString(),
+        }),
+      )
+      .setTimeout(60)
+      .build();
   }
 
   private async verifyTransaction(

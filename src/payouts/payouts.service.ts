@@ -2,19 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
-  ConflictException,
-  InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import * as StellarSdk from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { StellarService } from '../stellar/stellar.service';
 import { PayoutReceiptService } from './payout-receipt.service';
 import { EarningsService } from '../earnings/earnings.service';
-import { PAYOUT_RETRY_QUEUE, MAX_PAYOUT_RETRIES, PAYOUT_RETRY_BACKOFF_BASE } from './payout-retry.queue';
-import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
@@ -28,17 +21,26 @@ import {
   OPEN_PAYOUT_STATUSES,
   expandStatusFilter,
   normalizePayoutStatusFilter,
+import {
+  ADMIN_PENDING_PAYOUT_STATUSES,
+  PAID_OUT_PAYOUT_STATUSES,
+  PAYOUT_STATUSES,
 } from './payouts.constants';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 
+/**
+ * Entry point for payout operations. Owns payout creation and the
+ * user/admin-driven status transitions (approve, reject, cancel); eligibility
+ * rules live in PayoutValidationService and Stellar transaction execution in
+ * PayoutProcessingService.
+ */
 @Injectable()
 export class PayoutsService {
   private readonly logger = new Logger(PayoutsService.name);
   private readonly defaultPayoutCurrency =
     process.env.DEFAULT_PAYOUT_CURRENCY ?? 'USD';
-  private readonly payoutLimitsService: PayoutLimitsService;
 
   constructor(
     private prisma: PrismaService,
@@ -47,10 +49,6 @@ export class PayoutsService {
     private payoutReceiptService: PayoutReceiptService,
     private feeService: FeeService,
     private payoutApprovalService: PayoutApprovalService,
-    private readonly config: ConfigService,
-    payoutLimitsService: PayoutLimitsService,
-    private readonly currencyService: CurrencyService,
-    @InjectQueue(PAYOUT_RETRY_QUEUE) private payoutRetryQueue: Queue,
     private readonly payoutValidationService: PayoutValidationService,
     private readonly payoutProcessingService: PayoutProcessingService,
     private readonly stellarPayoutVerification: StellarPayoutVerificationService,
@@ -92,6 +90,7 @@ export class PayoutsService {
       ''
     );
   }
+  ) {}
 
   async initiateStellarPayout(
     userId: number,
@@ -115,25 +114,8 @@ export class PayoutsService {
     feeAmount?: number;
     finalAmount?: number;
   }> {
-    const existingPending = await this.prisma.payout.findFirst({
-      where: { userId, status: { in: [...OPEN_PAYOUT_STATUSES] } },
-    });
-
-    if (existingPending) {
-      throw new ConflictException(
-        'A payout request is already pending for this user',
-      );
-    }
-
-    const wallet = await this.prisma.wallet.findFirst({
-      where: { userId, chain: 'stellar', deletedAt: null },
-    });
-
-    if (!wallet) {
-      throw new BadRequestException(
-        'No active Stellar wallet found. Please connect a wallet first.',
-      );
-    }
+    await this.payoutValidationService.ensureNoOpenPayout(userId);
+    const wallet = await this.payoutValidationService.getActiveStellarWallet(userId);
 
     const currency = this.defaultPayoutCurrency;
 
@@ -144,14 +126,14 @@ export class PayoutsService {
       });
 
       const totalPaidOut = await tx.payout.aggregate({
-        where: { userId, status: { in: ['completed', 'processing'] } },
+        where: { userId, status: { in: [...PAID_OUT_PAYOUT_STATUSES] } },
         _sum: { amount: true },
       });
 
       const availableBalance =
         (totalEarnings._sum.amount ?? 0) - (totalPaidOut._sum.amount ?? 0);
 
-      await this.assertMinimumPayout(availableBalance, currency);
+      await this.payoutValidationService.assertMinimumPayout(availableBalance, currency);
 
       const fee = await this.feeService.calculateFee(availableBalance, 'stellar');
       const status = this.payoutApprovalService.resolveInitialStatus(availableBalance);
@@ -196,53 +178,24 @@ export class PayoutsService {
     feeAmount?: number;
     finalAmount?: number;
   }> {
-    const existingPending = await this.prisma.payout.findFirst({
-      where: { userId, status: { in: [...OPEN_PAYOUT_STATUSES] } },
-    });
-
-    if (existingPending) {
-      throw new ConflictException(
-        'A payout request is already pending for this user',
-      );
-    }
-
-    await this.assertMinimumPayout(amount, currency);
-    this.assertPayoutLimits(amount, currency);
+    await this.payoutValidationService.ensureNoOpenPayout(userId);
+    await this.payoutValidationService.assertMinimumPayout(amount, currency);
+    this.payoutValidationService.assertPayoutLimits(amount, currency);
 
     const earningsSummary = await this.earningsService.getUserTotalEarnings(userId);
-    const availableBalance = earningsSummary.availableBalance;
-
-    if (amount > availableBalance) {
-      throw new BadRequestException(
-        `Insufficient balance. Available: ${availableBalance} ${currency}`,
-      );
-    }
+    this.payoutValidationService.assertSufficientBalance(
+      amount,
+      earningsSummary.availableBalance,
+      currency,
+    );
 
     let walletId: number | null = null;
     let payoutMethodId: number | null = null;
 
     if (method === 'stellar') {
-      const wallet = await this.prisma.wallet.findFirst({
-        where: { userId, chain: 'stellar', deletedAt: null },
-      });
-
-      if (!wallet) {
-        throw new BadRequestException(
-          'No active Stellar wallet found. Please connect a wallet first.',
-        );
-      }
-      walletId = wallet.id;
+      walletId = (await this.payoutValidationService.getActiveStellarWallet(userId)).id;
     } else if (method === 'fiat') {
-      const payoutMethod = await this.prisma.payoutMethod.findFirst({
-        where: { userId, isDefault: true, deletedAt: null },
-      });
-
-      if (!payoutMethod) {
-        throw new BadRequestException(
-          'No default payout method found. Please add a payout method first.',
-        );
-      }
-      payoutMethodId = payoutMethod.id;
+      payoutMethodId = (await this.payoutValidationService.getDefaultPayoutMethod(userId)).id;
     }
 
     const feeCalculation = await this.feeService.calculateFee(amount, method);
@@ -533,15 +486,13 @@ export class PayoutsService {
       include: { user: { select: { email: true } } },
     });
     if (!payout) throw new NotFoundException('Payout not found');
-    if (!this.payoutApprovalService.canApprove(payout.status)) {
-      throw new BadRequestException(`Cannot approve payout in '${payout.status}' status`);
-    }
+    this.payoutValidationService.assertCanApprove(payout.status);
 
     const now = new Date();
     const updated = await this.prisma.payout.update({
       where: { id: payoutId },
       data: {
-        status: 'approved',
+        status: PAYOUT_STATUSES.APPROVED,
         approvedAt: now,
         approvedBy: adminUserId,
         reviewedAt: now,
@@ -588,9 +539,7 @@ export class PayoutsService {
       include: { user: { select: { email: true } } },
     });
     if (!payout) throw new NotFoundException('Payout not found');
-    if (!this.payoutApprovalService.canReject(payout.status)) {
-      throw new BadRequestException(`Cannot reject payout in '${payout.status}' status`);
-    }
+    this.payoutValidationService.assertCanReject(payout.status);
 
     const now = new Date();
     const updated = await this.prisma.payout.update({
@@ -602,6 +551,7 @@ export class PayoutsService {
         rejectionReason: reason.trim(),
         approvedBy: adminUserId,
       },
+      data: { status: PAYOUT_STATUSES.REJECTED, rejectedAt: now, reviewedAt: now, rejectionReason: reason ?? null },
     });
 
     await this.prisma.earningsAuditLog.create({
@@ -650,6 +600,7 @@ export class PayoutsService {
   async listPendingPayouts(): Promise<Array<{ id: number; userId: number; amount: number; currency: string; status: string; createdAt: Date }>> {
     return this.prisma.payout.findMany({
       where: { status: { in: ['pending_approval', 'under_review', 'pending_review', 'approved'] } },
+      where: { status: { in: [...ADMIN_PENDING_PAYOUT_STATUSES] } },
       orderBy: { createdAt: 'asc' },
       select: { id: true, userId: true, amount: true, currency: true, status: true, createdAt: true },
     });
@@ -658,6 +609,7 @@ export class PayoutsService {
   async listPendingReviewPayouts(): Promise<Array<{ id: number; userId: number; amount: number; currency: string; status: string; createdAt: Date }>> {
     return this.prisma.payout.findMany({
       where: { status: { in: ['under_review', 'pending_review'] } },
+      where: { status: PAYOUT_STATUSES.PENDING_REVIEW },
       orderBy: { createdAt: 'asc' },
       select: { id: true, userId: true, amount: true, currency: true, status: true, createdAt: true },
     });
@@ -689,10 +641,11 @@ export class PayoutsService {
         `Cannot cancel payout in '${payout.status}' status. Only pending payouts can be canceled.`,
       );
     }
+    this.payoutValidationService.assertCanCancel(payout.status);
 
     const updated = await this.prisma.payout.update({
       where: { id: payoutId },
-      data: { status: 'canceled' },
+      data: { status: PAYOUT_STATUSES.CANCELED },
     });
 
     this.logger.log(`Payout ${payoutId} canceled by user ${userId}`);
@@ -724,7 +677,7 @@ export class PayoutsService {
       throw new NotFoundException('Payout not found');
     }
 
-    if (payout.status !== 'completed') {
+    if (payout.status !== PAYOUT_STATUSES.COMPLETED) {
       throw new BadRequestException(
         'Receipt is only available for completed payouts',
       );
