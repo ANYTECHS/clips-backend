@@ -14,15 +14,10 @@ import {
   CircuitBreakerService,
   CircuitBreakerConfig,
 } from '../common/circuit-breaker/circuit-breaker.service';
+import { SOROBAN_NFT_EVENT_TYPES } from './event-types';
 
 const INDEXER_ID = 'soroban-nft';
-const INDEXED_EVENT_TYPES = new Set([
-  'Mint',
-  'Transfer',
-  'RoyaltyPaid',
-  'Burn',
-  'RoyaltyClaimed',
-]);
+const INDEXED_EVENT_TYPES = new Set<string>(SOROBAN_NFT_EVENT_TYPES);
 const POLL_INTERVAL_MS = 15_000;
 const MAX_EVENTS_PER_POLL = 100;
 const MAX_FAILURES_BEFORE_BACKOFF = 5;
