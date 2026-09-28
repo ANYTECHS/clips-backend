@@ -583,10 +583,25 @@ export class AuthController {
   @Post('logout')
   @ApiOperation({
     summary: 'Logout user',
-    description: 'Revokes refresh token and clears cookies',
+    description:
+      'Revokes the refresh token and clears token cookies. Accepts the refresh token ' +
+      'in the request body (`RefreshTokenDto.refreshToken`) or via the `refresh_token` cookie. ' +
+      'Always clears cookies even when no valid token is supplied (Issue #926).',
   })
   @ApiBody({ type: RefreshTokenDto })
-  @ApiResponse({ status: 204, description: 'Logout successful' })
+  @ApiResponse({ status: 204, description: 'Logout successful - refresh token revoked, cookies cleared' })
+  @ApiResponse({
+    status: 401,
+    description: 'Refresh token invalid, expired, or already revoked (cookies are still cleared)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid refresh token',
+        error: 'Unauthorized',
+      },
+    },
+  })
+
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @Body(new ValidationPipe({ transform: true })) dto: RefreshTokenDto,
