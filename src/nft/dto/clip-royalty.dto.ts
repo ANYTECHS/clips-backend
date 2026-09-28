@@ -80,12 +80,19 @@ export class ClipRoyaltyResponseDto {
 }
 
 /**
- * DTO for royalty calculation response
+ * DTO for royalty calculation request
+ *
+ * ## Safe Arithmetic
+ * Calculations use BigInt arithmetic (safe-math.helper.ts) to prevent overflow
+ * and IEEE-754 precision loss on large sale prices.
+ *
+ * See docs/safe-math.md for detailed overflow handling strategy.
  */
 export class RoyaltyCalculationDto {
   @ApiProperty({
-    description: 'Sale price in stroops (smallest Stellar unit)',
+    description: 'Sale price in stroops (smallest Stellar unit). Must be a non-negative integer. Maximum supported value is Number.MAX_SAFE_INTEGER (≈ 9 × 10^15)',
     example: 1000000000,
+    minimum: 0,
   })
   @IsNumber()
   @IsInteger()
@@ -93,8 +100,10 @@ export class RoyaltyCalculationDto {
   salePrice!: number;
 
   @ApiProperty({
-    description: 'Royalty basis points',
+    description: 'Royalty basis points. 100 BPS = 1%, 1000 BPS = 10%. For clips, maximum is 1500 BPS (15%). Must be a non-negative integer.',
     example: 1000,
+    minimum: 0,
+    maximum: 1500,
   })
   @IsNumber()
   @IsInteger()
@@ -105,22 +114,35 @@ export class RoyaltyCalculationDto {
 
 /**
  * DTO for royalty calculation response
+ *
+ * ## Overflow Protection
+ * The `royaltyAmount` is calculated using safe checked arithmetic that prevents
+ * overflow and precision loss. If the calculation would exceed Number.MAX_SAFE_INTEGER,
+ * a 400 Bad Request error is returned instead of a corrupted value.
+ *
+ * See docs/safe-math.md for implementation details.
  */
 export class RoyaltyCalculationResponseDto {
-  @ApiProperty({ description: 'Sale price', example: 1000000000 })
+  @ApiProperty({ 
+    description: 'Sale price (input)', 
+    example: 1000000000 
+  })
   salePrice!: number;
 
-  @ApiProperty({ description: 'Royalty basis points', example: 1000 })
+  @ApiProperty({ 
+    description: 'Royalty basis points (input)', 
+    example: 1000 
+  })
   basisPoints!: number;
 
   @ApiProperty({
-    description: 'Calculated royalty amount in stroops',
+    description: 'Calculated royalty amount in stroops, computed using safe arithmetic (BigInt). Guaranteed not to suffer from IEEE-754 precision loss.',
     example: 100000000,
   })
   royaltyAmount!: number;
 
   @ApiProperty({
-    description: 'Percentage representation',
+    description: 'Percentage representation (e.g., "10%")',
     example: '10%',
   })
   percentage!: string;
