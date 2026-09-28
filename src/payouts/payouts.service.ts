@@ -717,6 +717,9 @@ export class PayoutsService {
       throw new NotFoundException('Payout not found');
     }
 
+    if (payout.status !== 'completed') {
+      throw new ConflictException(
+        'Receipt is not yet available — payout is not completed',
     if (payout.status !== PAYOUT_STATUSES.COMPLETED) {
       throw new BadRequestException(
         'Receipt is only available for completed payouts',
@@ -729,7 +732,9 @@ export class PayoutsService {
     });
 
     if (!receipt) {
-      throw new NotFoundException('Receipt not found for this payout');
+      throw new ConflictException(
+        'Receipt is not yet available for this payout',
+      );
     }
 
     // Generate PDF on-demand

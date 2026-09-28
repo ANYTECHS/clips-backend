@@ -13,6 +13,9 @@ export const PAYOUT_STATUSES = {
   CANCELLED: 'cancelled',
 } as const;
 
+/** Maximum number of payout IDs accepted by the admin bulk process endpoint. */
+export const MAX_BULK_PAYOUT_BATCH_SIZE = 50;
+
 /** User-facing statuses documented in #984 (+ review/approval lifecycle from #988). */
 export const PAYOUT_FILTER_STATUSES = [
   'pending',

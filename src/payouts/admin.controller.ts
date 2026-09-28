@@ -27,6 +27,11 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutsService } from './payouts.service';
 import { ApprovePayoutDto, RejectPayoutDto } from './dto/payout-review.dto';
 import { PayoutResponseDto } from './dto/payout-responses.dto';
+import {
+  BulkProcessPayoutsDto,
+  BulkProcessPayoutsResponseDto,
+} from './dto/bulk-process-payouts.dto';
+import { MAX_BULK_PAYOUT_BATCH_SIZE } from './payouts.constants';
 import { API_ERROR_SCHEMA } from '../common/dtos';
 
 interface BatchApproveDto {
@@ -45,6 +50,8 @@ interface RequestWithAdmin extends Request {
  */
 @ApiTags('admin')
 @ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized — missing or invalid access token' })
+@ApiForbiddenResponse({ description: 'Forbidden — admin access required' })
 @ApiUnauthorizedResponse({
   description: 'Unauthorized — JWT token required',
   schema: API_ERROR_SCHEMA,
@@ -82,15 +89,53 @@ export class AdminPayoutsController {
     return this.payoutsService.listPendingReviewPayouts();
   }
 
+  @Post('bulk-process')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Bulk process approved payouts',
+    description:
+      'Processes multiple approved payouts in one request (admin only). ' +
+      `Each payout is validated and processed within its own transaction. ` +
+      `Maximum batch size: ${MAX_BULK_PAYOUT_BATCH_SIZE}. ` +
+      'Partial failures are returned per item without aborting the whole batch. ' +
+      'Audit logs are recorded for each successful or failed verification.',
+  })
+  @ApiBody({ type: BulkProcessPayoutsDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Bulk processing completed. Check `results` for per-item success/failure details.',
+    type: BulkProcessPayoutsResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: `Invalid request — empty list, non-integer IDs, or batch exceeds ${MAX_BULK_PAYOUT_BATCH_SIZE}`,
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — missing or invalid access token' })
+  @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })
+  async bulkProcess(
+    @Body() body: BulkProcessPayoutsDto,
+  ): Promise<BulkProcessPayoutsResponseDto> {
+    return this.payoutsService.batchProcessPayouts(body.payoutIds);
+  }
+
   @Post('batch-approve')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
+    summary: 'Batch process payouts (legacy alias)',
+    description:
+      `Alias of POST /admin/payouts/bulk-process. Maximum batch size: ${MAX_BULK_PAYOUT_BATCH_SIZE}.`,
+    deprecated: true,
+  })
+  @ApiBody({ type: BulkProcessPayoutsDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Payouts batch processed',
+    type: BulkProcessPayoutsResponseDto,
     summary: 'Batch process approved payouts',
     description: 'Processes multiple already-approved payouts (admin only)',
   })
-  @ApiResponse({ status: 200, description: 'Payouts batch processed' })
-  @ApiBadRequestResponse({ description: 'Invalid payout IDs' })
-  async batchApprove(@Body() body: BatchApproveDto) {
+  @ApiBadRequestResponse({ description: 'Invalid payout IDs or batch too large' })
+  async batchApprove(@Body() body: BulkProcessPayoutsDto) {
     return this.payoutsService.batchProcessPayouts(body.payoutIds);
   }
 
