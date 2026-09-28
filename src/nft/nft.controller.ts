@@ -132,6 +132,7 @@ import {
 } from './dto/update-royalty-recipient.dto';
 import { DeploymentStatusResponseDto } from './dto/deployment-status.dto';
 import { CollectionInfoResponseDto } from './dto/collection-info.dto';
+import { TotalSupplyResponseDto } from './dto/total-supply.dto';
 import { GasStatsResponseDto } from './dto/gas-stats.dto';
 import { GasMetricsService } from './gas-metrics.service';
 import {
@@ -1940,6 +1941,25 @@ export class NftController {
   })
   async getCollectionInfo(): Promise<CollectionInfoResponseDto> {
     return this.adminContractService.getCollectionInfo();
+  }
+
+  @Get('supply')
+  @ApiOperation({
+    summary: 'Get total minted clip NFT supply',
+    description:
+      'Queries the configured Soroban NFT contract total_supply() view function. ' +
+      'The value is live supply: successful mints increase it and successful burns decrease it. ' +
+      'Preparing an unsigned burn transaction does not change the count.',
+  })
+  @ApiOkResponse({
+    description: 'Total minted NFT supply returned successfully',
+    type: TotalSupplyResponseDto,
+  })
+  @ApiInternalServerErrorResponse({
+    description: 'Soroban contract communication failed or returned an invalid value',
+  })
+  async getTotalSupply(): Promise<TotalSupplyResponseDto> {
+    return this.adminContractService.getTotalSupply();
   }
 
   @Get('deployment-status')
