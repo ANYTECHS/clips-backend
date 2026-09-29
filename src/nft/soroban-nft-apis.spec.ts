@@ -1,4 +1,9 @@
-import { ForbiddenException, BadRequestException, HttpException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  BadRequestException,
+  HttpException,
+} from '@nestjs/common';
 import { NftTransferService } from './nft-transfer.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { NftTransferHistoryService } from './nft-transfer-history.service';
@@ -64,12 +69,16 @@ describe('NftTransferService (Issue #843)', () => {
   const circuitBreakerService = {
     execute: jest.fn((_c: unknown, fn: () => unknown) => fn()),
   };
+  const adminContractService = {
+    getFreezeStatus: jest.fn().mockResolvedValue({ tokenId: 42, frozen: false }),
+  };
 
   let service: NftTransferService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     stellarService.validateAddress.mockReturnValue({ valid: true });
+    adminContractService.getFreezeStatus.mockResolvedValue({ tokenId: 42, frozen: false });
     mockSimulateTransaction.mockResolvedValue({
       results: [{ xdr: false }],
     });
@@ -79,6 +88,7 @@ describe('NftTransferService (Issue #843)', () => {
       royaltyConfigurationService as any,
       prisma as any,
       circuitBreakerService as any,
+      adminContractService as any,
     );
   });
 
@@ -143,6 +153,20 @@ describe('NftTransferService (Issue #843)', () => {
         0,
       ),
     ).rejects.toThrow('Soulbound NFTs cannot be transferred');
+  });
+
+  it('rejects transfer preparation for a frozen NFT', async () => {
+    nftOwnershipService.verifyNFTOwnership.mockResolvedValue({ isOwner: true });
+    adminContractService.getFreezeStatus.mockResolvedValue({ tokenId: 42, frozen: true });
+
+    await expect(
+      service.prepareTransferTx(
+        42,
+        'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        'GBXXYQVNHHZSL3VQNNNQRXB2FHQWZYTQJ6JRYVJL7XP2KXFBH3TFQXAA',
+        0,
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });
 

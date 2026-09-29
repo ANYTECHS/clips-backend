@@ -1,4 +1,11 @@
-import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import StellarSdk from '@stellar/stellar-sdk';
 import { StellarService } from '../stellar/stellar.service';
 import {
@@ -67,6 +74,73 @@ export class AdminContractService {
       contractId: this.CONTRACT_ID,
       network: this.stellarService.network,
     };
+  }
+
+  async prepareTokenFreezeTx(
+    tokenId: number,
+    adminAddress: string,
+    frozen: boolean,
+  ) {
+    this.validateTokenId(tokenId);
+    const status = await this.getFreezeStatus(tokenId);
+    if (status.frozen === frozen) {
+      throw new ConflictException(
+        `Token ${tokenId} is already ${frozen ? 'frozen' : 'unfrozen'}`,
+      );
+    }
+
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const action = frozen ? 'freeze' : 'unfreeze';
+    const op = contract.call(
+      action,
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    );
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action,
+      tokenId: tokenId.toString(),
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  async getFreezeStatus(tokenId: number): Promise<{ tokenId: number; frozen: boolean }> {
+    this.validateTokenId(tokenId);
+    const token = await this.getClipId(tokenId);
+    if (token.clipId === null) {
+      throw new NotFoundException(`NFT ${tokenId} was not found`);
+    }
+
+    const frozen = await this.callViewFunction('is_frozen', [
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    ]);
+    return { tokenId, frozen: Boolean(frozen) };
+  }
+
+  private validateTokenId(tokenId: number): void {
+    if (!Number.isInteger(tokenId) || tokenId < 0 || tokenId > 0xffffffff) {
+      throw new BadRequestException('Token ID must be a valid u32');
+    }
   }
 
   async prepareRefreshMetadataTx(
@@ -302,10 +376,13 @@ export class AdminContractService {
    * Simulate a no-argument, no-auth contract view call and return its
    * decoded native value.
    */
-  private async callViewFunction(fnName: string): Promise<unknown> {
+  private async callViewFunction(
+    fnName: string,
+    args: StellarSdk.xdr.ScVal[] = [],
+  ): Promise<unknown> {
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
-    const op = contract.call(fnName);
+    const op = contract.call(fnName, ...args);
     const dummyAccount = new StellarSdk.Account(
       'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
       '0',

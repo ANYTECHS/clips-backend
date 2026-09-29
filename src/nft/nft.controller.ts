@@ -214,6 +214,20 @@ export class NftController {
     return { owner };
   }
 
+  @Get(':tokenId/freeze-status')
+  @ApiOperation({
+    summary: 'Get an NFT freeze status',
+    description: 'Reads the token-specific frozen state from the Soroban NFT contract.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'u32 NFT token ID', example: 42 })
+  @ApiOkResponse({ schema: { example: { tokenId: 42, frozen: false } } })
+  @ApiNotFoundResponse({ description: 'NFT token does not exist' })
+  async getFreezeStatus(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+  ): Promise<{ tokenId: number; frozen: boolean }> {
+    return this.adminContractService.getFreezeStatus(tokenId);
+  }
+
   /**
    * GET /nfts/:id/exists
    * Lightweight token existence check (Issue #688).
@@ -918,23 +932,48 @@ export class NftController {
   @ApiOperation({
     summary: 'Burn a minted clip NFT',
     description:
-      'Builds an unsigned Soroban transaction that calls the burn(owner, token_id) contract ' +
-      'method, permanently destroying the token. The caller must own the clip; the returned XDR ' +
-      "must be signed by the NFT owner's wallet and submitted to the network by the frontend.",
+      'Builds an unsigned Soroban transaction that calls burn(owner, token_id, refund_royalties), ' +
+      'permanently destroying the token. The caller and supplied wallet must own the clip and ' +
+      'on-chain NFT. When refundRoyalties is true, the response includes the configured royalty ' +
+      'recipient and a balance estimate in stroops; the contract must recalculate and refund it ' +
+      'atomically when the owner signs and submits the transaction, clear the claimed balance, ' +
+      'emit `Refunded`, and prevent replay/double refunds.',
   })
   @ApiParam({ name: 'id', description: 'Clip ID / token ID to burn', example: 42 })
-  @ApiBody({ type: BurnNftDto })
+  @ApiBody({
+    type: BurnNftDto,
+    examples: {
+      burnWithoutRefund: {
+        summary: 'Burn without royalty refund',
+        value: { walletAddress: 'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF' },
+      },
+      burnWithRefund: {
+        summary: 'Burn and request royalty refund',
+        value: {
+          walletAddress: 'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF',
+          refundRoyalties: true,
+        },
+      },
+    },
+  })
   @ApiOkResponse({
     description: 'Unsigned burn transaction XDR returned successfully',
     type: BurnNftResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid wallet address, or clip not yet minted' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid wallet/royalty recipient, clip not yet minted, or unsafe royalty balance',
+  })
   @ApiUnauthorizedResponse({ description: 'Unauthorized — Bearer JWT required' })
   @ApiForbiddenResponse({
     description: 'Caller does not own the clip being burned',
     type: BurnForbiddenDto,
   })
   @ApiNotFoundResponse({ description: 'Clip not found', type: BurnNotFoundDto })
+  @ApiConflictResponse({
+    description:
+      'NFT is already burned or the contract detects a refund-state conflict when the transaction is submitted.',
+  })
   async burn(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: BurnNftDto,
@@ -942,7 +981,52 @@ export class NftController {
   ): Promise<BurnNftResponseDto> {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(id, userId);
-    return this.nftMintService.prepareBurnTx(id, dto.walletAddress);
+    const ownership = await this.nftOwnershipService.verifyNFTOwnership(
+      id.toString(),
+      dto.walletAddress,
+    );
+    if (!ownership.isOwner) {
+      throw new ForbiddenException(
+        ownership.error || 'Wallet does not own this NFT on-chain',
+      );
+    }
+
+    const refundRoyalties = dto.refundRoyalties === true;
+    let refundRecipient: string | null = null;
+    let refundAmount = 0;
+    if (refundRoyalties) {
+      try {
+        const royaltyInfo = await this.royaltyQueryService.getRoyaltyInfo(
+          id.toString(),
+        );
+        refundRecipient = royaltyInfo.recipient;
+        refundAmount = await this.claimRoyaltyService.getClaimableBalance(
+          id,
+          refundRecipient,
+        );
+        if (!Number.isSafeInteger(refundAmount) || refundAmount < 0) {
+          throw new BadRequestException(
+            'Claimable royalty balance is outside the safe integer range',
+          );
+        }
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) {
+          throw error;
+        }
+      }
+    }
+
+    const transaction = await this.nftMintService.prepareBurnTx(
+      id,
+      dto.walletAddress,
+      refundRoyalties,
+    );
+    return {
+      ...transaction,
+      refundRoyalties,
+      refundRecipient,
+      refundAmount: String(refundAmount),
+    };
   }
 
   /**

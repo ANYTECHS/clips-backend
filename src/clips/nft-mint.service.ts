@@ -259,7 +259,11 @@ export class NftMintService {
     return { clipId, mintAddress, mintedAt };
   }
 
-  async prepareBurnTx(clipId: number, walletAddress: string) {
+  async prepareBurnTx(
+    clipId: number,
+    walletAddress: string,
+    refundRoyalties = false,
+  ) {
     const addrValidation = this.stellarService.validateAddress(walletAddress);
     if (!addrValidation.valid)
       throw new BadRequestException(addrValidation.message);
@@ -270,7 +274,11 @@ export class NftMintService {
       JSON.stringify({
         contract: contractId,
         function: 'burn',
-        args: { owner: walletAddress, token_id: String(clipId) },
+        args: {
+          owner: walletAddress,
+          token_id: String(clipId),
+          refund_royalties: refundRoyalties,
+        },
         network: this.stellarService.network,
       }),
     ).toString('base64');
@@ -280,6 +288,7 @@ export class NftMintService {
       owner: walletAddress,
       contractId,
       network: this.stellarService.network,
+      refundRoyalties,
     };
   }
 
