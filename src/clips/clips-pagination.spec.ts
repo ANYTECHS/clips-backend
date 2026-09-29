@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClipsService } from './clips.service';
+import { buildClipRecordList } from '../../test/fixtures/clip.fixture';
 
 function makeService(clips: any[] = [], total?: number) {
   const prisma = {
@@ -21,7 +22,7 @@ function makeService(clips: any[] = [], total?: number) {
 
 describe('ClipsService.listClips pagination', () => {
   it('returns paginated data with correct meta', async () => {
-    const clips = [{ id: 1 }, { id: 2 }];
+    const clips = buildClipRecordList(2);
     const { service } = makeService(clips, 50);
 
     const result = await service.listClips({ page: 3, limit: 2 });

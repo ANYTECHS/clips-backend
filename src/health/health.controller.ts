@@ -23,6 +23,7 @@ import {
 } from '../queue/dtos/queue-stats.dto';
 import { SorobanHealthService } from './soroban-health.service';
 import { SorobanHealthResponseDto } from './dto/soroban-health.dto';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 interface HealthResponse {
   status: 'ok' | 'degraded';
@@ -49,13 +50,16 @@ export class HealthController {
     private readonly redisHealthService: RedisHealthService,
     private readonly queueHealthService: QueueHealthService,
     private readonly sorobanHealthService: SorobanHealthService,
+    private readonly gracefulShutdown: GracefulShutdownService,
   ) {}
 
   @Get()
   @ApiOperation({
     summary: 'Application health overview',
     description:
-      'Returns the app health status and includes the Redis service health in the main health response.',
+      'Returns the app health status and includes the Redis service health in the main health response. ' +
+      'During graceful worker shutdown (SIGTERM), `status` is `draining` so load balancers can stop ' +
+      'routing new traffic while active jobs finish (Issue #975).',
   })
   @ApiResponse({
     status: 200,
@@ -64,16 +68,31 @@ export class HealthController {
       example: {
         status: 'healthy',
         redis: { status: 'healthy', service: 'redis' },
+        workers: { shuttingDown: false, registered: 4 },
       },
     },
   })
-  async getHealth(): Promise<{ status: 'healthy' | 'unhealthy'; redis: RedisHealthResult }> {
+  async getHealth(): Promise<{
+    status: 'healthy' | 'unhealthy' | 'draining';
+    redis: RedisHealthResult;
+    workers: { shuttingDown: boolean; registered: number };
+  }> {
     const redisStatus = await this.redisHealthService.check();
-    const status = redisStatus.status === 'healthy' ? 'healthy' : 'unhealthy';
+    const shuttingDown = this.gracefulShutdown.isShuttingDown();
+
+    let status: 'healthy' | 'unhealthy' | 'draining' =
+      redisStatus.status === 'healthy' ? 'healthy' : 'unhealthy';
+    if (shuttingDown) {
+      status = 'draining';
+    }
 
     return {
       status,
       redis: redisStatus,
+      workers: {
+        shuttingDown,
+        registered: this.gracefulShutdown.getRegisteredWorkerCount(),
+      },
     };
   }
 
@@ -234,7 +253,8 @@ export class HealthController {
   @ApiOperation({
     summary: 'Queue health check',
     description:
-      'Returns health metrics for all BullMQ queues including job counts, failure rates, and overall status.',
+      'Returns health metrics for all BullMQ queues including job counts, failure rates, and overall status. ' +
+      'Also includes cleanup metrics showing number of jobs removed by scheduled cleanup operations.',
   })
   @ApiResponse({
     status: 200,

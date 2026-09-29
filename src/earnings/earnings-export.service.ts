@@ -1,19 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-
-export interface ExportOptions {
-  startDate?: string; // ISO 8601 date string
-  endDate?: string;   // ISO 8601 date string
-  currency?: string;
-}
-
-export interface EarningsExportRow {
-  id: number;
-  clipId: number;
-  amount: number;
-  currency: string;
-  source: string;
-  date: Date;
 import { buildEarningsCsv } from './earnings-csv.util';
 
 export interface EarningsExportOptions {
@@ -32,65 +18,6 @@ export class EarningsExportService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Fetches earnings rows for export with optional date range filtering.
-   * The date filter is typed explicitly to avoid the TS18046 "unknown" error.
-   */
-  async getEarningsForExport(
-    userId: number,
-    options: ExportOptions = {},
-  ): Promise<EarningsExportRow[]> {
-    const dateFilter: { gte?: Date; lte?: Date } = {};
-
-    if (options.startDate) {
-      dateFilter.gte = new Date(options.startDate);
-    }
-
-    if (options.endDate) {
-      const end = new Date(options.endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter.lte = end;
-    }
-
-    const rows = await this.prisma.earning.findMany({
-      where: {
-        clip: { video: { userId } },
-        deletedAt: null,
-        ...(Object.keys(dateFilter).length > 0 ? { date: dateFilter } : {}),
-      },
-      select: {
-        id: true,
-        clipId: true,
-        amount: true,
-        currency: true,
-        source: true,
-        date: true,
-      },
-      orderBy: { date: 'asc' },
-    });
-
-    return rows.map((r) => ({
-      id: r.id,
-      clipId: r.clipId,
-      amount: r.amount,
-      currency: r.currency,
-      source: r.source ?? '',
-      date: r.date,
-    }));
-  }
-
-  /**
-   * Converts earnings rows to a CSV string.
-   */
-  toCsv(rows: EarningsExportRow[]): string {
-    const header = 'id,clipId,amount,currency,source,date';
-    const lines = rows.map(
-      (r) =>
-        `${r.id},${r.clipId},${r.amount},${r.currency},${r.source},${r.date.toISOString()}`,
-    );
-    return [header, ...lines].join('\n');
-  constructor(private prisma: PrismaService) {}
-
   private userEarningsWhere(userId: number): Record<string, unknown> {
     return {
       clip: { video: { userId } },
@@ -98,27 +25,65 @@ export class EarningsExportService {
     };
   }
 
+  private parseAndValidateDates(options: EarningsExportOptions): {
+    start?: Date;
+    end?: Date;
+  } {
+    const result: { start?: Date; end?: Date } = {};
+
+    if (options.startDate) {
+      const start = new Date(options.startDate);
+      if (Number.isNaN(start.getTime())) {
+        throw new BadRequestException(
+          `Invalid startDate "${options.startDate}". Use an ISO 8601 date (e.g. 2025-01-01).`,
+        );
+      }
+      result.start = start;
+    }
+
+    if (options.endDate) {
+      const end = new Date(options.endDate);
+      if (Number.isNaN(end.getTime())) {
+        throw new BadRequestException(
+          `Invalid endDate "${options.endDate}". Use an ISO 8601 date (e.g. 2025-12-31).`,
+        );
+      }
+      end.setUTCHours(23, 59, 59, 999);
+      result.end = end;
+    }
+
+    if (result.start && result.end && result.start > result.end) {
+      throw new BadRequestException(
+        'Invalid date range: startDate must be on or before endDate.',
+      );
+    }
+
+    return result;
+  }
+
+  /**
+   * Builds a CSV of the authenticated user's earnings for an optional date range.
+   * Columns: date, clipTitle, amount, currency, source, transactionId
+   * Empty result still returns a header-only CSV so downloads succeed.
+   */
   async exportEarningsCsv(
     userId: number,
     options: EarningsExportOptions,
   ): Promise<EarningsExportResult> {
+    const { start, end } = this.parseAndValidateDates(options);
+
     let where: Record<string, unknown> = this.userEarningsWhere(userId);
-    if (options.startDate || options.endDate) {
+    if (start || end) {
       const dateFilter: Record<string, Date> = {};
-      if (options.startDate) {
-        dateFilter.gte = new Date(options.startDate);
-      }
-      if (options.endDate) {
-        const end = new Date(options.endDate);
-        end.setUTCHours(23, 59, 59, 999);
-        dateFilter.lte = end;
-      }
+      if (start) dateFilter.gte = start;
+      if (end) dateFilter.lte = end;
       where = { ...where, date: dateFilter };
     }
 
     const earnings = await this.prisma.earning.findMany({
       where,
       select: {
+        id: true,
         date: true,
         amount: true,
         currency: true,
@@ -130,17 +95,19 @@ export class EarningsExportService {
 
     const rows = earnings.map((e) => [
       e.date.toISOString(),
-      e.clip?.title,
+      e.clip?.title ?? '',
       e.amount,
       e.currency,
       e.source,
-      '',
+      String(e.id),
     ]);
 
     const content = buildEarningsCsv(rows);
     const filename = `earnings-export-${new Date().toISOString().split('T')[0]}.csv`;
 
-    this.logger.log(`Exported ${earnings.length} earnings records for user ${userId}`);
+    this.logger.log(
+      `Exported ${earnings.length} earnings record(s) for user ${userId}`,
+    );
 
     return { filename, content };
   }

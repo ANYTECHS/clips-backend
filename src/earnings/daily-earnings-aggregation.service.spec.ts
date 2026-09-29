@@ -12,10 +12,13 @@ describe('DailyEarningsAggregationService (Issue #767)', () => {
   let prisma: {
     earning: { findMany: jest.Mock; aggregate: jest.Mock };
     payout: { aggregate: jest.Mock };
-    dailyEarning: { upsert: jest.Mock };
+    dailyEarning: { upsert: jest.Mock; findMany: jest.Mock };
     userEarningsSummary: { upsert: jest.Mock };
   };
-  let redis: { del: jest.Mock };
+  let redis: {
+    del: jest.Mock;
+    getClient: jest.Mock;
+  };
 
   const earning = (
     id: number,
@@ -41,10 +44,18 @@ describe('DailyEarningsAggregationService (Issue #767)', () => {
       payout: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 0 } }),
       },
-      dailyEarning: { upsert: jest.fn().mockResolvedValue({}) },
+      dailyEarning: {
+        upsert: jest.fn().mockResolvedValue({}),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       userEarningsSummary: { upsert: jest.fn().mockResolvedValue({}) },
     };
-    redis = { del: jest.fn().mockResolvedValue(1) };
+    redis = {
+      del: jest.fn().mockResolvedValue(1),
+      getClient: jest.fn().mockReturnValue({
+        set: jest.fn().mockResolvedValue('OK'),
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -240,6 +251,54 @@ describe('DailyEarningsAggregationService (Issue #767)', () => {
       expect(result.earningsProcessed).toBe(0);
       expect(prisma.dailyEarning.upsert).not.toHaveBeenCalled();
       expect(prisma.userEarningsSummary.upsert).not.toHaveBeenCalled();
+    });
+
+    it('skips when another worker already holds the aggregation lock', async () => {
+      redis.getClient.mockReturnValue({
+        set: jest.fn().mockResolvedValue(null),
+      });
+
+      const result = await service.aggregateDay(new Date('2026-03-14T00:00:00Z'));
+
+      expect(result.skipped).toBe(true);
+      expect(prisma.earning.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getDailyEarnings', () => {
+    it('filters by date range and currency in UTC', async () => {
+      prisma.dailyEarning.findMany.mockResolvedValue([
+        {
+          id: 1,
+          date: new Date('2026-09-26T00:00:00.000Z'),
+          currency: 'USD',
+          totalAmount: 50,
+          totalInBaseCurrency: 50,
+          earningCount: 2,
+          clipCount: 1,
+        },
+      ]);
+
+      const result = await service.getDailyEarnings(7, {
+        from: new Date('2026-09-01T15:00:00Z'),
+        to: new Date('2026-09-27T18:00:00Z'),
+        currency: 'usd',
+      });
+
+      expect(prisma.dailyEarning.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId: 7,
+            currency: 'USD',
+            date: {
+              gte: new Date('2026-09-01T00:00:00.000Z'),
+              lte: new Date('2026-09-27T00:00:00.000Z'),
+            },
+          },
+        }),
+      );
+      expect(result.items).toHaveLength(1);
+      expect(result.filters.currency).toBe('USD');
     });
   });
 });

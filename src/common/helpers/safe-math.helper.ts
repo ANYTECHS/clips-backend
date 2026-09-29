@@ -132,3 +132,138 @@ export function checkedBpsAdd(a: number, b: number): number {
 
   return Number(sum);
 }
+
+/**
+ * Performs safe division with explicit divide-by-zero protection and overflow checks.
+ * Ensures both dividend and divisor are validated as non-negative integers, and
+ * that the result fits safely within JavaScript's safe integer range.
+ *
+ * @param dividend - The numerator (non-negative integer).
+ * @param divisor  - The denominator (positive integer, must be > 0).
+ * @returns `floor(dividend / divisor)` as a safe integer.
+ *
+ * @throws {BadRequestException} if dividend is not a non-negative integer.
+ * @throws {BadRequestException} if divisor is not a positive integer (divisor <= 0).
+ * @throws {BadRequestException} if the result exceeds `Number.MAX_SAFE_INTEGER`.
+ *
+ * @example
+ * checkedDivide(100_000_000, 10_000); // → 10_000  (floor division)
+ * checkedDivide(100, 0);              // → throws BadRequestException (divide by zero)
+ * checkedDivide(-100, 10);            // → throws BadRequestException (negative dividend)
+ */
+export function checkedDivide(dividend: number, divisor: number): number {
+  if (!Number.isInteger(dividend) || dividend < 0) {
+    throw new BadRequestException(
+      `Invalid dividend: ${dividend}. Must be a non-negative integer.`,
+    );
+  }
+
+  if (!Number.isInteger(divisor) || divisor <= 0) {
+    throw new BadRequestException(
+      `Invalid divisor: ${divisor}. Must be a positive integer (> 0).`,
+    );
+  }
+
+  const result = BigInt(dividend) / BigInt(divisor); // integer (floor) division
+
+  if (result > MAX_SAFE_INT_BIGINT) {
+    throw new BadRequestException(
+      `Division result (${result}) exceeds Number.MAX_SAFE_INTEGER. ` +
+        `dividend=${dividend}, divisor=${divisor}.`,
+    );
+  }
+
+  return Number(result);
+}
+
+/**
+ * Performs safe subtraction with underflow and overflow protection.
+ * Ensures both minuend and subtrahend are non-negative integers, and prevents
+ * negative results (underflow protection).
+ *
+ * @param minuend    - The value to subtract from (non-negative integer).
+ * @param subtrahend - The value to subtract (non-negative integer).
+ * @returns `minuend - subtrahend` as a non-negative safe integer.
+ *
+ * @throws {BadRequestException} if either input is not a non-negative integer.
+ * @throws {BadRequestException} if subtrahend > minuend (underflow).
+ * @throws {BadRequestException} if the result exceeds `Number.MAX_SAFE_INTEGER`.
+ *
+ * @example
+ * checkedSubtract(1000, 200);  // → 800
+ * checkedSubtract(100, 150);   // → throws BadRequestException (underflow)
+ * checkedSubtract(-50, 10);    // → throws BadRequestException (negative minuend)
+ */
+export function checkedSubtract(minuend: number, subtrahend: number): number {
+  if (!Number.isInteger(minuend) || minuend < 0) {
+    throw new BadRequestException(
+      `Invalid minuend: ${minuend}. Must be a non-negative integer.`,
+    );
+  }
+
+  if (!Number.isInteger(subtrahend) || subtrahend < 0) {
+    throw new BadRequestException(
+      `Invalid subtrahend: ${subtrahend}. Must be a non-negative integer.`,
+    );
+  }
+
+  if (subtrahend > minuend) {
+    throw new BadRequestException(
+      `Subtraction underflow: ${minuend} - ${subtrahend} would be negative.`,
+    );
+  }
+
+  const difference = BigInt(minuend) - BigInt(subtrahend);
+
+  if (difference > MAX_SAFE_INT_BIGINT) {
+    throw new BadRequestException(
+      `Subtraction result (${difference}) exceeds Number.MAX_SAFE_INTEGER. ` +
+        `minuend=${minuend}, subtrahend=${subtrahend}.`,
+    );
+  }
+
+  return Number(difference);
+}
+
+/**
+ * Performs safe multiplication with overflow protection.
+ * Used for cases where two integers must be multiplied (not specific to royalties).
+ *
+ * @param a - First operand (non-negative integer).
+ * @param b - Second operand (non-negative integer).
+ * @returns `a * b` as a safe integer.
+ *
+ * @throws {BadRequestException} if either input is not a non-negative integer.
+ * @throws {BadRequestException} if the product exceeds `Number.MAX_SAFE_INTEGER`.
+ *
+ * @example
+ * checkedMultiply(1000, 2000);  // → 2_000_000
+ * checkedMultiply(0, 500);      // → 0
+ */
+export function checkedMultiply(a: number, b: number): number {
+  if (!Number.isInteger(a) || a < 0) {
+    throw new BadRequestException(
+      `Invalid first operand: ${a}. Must be a non-negative integer.`,
+    );
+  }
+
+  if (!Number.isInteger(b) || b < 0) {
+    throw new BadRequestException(
+      `Invalid second operand: ${b}. Must be a non-negative integer.`,
+    );
+  }
+
+  if (a === 0 || b === 0) {
+    return 0;
+  }
+
+  const product = BigInt(a) * BigInt(b);
+
+  if (product > MAX_SAFE_INT_BIGINT) {
+    throw new BadRequestException(
+      `Product (${product}) exceeds Number.MAX_SAFE_INTEGER. a=${a}, b=${b}.`,
+    );
+  }
+
+  return Number(product);
+}
