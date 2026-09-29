@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { VideoService } from './video.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
+import { buildVideoRecord } from '../../test/fixtures/video.fixture';
 
 // Mock fluent-ffmpeg
 jest.mock('fluent-ffmpeg', () => require('../../test/__mocks__/fluent-ffmpeg'));
@@ -11,14 +12,12 @@ describe('VideoService', () => {
   let service: VideoService;
   let prismaService: PrismaService;
 
-  const mockVideo = {
+  const mockVideo = buildVideoRecord({
     id: 1,
     userId: 10,
-    title: 'Test Video',
-    sourceUrl: 'https://example.com/test.mp4',
     duration: 120,
     status: 'pending',
-  };
+  });
 
   const mockPrismaService = {
     video: {

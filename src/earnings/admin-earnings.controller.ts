@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Param,
+  ParseIntPipe,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Admin } from '../auth/decorators/admin.decorator';
+import { EarningsAggregationService } from './earnings-aggregation.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
 
 @ApiTags('admin')
@@ -26,15 +28,43 @@ import { AnomalyDetectionService } from './anomaly-detection.service';
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
-@Controller('admin/anomalies')
+@Controller('admin')
 @Auth()
 @Admin()
-export class AdminAnomaliesController {
+export class AdminEarningsController {
   constructor(
+    private readonly earningsAggregationService: EarningsAggregationService,
     private readonly anomalyDetectionService: AnomalyDetectionService,
   ) {}
 
-  @Get()
+  @Post('earnings/:earningId/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Restore a soft-deleted earning record',
+    description:
+      'Clears deletedAt on an earning so it reappears in normal queries and aggregations. Admin only.',
+  })
+  @ApiParam({ name: 'earningId', type: Number, description: 'Earning record ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'Earning restored successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', example: 'Earning restored successfully' },
+        id: { type: 'number', example: 42 },
+        deletedAt: { type: 'null', example: null },
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    description: 'Earning not found or is not soft-deleted',
+  })
+  async restoreEarning(@Param('earningId', ParseIntPipe) earningId: number) {
+    return this.earningsAggregationService.restore(earningId);
+  }
+
+  @Get('anomalies')
   @ApiOperation({
     summary: 'Get unresolved anomaly alerts',
     description: 'Returns all unresolved earnings anomaly alerts (admin only)',
@@ -44,7 +74,7 @@ export class AdminAnomaliesController {
     return this.anomalyDetectionService.getUnresolvedAlerts();
   }
 
-  @Post(':id/resolve')
+  @Post('anomalies/:id/resolve')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Resolve an anomaly alert',

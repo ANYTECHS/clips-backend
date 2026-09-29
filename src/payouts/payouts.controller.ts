@@ -15,6 +15,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOperation,
@@ -31,21 +32,41 @@ import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
 import {
+  FeePreviewResponseDto,
+  PayoutOnChainStatusResponseDto,
   PayoutProcessResponseDto,
   PayoutResponseDto,
   StellarPayoutInitiationResponseDto,
 } from './dto/payout-responses.dto';
+import {
+  PayoutRequestResponseDto,
+  SplitPayoutRequestResponseDto,
+} from './dto/payout-request-response.dto';
+import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
+import { OnChainStatusResponseDto } from './dto/on-chain-status.dto';
 import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
+import { FeeService } from './fee.service';
+import { PayoutExportService } from './payout-export.service';
+import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
 
 import { API_ERROR_SCHEMA } from '../common/dtos';
+import {
+  PAYOUT_STATUS_SWAGGER_DESCRIPTION,
+  PAYOUT_STATUS_VALUES,
+} from './payouts.constants';
 
 interface RequestWithUser extends Request {
   user: { userId: number };
 }
 
 const validationErrorSchema = API_ERROR_SCHEMA;
+
+@ApiTags('Payouts')
+const payoutError = (statusCode: number, error: string, message: string) => ({
+  value: { statusCode, message, error },
+});
 
 @ApiTags('payout')
 @ApiBearerAuth('access-token')
@@ -58,6 +79,8 @@ export class PayoutsController {
   constructor(
     private readonly payoutsService: PayoutsService,
     private readonly balanceService: BalanceService,
+    private readonly feeService: FeeService,
+    private readonly payoutExportService: PayoutExportService,
   ) {}
 
   @Get('balance')
@@ -84,6 +107,122 @@ export class PayoutsController {
     return this.balanceService.getAvailableBalance(req.user.userId);
   }
 
+  @Get('fees/preview')
+  @ApiOperation({
+    summary: 'Preview payout fee before confirmation',
+    description:
+      'Calculates the platform/withdrawal fee for a given amount and payout method ' +
+      'without creating a payout. Fees differ by method (fixed, percentage, or combined). ' +
+      'Net payout is always amount − fee and is never negative.',
+  })
+  @ApiQuery({
+    name: 'amount',
+    required: true,
+    type: Number,
+    example: 100,
+    description: 'Gross payout amount',
+  })
+  @ApiQuery({
+    name: 'method',
+    required: true,
+    example: 'stellar',
+    description: 'Payout method used to look up fee configuration',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    example: 'USD',
+    description: 'Currency code (default USD)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Fee breakdown',
+    type: FeePreviewResponseDto,
+    schema: {
+      example: { amount: 100, fee: 2, netAmount: 98, currency: 'USD' },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid amount or fee would produce a non-positive net payout',
+  })
+  async previewFee(
+    @Query('amount') amount: string,
+    @Query('method') method: string,
+    @Query('currency') currency?: string,
+  ) {
+    return this.feeService.previewFee(
+      parseFloat(amount),
+      method,
+      currency ?? 'USD',
+    );
+  }
+
+  @Get('export')
+  @ApiOperation({
+    summary: 'Export payout history as CSV or PDF',
+    description:
+      'Downloads the authenticated user\'s payout history. ' +
+      'Includes status, amount, currency, payout method, fee, net amount, ' +
+      'and transaction ID when available. Only the caller\'s payouts are included.',
+  })
+  @ApiQuery({
+    name: 'format',
+    required: true,
+    enum: ['csv', 'pdf'],
+    description: 'Export file format',
+    example: 'csv',
+  })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    description: 'Inclusive start date (ISO 8601)',
+    example: '2026-01-01',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    description: 'Inclusive end date (ISO 8601)',
+    example: '2026-12-31',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Exported payout file (CSV or PDF binary)',
+    content: {
+      'text/csv': { schema: { type: 'string', format: 'binary' } },
+      'application/pdf': { schema: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid format or date filter',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Invalid export format "xlsx". Supported formats: csv, pdf',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  async exportPayouts(
+    @Req() req: RequestWithUser,
+    @Query('format') format: string,
+    @Query('startDate') startDate: string | undefined,
+    @Query('endDate') endDate: string | undefined,
+    @Res({ passthrough: false }) res: Response,
+  ): Promise<void> {
+    const result = await this.payoutExportService.exportPayouts(req.user.userId, {
+      format: format as 'csv' | 'pdf',
+      startDate,
+      endDate,
+    });
+
+    res.set({
+      'Content-Type': result.contentType,
+      'Content-Disposition': `attachment; filename="${result.filename}"`,
+    });
+    res.send(result.body);
+  }
+
   @Post('request-partial')
   @ApiOperation({
     summary: 'Request a partial payout (withdraw specific amount)',
@@ -91,7 +230,7 @@ export class PayoutsController {
       'Request to withdraw a specific amount up to the available balance. ' +
       'Amount must be positive and not exceed available balance. ' +
       'Payout status is determined by amount: ' +
-      'below approval threshold → approved, above → pending_review.',
+      'below approval threshold → approved, above → under_review.',
   })
   @ApiBody({
     type: CreatePayoutRequestDto,
@@ -156,39 +295,171 @@ export class PayoutsController {
 
   @Post('request')
   @ApiOperation({
-    summary: 'Request a payout with specified amount and method',
+    summary: 'Request a payout (single or split destinations)',
     description:
-      'Initiates a creator payout. Requires JWT. The requested amount must meet ' +
-      'the minimum payout threshold (default 5 USD equivalent, configurable via ' +
-      'the MIN_STELLAR_PAYOUT environment variable); requests below the threshold ' +
-      'are rejected with a 400 validation error.',
+      'Initiates a creator payout. Requires JWT. The requested amount must fall ' +
+      'within the configured minimum and maximum payout limits for the currency ' +
+      '(defaults: MIN_PAYOUT_USD=5, MAX_PAYOUT_USD=10000; override with ' +
+      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON).',
+      'Initiates a creator payout. Requires JWT. Validates amount, currency, and method; ' +
+      'checks available balance and the minimum payout threshold (default 5 USD equivalent). ' +
+      'Optionally accepts a `destinations` array to split the payout between fiat and Stellar ' +
+      '(percentages must sum to 100). Creates one or more Payout rows with status `pending` ' +
+      'inside a database transaction. Duplicate open requests are rejected.',
   })
   @ApiBody({
     type: CreatePayoutDto,
     examples: {
       stellar: {
-        summary: 'Stellar payout request',
-        value: { amount: 120, currency: 'USD', method: 'stellar' },
+        summary: 'Single Stellar payout',
+        value: { amount: 50, currency: 'USD', method: 'stellar' },
+      },
+      fiat: {
+        summary: 'Single fiat payout',
+        value: { amount: 75, currency: 'USD', method: 'fiat' },
+      },
+      split: {
+        summary: 'Split 70% fiat / 30% Stellar',
+        value: {
+          amount: 100,
+          currency: 'USD',
+          destinations: [
+            { method: 'fiat', percentage: 70 },
+            { method: 'stellar', percentage: 30 },
+          ],
+        },
+      },
+      fiat: {
+        summary: 'Bank transfer payout request',
+        value: { amount: 250, currency: 'USD', method: 'fiat' },
       },
     },
   })
   @ApiResponse({
     status: 201,
     description: 'Pending payout request created successfully',
-    type: PayoutResponseDto,
-  })
-  @ApiBadRequestResponse({
-    description:
-      'Invalid request, insufficient balance, or amount below the minimum payout threshold',
+    type: PayoutRequestResponseDto,
     schema: {
-      example: {
-        statusCode: 400,
-        message: ['Minimum payout for USD is 5. Requested amount: 3.', 'Maximum payout for USD is 10000.'],
-        error: 'Bad Request',
+      examples: {
+        single: {
+          summary: 'Single destination',
+          value: { payoutId: 'payout_123', status: 'pending' },
+        },
+        split: {
+          summary: 'Split destinations',
+          value: {
+            payouts: [
+              { payoutId: 'payout_124', status: 'pending', method: 'fiat', amount: 70 },
+              { payoutId: 'payout_125', status: 'pending', method: 'stellar', amount: 30 },
+            ],
+            totalAmount: 100,
+            currency: 'USD',
+          },
+        },
       },
     },
   })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid request, insufficient balance, or amount outside min/max payout limits',
+    schema: {
+      examples: {
+        belowMinimum: {
+          summary: 'Below minimum payout',
+          value: {
+            statusCode: 400,
+            message: 'Minimum payout for USD is 5. Requested amount: 3.',
+            error: 'Bad Request',
+          },
+        },
+        aboveMaximum: {
+          summary: 'Above maximum payout',
+          value: {
+            statusCode: 400,
+            message: 'Maximum payout for USD is 10000. Requested amount: 15000.',
+      'Invalid request, insufficient balance, invalid split, or amount below the minimum payout threshold',
+    schema: {
+      examples: {
+        validation: {
+          value: {
+            statusCode: 400,
+            message: ['Minimum payout for USD is 5. Requested amount: 3.'],
+            error: 'Bad Request',
+          },
+        },
+        insufficientBalance: {
+          value: {
+            statusCode: 400,
+            message: 'Insufficient balance. Available: 20 USD',
+            error: 'Bad Request',
+          },
+        },
+        invalidSplit: {
+          value: {
+            statusCode: 400,
+            message: 'Destination percentages must sum to 100. Received: 90',
+            error: 'Bad Request',
+          },
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — missing or invalid bearer token',
+    schema: API_ERROR_SCHEMA,
+  })
   @ApiConflictResponse({ description: 'Pending payout already exists' })
+      'Request failed validation: malformed body, amount below the minimum or above the maximum payout, ' +
+      'insufficient balance, or no Stellar wallet / default payout method configured.',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        examples: {
+          dtoValidation: {
+            summary: 'Malformed body',
+            value: {
+              statusCode: 400,
+              message: ['amount must be a valid number', 'method must be one of: fiat, stellar'],
+              error: 'Bad Request',
+            },
+          },
+          belowMinimum: {
+            summary: 'Below minimum payout',
+            ...payoutError(400, 'Bad Request', 'Minimum payout amount is 5 USD equivalent. Requested: 3 USD.'),
+          },
+          aboveMaximum: {
+            summary: 'Above per-currency maximum',
+            ...payoutError(400, 'Bad Request', 'Maximum payout for USD is 10000. Requested amount: 12000.'),
+          },
+          insufficientBalance: {
+            summary: 'Insufficient balance',
+            ...payoutError(400, 'Bad Request', 'Insufficient balance. Available: 80 USD'),
+          },
+          noWallet: {
+            summary: 'No Stellar wallet connected',
+            ...payoutError(400, 'Bad Request', 'No active Stellar wallet found. Please connect a wallet first.'),
+          },
+          noPayoutMethod: {
+            summary: 'No default payout method',
+            ...payoutError(400, 'Bad Request', 'No default payout method found. Please add a payout method first.'),
+          },
+        },
+      },
+    },
+  })
+  @ApiConflictResponse({
+    description: 'The user already has an open payout (pending, pending_review, pending_approval, approved or processing)',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        example: {
+          statusCode: 409,
+          message: 'A payout request is already pending for this user',
+          error: 'Conflict',
+        },
+      },
+    },
+  })
   async requestPayout(
     @Req() req: RequestWithUser,
     @Body() dto: CreatePayoutDto,
@@ -198,7 +469,6 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
-      dto.destinations,
     );
   }
 
@@ -206,17 +476,29 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Request a split payout with fiat and crypto destinations',
     description:
-      'Initiates a creator payout split between fiat (bank) and crypto (Stellar) wallets. ' +
-      'The request amount is divided among specified destinations based on percentages. ' +
-      'Each destination must have a percentage that sums to 100%.',
+      'Convenience alias for POST /payouts/request with a destinations array. ' +
+      'Percentages must sum to 100%. Separate Payout records are created atomically.',
   })
   @ApiBody({
     type: CreatePayoutDto,
+    examples: {
+      split: {
+        summary: '70% fiat / 30% Stellar',
+        value: {
+          amount: 100,
+          currency: 'USD',
+          destinations: [
+            { method: 'fiat', percentage: 70 },
+            { method: 'stellar', percentage: 30 },
+          ],
+        },
+      },
+    },
   })
   @ApiResponse({
     status: 201,
     description: 'Split payout requests created successfully',
-    type: [PayoutResponseDto],
+    type: SplitPayoutRequestResponseDto,
   })
   @ApiBadRequestResponse({
     description:
@@ -231,7 +513,6 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
-      dto.destinations,
     );
   }
 
@@ -258,7 +539,42 @@ export class PayoutsController {
   @ApiBadRequestResponse({
     description:
       'Validation failed, payout is not ready, or the platform balance is insufficient',
-    schema: validationErrorSchema,
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        examples: {
+          wrongStatus: {
+            summary: 'Payout not in an initiable status',
+            ...payoutError(400, 'Bad Request', 'Payout must be approved or pending before Stellar initiation (current status: completed)'),
+          },
+          amountMismatch: {
+            summary: 'Amount differs from the payout record',
+            ...payoutError(400, 'Bad Request', 'Requested amount does not match payout amount'),
+          },
+          invalidDestination: {
+            summary: 'Invalid destination address',
+            ...payoutError(400, 'Bad Request', 'Invalid destination Stellar address'),
+          },
+          platformBalance: {
+            summary: 'Platform wallet underfunded',
+            ...payoutError(400, 'Bad Request', 'Insufficient platform balance. Available: 42 XLM'),
+          },
+        },
+      },
+    },
+  })
+  @ApiConflictResponse({
+    description: 'An unsigned Stellar transaction has already been prepared for this payout',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        example: {
+          statusCode: 409,
+          message: 'A Stellar payout transaction is already pending for this payout',
+          error: 'Conflict',
+        },
+      },
+    },
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async initiateStellarPayout(
@@ -276,14 +592,17 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'List payouts for the authenticated user',
     description:
-      'Returns payout history for the authenticated user. Results can be filtered by payout status.',
+      'Returns paginated payout history for the authenticated user only. ' +
+      'Supports filtering by status (`pending`, `processing`, `completed`, `failed`, `cancelled`, plus review lifecycle statuses).',
   })
   @ApiQuery({
     name: 'status',
     required: false,
-    description: 'Filter by payout status',
+    description:
+      'Filter by payout status. `cancelled` is accepted as an alias of `canceled`.',
     enum: [
       'pending',
+      'under_review',
       'pending_review',
       'pending_approval',
       'approved',
@@ -292,27 +611,72 @@ export class PayoutsController {
       'failed',
       'rejected',
       'canceled',
+      'cancelled',
     ],
+    description: `Filter by payout status.\n\n${PAYOUT_STATUS_SWAGGER_DESCRIPTION}`,
+    enum: PAYOUT_STATUS_VALUES,
     example: 'completed',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-based, default 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Items per page (default 20, max 100)',
+    example: 20,
   })
   @ApiResponse({
     status: 200,
-    description: 'List of payouts including on-chain tracking fields (status, onChainTxHash, confirmedAt)',
-    type: PayoutResponseDto,
-    isArray: true,
+    description:
+      'Paginated list of the caller\'s payouts including onChainTxHash and confirmedAt',
+    schema: {
+      example: {
+        items: [
+          {
+            id: 1,
+            amount: 120,
+            currency: 'USD',
+            method: 'stellar',
+            status: 'completed',
+            onChainTxHash: 'a1b2c3d4e5f6...',
+            confirmedAt: '2026-07-26T12:05:00.000Z',
+            createdAt: '2026-07-26T12:00:00.000Z',
+          },
+        ],
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPrevPage: false,
+      },
+    },
   })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — JWT required', schema: API_ERROR_SCHEMA })
+  @ApiForbiddenResponse({ description: 'Forbidden', schema: API_ERROR_SCHEMA })
   async listPayouts(
     @Req() req: RequestWithUser,
-    @Query('status') status?: string,
-  ) {
-    return this.payoutsService.getPayouts(req.user.userId, status);
+    @Query() query: ListPayoutsQueryDto,
+  ): Promise<PaginatedResponseDto<PayoutResponseDto>> {
+    return this.payoutsService.getPayouts(
+      req.user.userId,
+      query.status,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
   }
 
   @Get(':id')
   @ApiOperation({
     summary: 'Get a specific payout by ID',
     description:
-      'Returns the current payout status and any stored Stellar transaction metadata.',
+      'Returns payout details for the authenticated owner only. Includes status, onChainTxHash, and confirmedAt.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
@@ -320,8 +684,32 @@ export class PayoutsController {
     description:
       'Payout details including current status, on-chain transaction hash, and confirmation timestamp',
     type: PayoutResponseDto,
+    content: {
+      'application/json': {
+        examples: {
+          completed: {
+            summary: 'Completed Stellar payout',
+            value: {
+              id: 1,
+              amount: 120,
+              currency: 'USD',
+              method: 'stellar',
+              status: 'completed',
+              onChainTxHash: 'a1b2c3d4e5f6...',
+              confirmedAt: '2026-07-26T12:05:00.000Z',
+              createdAt: '2026-07-26T12:00:00.000Z',
+            },
+          },
+        },
+      },
+    },
   })
-  @ApiNotFoundResponse({ description: 'Payout not found' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — JWT required', schema: API_ERROR_SCHEMA })
+  @ApiForbiddenResponse({ description: 'Forbidden', schema: API_ERROR_SCHEMA })
+  @ApiNotFoundResponse({
+    description: 'Payout not found (missing or not owned by caller)',
+    schema: API_ERROR_SCHEMA,
+  })
   async getPayout(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,
@@ -331,19 +719,65 @@ export class PayoutsController {
 
   @Get(':id/on-chain-status')
   @ApiOperation({
-    summary: 'Get real-time on-chain status for a Stellar payout',
+    summary: 'Verify and return on-chain transaction details for a Stellar payout',
     description:
-      'Queries Horizon directly for the live on-chain confirmation status of a Stellar payout transaction. ' +
-      'Returns the DB record enriched with real-time data from the Stellar network, including whether the ' +
-      'transaction was found, succeeded, and when it was confirmed.',
+      'Queries Horizon for the stored onChainTxHash, verifies transaction success, destination, and amount, ' +
+      'updates payout status (completed/failed), and returns confirmation details including confirmedAt.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
     description:
-      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+      'On-chain verification result with onChainTxHash and confirmation status',
+    type: OnChainStatusResponseDto,
+    content: {
+      'application/json': {
+        examples: {
+          confirmed: {
+            summary: 'Confirmed on-chain',
+            value: {
+              id: 1,
+              status: 'completed',
+              onChainTxHash: 'a1b2c3d4e5f6...',
+              confirmedAt: '2026-07-26T12:05:00.000Z',
+              onChain: {
+                found: true,
+                successful: true,
+                confirmedAt: '2026-07-26T12:05:00.000Z',
+                destination: 'GABCDEF...',
+                transferredAmount: 120,
+              },
+            },
+          },
+        },
+      },
+    },
   })
-  @ApiNotFoundResponse({ description: 'Payout not found' })
+  @ApiNotFoundResponse({
+    description:
+      'Payout not found, or transaction-not-found when the hash is missing from Horizon / not stored',
+    schema: {
+      example: {
+        statusCode: 404,
+        error: 'Not Found',
+        message: 'transaction-not-found',
+      },
+    },
+  })
+  @ApiConflictResponse({
+    description:
+      'verification-conflict — on-chain destination or amount does not match the payout',
+    schema: {
+      example: {
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'verification-conflict',
+        details: 'Amount mismatch: expected 120, got 100',
+      },
+    },
+      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+    type: PayoutOnChainStatusResponseDto,
+  })
   async getOnChainStatus(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,
@@ -364,11 +798,48 @@ export class PayoutsController {
     type: PayoutProcessResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Payout is not approved or on-chain verification failed',
+    description: 'Payout is not approved, is already completed, has no wallet, or is below the minimum',
+    content: {
+      'application/json': {
+        schema: validationErrorSchema,
+        examples: {
+          notApproved: {
+            summary: 'Payout not approved',
+            ...payoutError(400, 'Bad Request', 'Payout must be approved before processing (current status: pending_review)'),
+          },
+          alreadyCompleted: {
+            summary: 'Payout already completed',
+            ...payoutError(400, 'Bad Request', 'Payout is already in completed status'),
+          },
+        },
+      },
+    },
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'Stellar submission or on-chain verification failed. The payout is marked `failed` and a retry is scheduled with exponential backoff until MAX_PAYOUT_RETRIES is reached.',
+    schema: validationErrorSchema,
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async processPayout(@Param('id', ParseIntPipe) id: number) {
     return this.payoutsService.processPayout(id);
+  }
+
+  @Post(':id/retry')
+  @ApiOperation({
+    summary: 'Retry a failed crypto payout',
+    description:
+      'Manually re-queue a failed or pending_retry payout with exponential backoff. Sets nextRetryAt/failureReason.',
+  })
+  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiResponse({ status: 200, description: 'Payout re-queued for retry' })
+  @ApiBadRequestResponse({ description: 'Payout is not retryable or max retries exceeded' })
+  @ApiNotFoundResponse({ description: 'Payout not found' })
+  async retryPayout(
+    @Req() req: RequestWithUser,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.payoutsService.retryPayout(id, req.user.userId);
   }
 
   @Post(':id/cancel')
@@ -392,12 +863,13 @@ export class PayoutsController {
   @ApiOperation({
     summary: 'Download payout receipt as PDF',
     description:
-      'Downloads the payout receipt as a PDF file. Receipt must exist for the payout.',
+      'Downloads the payout receipt as a PDF file for a completed payout owned by the authenticated user. ' +
+      'Requires authentication. Only the payout owner can access the receipt.',
   })
   @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
   @ApiResponse({
     status: 200,
-    description: 'PDF receipt file',
+    description: 'PDF receipt file (application/pdf)',
     content: {
       'application/pdf': {
         schema: {
@@ -407,8 +879,12 @@ export class PayoutsController {
       },
     },
   })
-  @ApiNotFoundResponse({ description: 'Payout or receipt not found' })
-  @ApiBadRequestResponse({ description: 'Receipt generation failed' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized — missing or invalid access token' })
+  @ApiNotFoundResponse({ description: 'Payout not found or not owned by the authenticated user' })
+  @ApiConflictResponse({
+    description:
+      'Receipt is not yet available — payout is not completed, or receipt metadata has not been generated yet',
+  })
   async getPayoutReceipt(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,

@@ -63,6 +63,13 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
     labelNames: ['queue', 'reason'],
   });
 
+  // Counter: jobs cleaned up by queue and type
+  private readonly jobsCleaned = new Counter({
+    name: 'clipcash_queue_jobs_cleaned_total',
+    help: 'Total number of jobs cleaned up by queue and job type',
+    labelNames: ['queue', 'job_type'],
+  });
+
   // Map to track job start times for duration calculation
   private readonly jobStartTimes = new Map<string, number>();
 
@@ -166,6 +173,17 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Record jobs cleaned up by queue and job type.
+   *
+   * @param queue Queue name
+   * @param jobType Job type ('completed' or 'failed')
+   * @param count Number of jobs cleaned up
+   */
+  recordJobsCleaned(queue: string, jobType: 'completed' | 'failed', count: number): void {
+    this.jobsCleaned.inc({ queue, job_type: jobType }, count);
+  }
+
+  /**
    * Get all metrics registered in this service.
    * Returns the metrics in Prometheus format.
    *
@@ -178,6 +196,7 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
     jobCompletions: Counter;
     jobRetryRate: Gauge;
     jobFailureReasons: Gauge;
+    jobsCleaned: Counter;
   } {
     return {
       jobCount: this.jobCount,
@@ -186,6 +205,7 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
       jobCompletions: this.jobCompletions,
       jobRetryRate: this.jobRetryRate,
       jobFailureReasons: this.jobFailureReasons,
+      jobsCleaned: this.jobsCleaned,
     };
   }
 

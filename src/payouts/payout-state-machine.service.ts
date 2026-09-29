@@ -9,21 +9,23 @@ import { PrismaService } from '../prisma/prisma.service';
 /**
  * Payout State Machine
  *
- * Valid state transitions:
- * PENDING → PENDING_REVIEW (when amount >= approval threshold)
+ * Valid state transitions (#988):
+ * PENDING → UNDER_REVIEW (when amount >= approval threshold)
  * PENDING → APPROVED (when amount < approval threshold)
- * PENDING_REVIEW → APPROVED (admin approval)
- * PENDING_REVIEW → REJECTED (admin rejection)
+ * UNDER_REVIEW → APPROVED (admin approval)
+ * UNDER_REVIEW → REJECTED (admin rejection)
  * APPROVED → PROCESSING (payment initiation)
  * PROCESSING → COMPLETED (success)
  * PROCESSING → PENDING_RETRY (temporary failure, retry scheduled)
  * PENDING_RETRY → PROCESSING (retry attempt)
- * Any state → FAILED (permanent failure)
- * PENDING_REVIEW → REJECTED (manual rejection)
+ * PROCESSING → FAILED (permanent failure)
+ *
+ * Legacy `pending_review` is still accepted as a synonym of `under_review`.
  */
 
 export type PayoutStatus =
   | 'pending'
+  | 'under_review'
   | 'pending_review'
   | 'approved'
   | 'processing'
@@ -44,10 +46,13 @@ export class PayoutStateMachineService {
 
   private readonly validTransitions: StateTransition[] = [
     // Initial states
-    { from: 'pending', to: 'pending_review', trigger: 'submit_for_review' },
+    { from: 'pending', to: 'under_review', trigger: 'submit_for_review' },
+    { from: 'pending', to: 'pending_review', trigger: 'submit_for_review_legacy' },
     { from: 'pending', to: 'approved', trigger: 'auto_approve' },
 
     // Review workflow
+    { from: 'under_review', to: 'approved', trigger: 'admin_approve' },
+    { from: 'under_review', to: 'rejected', trigger: 'admin_reject' },
     { from: 'pending_review', to: 'approved', trigger: 'admin_approve' },
     { from: 'pending_review', to: 'rejected', trigger: 'admin_reject' },
 
