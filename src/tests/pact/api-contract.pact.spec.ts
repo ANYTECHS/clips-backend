@@ -51,7 +51,16 @@ describe('API contract tests — Pact (#1031)', () => {
     return { status: res.status, body: await res.json() };
   };
 
-  beforeAll(async () => {
+  /**
+   * `setup()` allocates a free port, `addInteraction()` binds the mock server to
+   * it, and `verify()` tears that port down again. Running setup once per test
+   * — and clearing the cached port so a *new* one is allocated — gives every
+   * interaction a fresh port, so the server is never rebound while the previous
+   * listener is still releasing the old one. That race caused the intermittent
+   * ECONNREFUSED / "expected but not received" failures in this CI step.
+   */
+  beforeEach(async () => {
+    (pact as any).opts.port = undefined;
     await (pact as any).setup();
   });
 
@@ -341,16 +350,19 @@ describe('API contract tests — Pact (#1031)', () => {
   const liveUrl = process.env.PACT_PROVIDER_URL;
   const providerIt = liveUrl ? it : it.skip;
 
-  providerIt('verifies all consumer contracts against the live provider', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { Verifier } = require('@pact-foundation/pact');
-    const path = require('node:path');
-    const verifier = new Verifier({
-      providerBaseUrl: liveUrl,
-      pactUrls: [path.resolve('src/tests/pact/pacts')],
-      providerVersion: process.env.GIT_COMMIT ?? '0.0.0',
-      logLevel: 'warn',
-    });
-    await verifier.verifyProvider();
-  });
+  providerIt(
+    'verifies all consumer contracts against the live provider',
+    async () => {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Verifier } = require('@pact-foundation/pact');
+      const path = require('node:path');
+      const verifier = new Verifier({
+        providerBaseUrl: liveUrl,
+        pactUrls: [path.resolve('src/tests/pact/pacts')],
+        providerVersion: process.env.GIT_COMMIT ?? '0.0.0',
+        logLevel: 'warn',
+      });
+      await verifier.verifyProvider();
+    },
+  );
 });
