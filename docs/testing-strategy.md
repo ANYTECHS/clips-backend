@@ -549,6 +549,41 @@ For every new controller endpoint, verify:
 
 ---
 
+## Core Module Coverage Gate (#1026)
+
+`npm run test:cov:core` runs a **focused** coverage gate over the critical
+backend modules. The repository-wide `npm run test:cov` threshold is
+unchanged (35%); this gate enforces **80%+** on the modules themselves so a
+regression in Clips, Videos, Web3, Earnings, Payouts or queue-processor code is
+caught without waiting for the global report.
+
+```bash
+npm run test:cov:core
+```
+
+Configuration lives in `jest.core-coverage.config.js` (report written to
+`coverage/core-modules/`). Current baseline — **99.55% statements, 93.33%
+branches, 100% functions, 99.51% lines** across 10 modules:
+
+| Module | Area | % Stmts | % Branch | % Funcs |
+|--------|------|---------|----------|---------|
+| `payouts/payout-state-machine.service.ts` | Payouts | 100 | 97.36 | 100 |
+| `payouts/payout-retry-strategy.service.ts` | Payouts / queue | 96.87 | 94.44 | 100 |
+| `queue/retry-backoff-config.service.ts` | Queue processors | 100 | 75 | 100 |
+| `common/helpers/queue-registration.helper.ts` | Queue processors | 100 | 100 | 100 |
+| `videos/helpers/video-stats.helper.ts` | Videos | 100 | 100 | 100 |
+| `videos/helpers/video-validation.helper.ts` | Videos | 100 | 100 | 100 |
+| `videos/helpers/video-metadata.helper.ts` | Videos | 100 | 90 | 100 |
+| `clips/caption.util.ts` | Clips | 100 | 100 | 100 |
+| `nft/gas-metrics.service.ts` | Web3 / Stellar | 100 | 100 | 100 |
+| `earnings/currency-conversion.service.ts` | Earnings | 100 | 100 | 100 |
+
+To add a module to the gate, append its path to
+`CORE_MODULE_COVERAGE_PATTERNS` and its spec basename to `CORE_SUITE_PATTERN`
+in `jest.core-coverage.config.js`.
+
+---
+
 ## Test Helpers and Fixtures
 
 ### `test/helpers/`
