@@ -259,6 +259,27 @@ export class WalletsController {
       },
     },
   })
+  @ApiBody({
+    type: CreateWalletConnectionDto,
+    examples: {
+      stellar: {
+        summary: 'Connect a Stellar wallet',
+        value: {
+          address: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          chain: 'stellar',
+          type: 'freighter',
+        },
+      },
+      solana: {
+        summary: 'Connect a Solana wallet',
+        value: {
+          address: '7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV1',
+          chain: 'solana',
+          type: 'phantom',
+        },
+      },
+    },
+  })
   @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
   @ApiBadRequestResponse({
     description: 'Invalid wallet data or signature verification failed',

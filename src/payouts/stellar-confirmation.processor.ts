@@ -2,6 +2,7 @@ import { Processor, WorkerHost, InjectQueue } from '@nestjs/bullmq';
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { PayoutsService } from './payouts.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import {
   STELLAR_CONFIRMATION_QUEUE,
   STELLAR_CONFIRMATION_JOB,
@@ -15,11 +16,15 @@ export class StellarConfirmationProcessor extends WorkerHost implements OnModule
   constructor(
     @InjectQueue(STELLAR_CONFIRMATION_QUEUE) private readonly queue: Queue,
     private readonly payoutsService: PayoutsService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
   }
 
   async onModuleInit(): Promise<void> {
+    this.shutdownService.register(this.worker);
+    this.shutdownService.registerQueue(this.queue);
+
     await this.queue.add(
       STELLAR_CONFIRMATION_JOB,
       {},
