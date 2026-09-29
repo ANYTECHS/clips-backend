@@ -134,6 +134,18 @@ export class QueueRateLimitGuard implements CanActivate {
 
         // Read the remaining TTL so the caller knows when they can retry
         const ttl = await this.redisService.ttl(key);
+        const retryAfter = ttl > 0 ? ttl : windowSecs;
+
+        // Set Retry-After header so HTTP clients and Swagger consumers can
+        // honor the backoff without parsing the body (#900).
+        try {
+          const response = context.switchToHttp().getResponse();
+          if (response && typeof response.setHeader === 'function') {
+            response.setHeader('Retry-After', String(retryAfter));
+          }
+        } catch {
+          // Non-HTTP context (e.g. unit tests) — header is best-effort only.
+        }
 
         throw new HttpException(
           {
@@ -144,7 +156,7 @@ export class QueueRateLimitGuard implements CanActivate {
             queue: options.queue,
             limit: maxJobs,
             windowSecs,
-            retryAfter: ttl > 0 ? ttl : windowSecs,
+            retryAfter,
           },
           HttpStatus.TOO_MANY_REQUESTS,
         );
