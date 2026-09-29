@@ -554,6 +554,46 @@ For every new controller endpoint, verify:
 ### `test/helpers/`
 - `ffmpeg-mock.helper.ts` — fluent-ffmpeg mock for clip-generation tests.
 
+### `src/videos/helpers/mocks/`
+- `claude.mock.ts` — reusable Claude (Anthropic) API mock for AI tests (#1027).
+
+#### Claude API mock
+
+`detectMomentsWithClaude()` loads `@anthropic-ai/sdk` through an indirect
+dynamic import so the SDK stays an optional runtime dependency. That import
+always throws inside a Jest run, which meant every AI test silently exercised
+the "API unavailable" fallback. The mock plugs a fake SDK into the
+`setAnthropicSdkLoader` seam, so the success, empty, malformed, API-failure,
+rate-limit and timeout paths are all exercised without a real API call.
+
+```typescript
+import { claude, defaultMockMoments } from './helpers/mocks/claude.mock';
+
+beforeEach(() => claude.install());
+afterEach(() => claude.restore());
+
+it('uses the AI moments', async () => {
+  claude.mockSuccess({ clipCount: 12, clipDuration: 30 });
+  const result = await service.detectViralTimestamps(1);
+  expect(result).toHaveLength(12);
+});
+```
+
+| Scenario helper | Simulates |
+|------------------|-----------|
+| `mockSuccess()` | 200 with a JSON `clips` array (defaults to 12 clips, clearing `minClips`) |
+| `mockEmptyResponse()` | 200 with an empty / refusal body |
+| `mockMalformedResponse()` | 200 with a non-JSON or unusable-JSON body |
+| `mockTooFewClips()` / `mockUnexpectedShape()` | Valid JSON below `minClips`, or a `clips` key of the wrong type |
+| `mockApiFailure()` / `mockNetworkError()` | HTTP 500 and a transport-level failure |
+| `mockRateLimit()` / `mockTimeout()` / `mockOverloaded()` | 429, 408 and 529 |
+| `mockFailure(kind, message?)` | any of the above, with a custom message |
+
+The mock also records every request (`claude.lastRequest`, `claude.callCount`),
+so specs can assert the model, `max_tokens`, temperature and the media content
+sent to Claude. `claude.reset()` clears recorded requests between tests, and
+`restore()` puts the production lazy import back.
+
 ### `test/mocks/`
 - `cloudinary.mock.ts` — Cloudinary SDK upload stub.
 - `stellar-sdk.mock.ts` — Stellar SDK mock for wallet/transaction tests.
