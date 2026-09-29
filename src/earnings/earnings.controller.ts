@@ -23,15 +23,26 @@ import {
   ApiUnauthorizedResponse,
   ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
+  ApiNotFoundResponse,
+  ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import { EarningsService } from './earnings.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { EarningsExportService } from './earnings-export.service';
+import { DailyEarningsAggregationService } from './daily-earnings-aggregation.service';
 import { LeaderboardService, LeaderboardResponse } from './leaderboard.service';
 import { Currency } from './earnings.types';
 import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
+import { DailyEarningsQueryDto } from './dto/daily-earnings-query.dto';
+import { DailyEarningsResponseDto } from './dto/daily-earnings-response.dto';
+import {
+  LeaderboardQueryDto,
+  LeaderboardResponseDto,
+  LeaderboardVisibilityDto,
+} from './dto/leaderboard.dto';
 
 interface AuthRequest extends Request {
   user: { userId: number };
@@ -54,6 +65,7 @@ export class EarningsController {
     private readonly earningsService: EarningsService,
     private readonly earningsAggregationService: EarningsAggregationService,
     private readonly earningsExportService: EarningsExportService,
+    private readonly dailyEarningsAggregationService: DailyEarningsAggregationService,
     private readonly leaderboardService: LeaderboardService,
   ) {}
 
@@ -62,11 +74,21 @@ export class EarningsController {
   @Get()
   @ApiOperation({
     summary: 'Get user earnings total (cached)',
-    description: 'Returns the cached total earnings for the authenticated user.',
+    description:
+      'Returns the cached total earnings for the authenticated user. ' +
+      'Also used as the REST companion for live dashboard totals; ' +
+      'subscribe to WebSocket namespace `/earnings` for `earnings.updated` events ' +
+      'with payload `{ event, userId, currency, amount, total }` (JWT via handshake.auth.token).',
+    summary: 'Get user earnings total',
+    description:
+      'Returns total earnings for the authenticated user. ' +
+      'Frequently requested totals may be served from a short-lived cache; ' +
+      'on cache miss or cache unavailability the value is loaded from PostgreSQL. ' +
+      'The response shape is identical regardless of data source.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Cached user earnings total',
+    description: 'User earnings total',
     schema: {
       type: 'object',
       properties: {
@@ -135,6 +157,72 @@ export class EarningsController {
       limit ?? 20,
       currency ?? Currency.USD,
     );
+  }
+
+  @Get('daily')
+  @ApiOperation({
+    summary: 'Get daily aggregated earnings',
+    description:
+      'Returns pre-aggregated DailyEarning rows for the authenticated user. ' +
+      'Totals are produced by the midnight UTC BullMQ job and grouped by user and currency. ' +
+      'Optional `from` / `to` (UTC) and `currency` filters narrow the result set.',
+  })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    type: String,
+    description: 'Inclusive start date (UTC, ISO 8601)',
+    example: '2026-09-01',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    type: String,
+    description: 'Inclusive end date (UTC, ISO 8601)',
+    example: '2026-09-27',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    type: String,
+    description: 'ISO 4217 currency filter',
+    example: 'USD',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Aggregated daily earnings',
+    type: DailyEarningsResponseDto,
+    schema: {
+      example: {
+        items: [
+          {
+            id: 1,
+            date: '2026-09-26T00:00:00.000Z',
+            currency: 'USD',
+            totalAmount: 125.5,
+            totalInBaseCurrency: 125.5,
+            earningCount: 12,
+            clipCount: 4,
+          },
+        ],
+        filters: {
+          from: '2026-09-01T00:00:00.000Z',
+          to: '2026-09-27T00:00:00.000Z',
+          currency: 'USD',
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  async getDailyEarnings(
+    @Req() req: AuthRequest,
+    @Query() query: DailyEarningsQueryDto,
+  ): Promise<DailyEarningsResponseDto> {
+    return this.dailyEarningsAggregationService.getDailyEarnings(req.user.userId, {
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+      currency: query.currency,
+    });
   }
 
   @Get('total')
@@ -285,21 +373,116 @@ export class EarningsController {
     );
   }
 
+  @Get('monthly')
+  @ApiOperation({
+    summary: 'Get monthly earnings summary',
+    description:
+      'Returns the MonthlyEarning summary for year/month (UTC). ' +
+      'Generated automatically on the 1st of each month; falls back to live computation if not yet generated. ' +
+      'Includes total, platform breakdown grouped by currency, and currency info.',
+  })
+  @ApiQuery({ name: 'year', required: true, type: Number, description: 'Full year, e.g. 2026', example: 2026 })
+  @ApiQuery({ name: 'month', required: true, type: Number, description: 'Month 1-12', example: 9 })
+  @ApiResponse({
+    status: 200,
+    description: 'Monthly summary with total, platformBreakdown, currency',
+    schema: {
+      type: 'object',
+      properties: {
+        userId: { type: 'number', example: 1 },
+        year: { type: 'number', example: 2026 },
+        month: { type: 'number', example: 9 },
+        totalAmount: { type: 'number', example: 1250.5 },
+        currency: { type: 'string', example: 'USD' },
+        platformBreakdown: { type: 'object', example: { royalty: 800, subscription: 450.5 } },
+        generated: { type: 'boolean', example: true },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid year/month' })
+  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  async getMonthlySummary(
+    @Req() req: AuthRequest,
+    @Query('year') yearStr: string,
+    @Query('month') monthStr: string,
+  ) {
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    if (!Number.isInteger(year) || !Number.isInteger(month)) {
+      throw new BadRequestException('year and month query params are required (e.g. ?year=2026&month=9)');
+    }
+    return this.earningsAggregationService.getMonthlySummary(
+      req.user.userId,
+      year,
+      month,
+    );
+  }
+
   // ── Export ───────────────────────────────────────────────────────────────
 
   @Get('export')
   @ApiOperation({
-    summary: 'Export earnings as CSV',
+    summary: 'Export earnings as CSV for tax reporting',
     description:
-      'Downloads a CSV file containing earnings records. ' +
-      'Optionally filter by date range.',
+      'Downloads a CSV file of the authenticated user\'s earnings for an optional date range. ' +
+      'Supported format: csv. Empty results still return a header-only CSV file. ' +
+      'Columns: date, clipTitle, amount, currency, source, transactionId.',
   })
-  @ApiQuery({ name: 'startDate', required: false, type: String, description: 'Filter start date (ISO 8601)', example: '2025-01-01' })
-  @ApiQuery({ name: 'endDate', required: false, type: String, description: 'Filter end date (ISO 8601)', example: '2025-12-31' })
-  @ApiQuery({ name: 'format', required: false, type: String, description: 'Export format — only "csv" is supported', example: 'csv' })
-  @ApiResponse({ status: 200, description: 'CSV file attachment' })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
-  @ApiBadRequestResponse({ description: 'Unsupported export format' })
+  @ApiQuery({
+    name: 'startDate',
+    required: false,
+    type: String,
+    description: 'Filter start date (ISO 8601)',
+    example: '2025-01-01',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: false,
+    type: String,
+    description: 'Filter end date (ISO 8601)',
+    example: '2025-12-31',
+  })
+  @ApiQuery({
+    name: 'format',
+    required: false,
+    type: String,
+    description: 'Export format — only "csv" is supported',
+    example: 'csv',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'CSV file attachment (Content-Type: text/csv). Header-only when no earnings match.',
+    content: {
+      'text/csv': {
+        schema: { type: 'string', example: 'date,clipTitle,amount,currency,source,transactionId\n' },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT (Bearer access-token)' })
+  @ApiBadRequestResponse({
+    description: 'Invalid date range or unsupported export format',
+    schema: {
+      examples: {
+        invalidRange: {
+          summary: 'startDate after endDate',
+          value: {
+            statusCode: 400,
+            message: 'Invalid date range: startDate must be on or before endDate.',
+            error: 'Bad Request',
+          },
+        },
+        unsupportedFormat: {
+          summary: 'Unsupported format',
+          value: {
+            statusCode: 400,
+            message: 'Unsupported export format "pdf". Only "csv" is supported.',
+            error: 'Bad Request',
+          },
+        },
+      },
+    },
+  })
   async exportEarnings(
     @Req() req: AuthRequest,
     @Res() res: Response,
@@ -326,47 +509,34 @@ export class EarningsController {
   // ── Leaderboard ─────────────────────────────────────────────────────────
 
   @Get('leaderboard')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Get top creators leaderboard',
+    summary: 'Get top creators earnings leaderboard',
     description:
-      'Returns the top earning creators who have opted in to the leaderboard. ' +
-      'Only includes users with showOnLeaderboard=true and at least one earning.',
-  })
-  @ApiQuery({
-    name: 'limit',
-    required: false,
-    description: 'Number of top creators to return (default: 100, max: 500)',
-    type: 'number',
-    example: 100,
+      'Returns paginated top-earning creators who explicitly opted in via showOnLeaderboard=true. ' +
+      'Soft-deleted earnings are excluded. By default display names are anonymized as "Creator #N" ' +
+      'and earnings amounts are exact; set anonymizeEarnings=true to bucket amounts. ' +
+      'Results are cached for ~1 hour.',
   })
   @ApiResponse({
     status: 200,
-    description: 'Top creators leaderboard',
-    schema: {
-      type: 'object',
-      properties: {
-        data: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              rank: { type: 'number', example: 1 },
-              userId: { type: 'number', example: 123 },
-              username: { type: 'string', example: 'creator123' },
-              totalEarnings: { type: 'number', example: 5000 },
-            },
-          },
-        },
-        updatedAt: { type: 'string', format: 'date-time' },
-      },
-    },
+    description: 'Paginated leaderboard of opted-in creators',
+    type: LeaderboardResponseDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Leaderboard feature flag is disabled',
   })
   @ApiInternalServerErrorResponse({ description: 'Internal server error' })
   async getLeaderboard(
-    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query() query: LeaderboardQueryDto,
   ): Promise<LeaderboardResponse> {
-    return this.leaderboardService.getLeaderboard(limit);
+    return this.leaderboardService.getLeaderboard({
+      page: query.page,
+      limit: query.limit,
+      anonymize: query.anonymize,
+      anonymizeEarnings: query.anonymizeEarnings,
+    });
   }
 
   @Get('leaderboard/rank')
@@ -374,7 +544,8 @@ export class EarningsController {
   @ApiOperation({
     summary: "Get user's rank on the leaderboard",
     description:
-      "Returns the authenticated user's rank, total earnings, and leaderboard visibility setting.",
+      "Returns the authenticated user's rank, total earnings, and leaderboard visibility setting. " +
+      'Rank is null when the user has not opted in or has zero earnings.',
   })
   @ApiResponse({
     status: 200,
@@ -396,8 +567,10 @@ export class EarningsController {
   @Post('leaderboard/visibility')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Update leaderboard visibility',
-    description: 'Enable or disable leaderboard visibility for the authenticated user.',
+    summary: 'Update leaderboard visibility (privacy opt-in)',
+    description:
+      'Enable or disable leaderboard participation for the authenticated user. ' +
+      'Only users with showOnLeaderboard=true appear on GET /earnings/leaderboard.',
   })
   @ApiResponse({
     status: 200,
@@ -412,7 +585,7 @@ export class EarningsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async updateLeaderboardVisibility(
     @Req() req: AuthRequest,
-    @Body() body: { showOnLeaderboard: boolean },
+    @Body() body: LeaderboardVisibilityDto,
   ) {
     return this.leaderboardService.setLeaderboardVisibility(
       req.user.userId,
@@ -427,11 +600,16 @@ export class EarningsController {
   @ApiOperation({
     summary: 'Soft-delete an earning record',
     description:
-      'Marks the earning record as deleted (soft delete). Only the owning user can delete their earnings.',
+      'Sets deletedAt instead of permanently deleting the record. ' +
+      'Soft-deleted earnings are excluded from normal queries and aggregations. ' +
+      'Already-deleted or non-owned records return 404. ' +
+      'Admins can restore via POST /admin/earnings/:earningId/restore.',
   })
   @ApiParam({ name: 'earningId', type: Number, description: 'Earning record ID' })
-  @ApiResponse({ status: 200, description: 'Earning deleted successfully' })
-  @ApiBadRequestResponse({ description: 'Earning not found or does not belong to user' })
+  @ApiResponse({ status: 200, description: 'Earning soft-deleted successfully' })
+  @ApiNotFoundResponse({
+    description: 'Earning not found, already soft-deleted, or does not belong to user',
+  })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async deleteEarning(
     @Req() req: AuthRequest,

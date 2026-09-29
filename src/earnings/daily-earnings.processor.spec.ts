@@ -3,6 +3,7 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { DailyEarningsProcessor } from './daily-earnings.processor';
 import { DailyEarningsAggregationService } from './daily-earnings-aggregation.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import {
   DAILY_EARNINGS_CRON,
   DAILY_EARNINGS_JOB,
@@ -10,13 +11,17 @@ import {
   DAILY_EARNINGS_TIMEZONE,
 } from './daily-earnings.queue';
 
-describe('DailyEarningsProcessor (Issue #767)', () => {
+describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
   let processor: DailyEarningsProcessor;
-  let queue: { add: jest.Mock };
+  let queue: { add: jest.Mock; name: string };
   let aggregation: { aggregateDay: jest.Mock };
+  let shutdown: { register: jest.Mock; registerQueue: jest.Mock };
 
   beforeEach(async () => {
-    queue = { add: jest.fn().mockResolvedValue({ id: 'repeat:1' }) };
+    queue = {
+      add: jest.fn().mockResolvedValue({ id: 'repeat:1' }),
+      name: DAILY_EARNINGS_QUEUE,
+    };
     aggregation = {
       aggregateDay: jest.fn().mockResolvedValue({
         date: new Date('2026-03-14T00:00:00.000Z'),
@@ -25,22 +30,34 @@ describe('DailyEarningsProcessor (Issue #767)', () => {
         usersUpdated: 2,
       }),
     };
+    shutdown = {
+      register: jest.fn(),
+      registerQueue: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DailyEarningsProcessor,
         { provide: getQueueToken(DAILY_EARNINGS_QUEUE), useValue: queue },
         { provide: DailyEarningsAggregationService, useValue: aggregation },
+        { provide: GracefulShutdownService, useValue: shutdown },
       ],
     }).compile();
 
     processor = module.get(DailyEarningsProcessor);
+    // WorkerHost.worker is a getter; stub via defineProperty for register().
+    Object.defineProperty(processor, 'worker', {
+      configurable: true,
+      get: () => ({ name: DAILY_EARNINGS_QUEUE }),
+    });
   });
 
   describe('onModuleInit', () => {
     it('registers a daily repeatable job at midnight UTC', async () => {
       await processor.onModuleInit();
 
+      expect(shutdown.register).toHaveBeenCalled();
+      expect(shutdown.registerQueue).toHaveBeenCalledWith(queue);
       expect(queue.add).toHaveBeenCalledWith(
         DAILY_EARNINGS_JOB,
         {},

@@ -30,6 +30,7 @@ import { NftTransferHistoryService } from './nft-transfer-history.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
+import { SorobanContractController } from './soroban-contract.controller';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     PlatformRevenueController,
     BatchRoyaltyController,
     ClipRoyaltyController,
+    SorobanContractController,
   ],
   exports: [
     NftService,

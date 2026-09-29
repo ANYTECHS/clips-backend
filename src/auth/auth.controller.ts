@@ -22,6 +22,12 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiBody,
+  ApiBadRequestResponse,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
+  ApiConflictResponse,
+  ApiTooManyRequestsResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
@@ -48,6 +54,12 @@ import {
 import { CsrfService } from '../csrf/csrf.service';
 
 @ApiTags('auth')
+@ApiBadRequestResponse({ description: 'Invalid input or validation error' })
+@ApiUnauthorizedResponse({ description: 'Authentication required' })
+@ApiForbiddenResponse({ description: 'Insufficient permissions' })
+@ApiNotFoundResponse({ description: 'Resource not found' })
+@ApiConflictResponse({ description: 'Resource already exists' })
+@ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('auth')
 export class AuthController {
@@ -59,21 +71,10 @@ export class AuthController {
   ) {}
 
   @Post('signup')
-  @ApiOperation({ summary: 'Register a new user account' })
-  @ApiResponse({ status: 201, description: 'User created successfully' })
-  @ApiResponse({
-    status: 400,
-    description: 'Invalid input or user already exists',
-    schema: {
-      example: {
-        statusCode: 400,
-        message: [
-          'Please provide a valid email address',
-          'Password is too short (min 8 characters)',
-        ],
-        error: 'Bad Request',
-      },
-    },
+  @ApiOperation({
+    summary: 'Register a new user account',
+    description:
+      'Creates a new user account with email and password, provisions a custodial Stellar wallet, and sends an email verification link.',
   })
   @ApiBody({ type: SignupDto })
   @ApiResponse({
@@ -84,19 +85,42 @@ export class AuthController {
   @ApiResponse({
     status: 400,
     description:
-      'Invalid input, weak password, or user already exists. Password validation errors ' +
-      'return a JSON-encoded message, e.g. ' +
-      '`{"score":1,"feedback":["Add numbers"],"suggestions":"Password is too weak. Add numbers"}`.',
+      'Bad Request - Invalid input, weak password, or validation failure. Password validation errors return a JSON-encoded message containing score, feedback, and suggestions.',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: [
+          'Please provide a valid email address',
+          'Password must be at least 10 characters long',
+        ],
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Conflict - Email already registered',
+    schema: {
+      example: {
+        statusCode: 409,
+        message: 'Email already registered',
+        error: 'Conflict',
+      },
+    },
   })
   @ApiResponse({
     status: 429,
-    description: 'Too many requests',
+    description: 'Too Many Requests - Rate limit exceeded',
     examples: {
       rateLimited: {
         summary: 'Rate limited',
         value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
       },
     },
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal Server Error - Unexpected server error during user registration',
   })
   @ApiQuery({
     name: 'use_cookies',
@@ -125,11 +149,20 @@ export class AuthController {
   }
 
   @Post('login')
-  @ApiOperation({ summary: 'Authenticate user and get access tokens' })
-  @ApiResponse({ status: 200, description: 'Login successful' })
+  @ApiOperation({
+    summary: 'Authenticate user and get access tokens',
+    description:
+      'Authenticates user with email and password (plus optional TOTP code if MFA is enabled). Clears brute force counters on success and returns access & refresh tokens.',
+  })
+  @ApiBody({ type: LoginDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Login successful',
+    type: AuthSuccessResponseDto,
+  })
   @ApiResponse({
     status: 400,
-    description: 'Invalid credentials',
+    description: 'Bad Request - Validation error (invalid email format, missing password)',
     schema: {
       example: {
         statusCode: 400,
@@ -138,14 +171,18 @@ export class AuthController {
       },
     },
   })
-  @ApiBody({ type: LoginDto })
   @ApiResponse({
-    status: 200,
-    description: 'Login successful',
-    type: AuthSuccessResponseDto,
+    status: 401,
+    description:
+      'Unauthorized - Invalid credentials, wrong password, or missing/invalid TOTP code',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid credentials. 4 attempts remaining.',
+        error: 'Unauthorized',
+      },
+    },
   })
-  @ApiResponse({ status: 400, description: 'Invalid credentials' })
-  @ApiResponse({ status: 401, description: 'Authentication failed' })
   @ApiResponse({
     status: 423,
     description: 'Account locked due to brute force protection',
@@ -162,13 +199,17 @@ export class AuthController {
   })
   @ApiResponse({
     status: 429,
-    description: 'Too many requests',
+    description: 'Too Many Requests - Rate limit exceeded',
     examples: {
       rateLimited: {
         summary: 'Rate limited',
         value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
       },
     },
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal Server Error - Unexpected error during login',
   })
   @ApiQuery({
     name: 'use_cookies',
@@ -208,6 +249,8 @@ export class AuthController {
       'This endpoint is meant to be opened directly in a browser, not called via AJAX/fetch.',
   })
   @ApiResponse({ status: 302, description: 'Redirects to Google OAuth consent screen' })
+  @ApiResponse({ status: 400, description: 'Bad Request - OAuth initialization failed' })
+  @ApiResponse({ status: 500, description: 'Internal Server Error - Google OAuth configuration error' })
   @UseGuards(AuthGuard('google'))
   googleAuth() {
     return;
@@ -231,7 +274,10 @@ export class AuthController {
     description: 'Authentication successful — sets token cookies and returns the user + csrfToken',
     type: AuthSuccessResponseDto,
   })
+  @ApiResponse({ status: 400, description: 'Bad Request - Missing or invalid OAuth state/code parameters' })
   @ApiResponse({ status: 401, description: 'Google authentication failed or was denied' })
+  @ApiResponse({ status: 409, description: 'Conflict - OAuth account linking conflict' })
+  @ApiResponse({ status: 500, description: 'Internal Server Error - Failed to process Google OAuth callback' })
   @UseGuards(AuthGuard('google'))
   async googleCallback(
     @Req() req: any,
@@ -456,24 +502,54 @@ export class AuthController {
   }
 
   @Post('refresh')
-  @ApiOperation({ summary: 'Refresh access token', description: 'Get new access token using refresh token. The old refresh token is revoked and a new one is issued (rotation).' })
-  @ApiResponse({ status: 200, description: 'Tokens refreshed successfully', type: TokenResponseDto })
-  @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
-  @ApiResponse({ status: 401, description: 'Unauthorized - refresh token invalid, expired, or revoked' })
-  @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
   @ApiOperation({
     summary: 'Refresh access token',
-    description: 'Get new access token using refresh token',
+    description:
+      'Get new access token using refresh token. The old refresh token is revoked and a new one is issued (rotation). Supports body or cookie-based refresh token.',
   })
   @ApiBody({ type: RefreshTokenDto })
   @ApiResponse({
     status: 200,
     description: 'Tokens refreshed successfully',
-    type: AuthTokensDto,
+    type: TokenResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Refresh token is missing or malformed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Refresh token is required',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Unauthorized - Refresh token invalid, expired, revoked, or device fingerprint mismatch detected',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid refresh token',
+        error: 'Unauthorized',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too Many Requests - Rate limit exceeded',
+    examples: {
+      rateLimited: {
+        summary: 'Rate limited',
+        value: { message: 'ThrottlerException: Too Many Requests', error: 'Too Many Requests', statusCode: 429 },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal Server Error - Unexpected error during token refresh',
+  })
   @ApiQuery({
     name: 'use_cookies',
     required: false,
@@ -507,10 +583,25 @@ export class AuthController {
   @Post('logout')
   @ApiOperation({
     summary: 'Logout user',
-    description: 'Revokes refresh token and clears cookies',
+    description:
+      'Revokes the refresh token and clears token cookies. Accepts the refresh token ' +
+      'in the request body (`RefreshTokenDto.refreshToken`) or via the `refresh_token` cookie. ' +
+      'Always clears cookies even when no valid token is supplied (Issue #926).',
   })
   @ApiBody({ type: RefreshTokenDto })
-  @ApiResponse({ status: 204, description: 'Logout successful' })
+  @ApiResponse({ status: 204, description: 'Logout successful - refresh token revoked, cookies cleared' })
+  @ApiResponse({
+    status: 401,
+    description: 'Refresh token invalid, expired, or already revoked (cookies are still cleared)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid refresh token',
+        error: 'Unauthorized',
+      },
+    },
+  })
+
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @Body(new ValidationPipe({ transform: true })) dto: RefreshTokenDto,
