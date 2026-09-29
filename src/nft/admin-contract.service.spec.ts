@@ -31,7 +31,10 @@ jest.mock('@stellar/stellar-sdk', () => {
         fromXDR: jest.fn((xdrStr: string) => ({ __xdr: xdrStr })),
       },
     },
-    scValToNative: jest.fn((scVal: { __xdr: string }) => scVal.__xdr),
+    scValToNative: jest.fn((scVal: { __xdr: string }) => {
+      const numericValue = Number(scVal.__xdr);
+      return Number.isNaN(numericValue) ? scVal.__xdr : numericValue;
+    }),
   };
 
   return { __esModule: true, default: sdkShape, ...sdkShape };
@@ -84,6 +87,42 @@ describe('AdminContractService.getCollectionInfo (Issue #679)', () => {
     circuitBreakerService.execute.mockRejectedValue(new Error('Soroban RPC down'));
 
     await expect(service.getCollectionInfo()).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+  });
+});
+
+describe('AdminContractService.getTotalSupply', () => {
+  let service: AdminContractService;
+  const stellarService = {
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    networkPassphrase: 'Test SDF Network ; September 2015',
+    network: 'testnet',
+  };
+  const circuitBreakerService = {
+    execute: jest.fn((_config: unknown, fn: () => unknown) => fn()),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    circuitBreakerService.execute.mockImplementation((_config: unknown, fn: () => unknown) => fn());
+    service = new AdminContractService(stellarService as any, circuitBreakerService as any);
+  });
+
+  it.each([0, 1250])('returns the contract supply value %i', async (supply) => {
+    mockSimulateTransaction.mockResolvedValue({ results: [{ xdr: String(supply) }] });
+
+    await expect(service.getTotalSupply()).resolves.toEqual({
+      totalSupply: supply,
+      contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+      network: 'testnet',
+    });
+  });
+
+  it('maps contract communication failures to an internal server error', async () => {
+    circuitBreakerService.execute.mockRejectedValue(new Error('Soroban RPC down'));
+
+    await expect(service.getTotalSupply()).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
   });

@@ -21,9 +21,13 @@ export class RolesGuard implements CanActivate {
     const hasRole = requiredRoles.some((role) => user?.role === role);
 
     if (!hasRole) {
+      const isAdminOnly =
+        requiredRoles.length === 1 && requiredRoles[0] === 'admin';
       throwForbidden({
-        message: 'Insufficient permissions',
-        errorCode: 'FORBIDDEN',
+        message: isAdminOnly
+          ? 'unauthorized-admin'
+          : 'Insufficient permissions',
+        errorCode: isAdminOnly ? 'UNAUTHORIZED_ADMIN' : 'FORBIDDEN',
         reason: `Required roles: ${requiredRoles.join(', ')}`,
       });
     }

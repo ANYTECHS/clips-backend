@@ -15,11 +15,14 @@ import {
   ApiResponse,
   ApiHeader,
   ApiParam,
+  ApiBody,
   ApiBadRequestResponse,
+  ApiUnauthorizedResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { WebhooksService } from './webhooks.service';
 import { Public } from '../auth/decorators/public.decorator';
+import { ProcessWebhookDto } from './dto/process-webhook.dto';
 
 @ApiTags('webhooks')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
@@ -33,37 +36,71 @@ export class WebhooksController {
   @Post('earnings/:platform')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Receive earnings webhook from any supported platform',
+    summary: 'Receive earnings webhook from a social platform',
     description:
-      'Generic endpoint for receiving earnings webhooks. Validates platform, signature, checks for duplicates, creates earning, and emits WebSocket event.',
+      'Accepts earnings events from TikTok, YouTube, or Instagram. ' +
+      'Validates the platform-specific signature header, validates the payload, ' +
+      'deduplicates by event_id, creates an Earning record, invalidates earnings cache, ' +
+      'and emits earnings events for downstream processing.\n\n' +
+      '**Signature validation:** HMAC-SHA256 over the JSON body using the platform secret ' +
+      '(TIKTOK_WEBHOOK_SECRET / YOUTUBE_WEBHOOK_SECRET / INSTAGRAM_WEBHOOK_SECRET). ' +
+      'YouTube/Instagram signatures use the `sha256=<hex>` form.\n\n' +
+      '**Duplicate behavior:** If the same platform + event_id was already processed, ' +
+      'the endpoint returns HTTP 200 with `{ received: true, duplicate: true }` and ' +
+      'does not create another earning.',
   })
   @ApiParam({
     name: 'platform',
-    description: 'Platform identifier (tiktok, youtube, instagram)',
+    description: 'Platform identifier',
     enum: ['tiktok', 'youtube', 'instagram'],
   })
   @ApiHeader({
     name: 'x-webhook-signature',
-    description: 'Platform-specific webhook signature',
+    description: 'Generic webhook signature (any platform)',
     required: false,
   })
   @ApiHeader({
     name: 'x-tiktok-signature',
-    description: 'TikTok-specific webhook signature',
+    description: 'TikTok HMAC-SHA256 hex digest',
     required: false,
   })
   @ApiHeader({
     name: 'x-hub-signature-256',
-    description: 'YouTube/Instagram HMAC-SHA256 signature',
+    description: 'YouTube/Instagram signature (`sha256=<hex>`)',
     required: false,
   })
-  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
+  @ApiBody({ type: ProcessWebhookDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Webhook acknowledged. `duplicate: true` means the event was already processed.',
+    schema: {
+      examples: {
+        created: {
+          value: { received: true, duplicate: false, earningId: 42 },
+        },
+        duplicate: {
+          value: { received: true, duplicate: true },
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid webhook signature',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid webhook signature',
+        error: 'Unauthorized',
+      },
+    },
+  })
   @ApiBadRequestResponse({
-    description: 'Invalid platform, signature, or payload',
+    description: 'Unsupported platform or invalid payload',
   })
   async handleEarningsWebhook(
     @Param('platform') platform: string,
-    @Body() body: any,
+    @Body() body: ProcessWebhookDto,
     @Headers('x-webhook-signature') genericSignature: string,
     @Headers('x-tiktok-signature') tiktokSignature: string,
     @Headers('x-hub-signature-256') hubSignature: string,
@@ -76,65 +113,56 @@ export class WebhooksController {
       );
     }
 
-    const typedPlatform = normalizedPlatform;
-
     const signature = genericSignature || tiktokSignature || hubSignature;
-
-    if (signature) {
-      const isValid = this.webhooksService.validateSignature(
-        typedPlatform,
-        body,
-        signature,
-      );
-
-      if (!isValid) {
-        throw new BadRequestException('Invalid webhook signature');
-      }
-    }
-
-    this.logger.log(`Received earnings webhook from ${typedPlatform}`);
-
-    const result = await this.webhooksService.processWebhook(
-      typedPlatform,
+    this.webhooksService.assertValidSignature(
+      normalizedPlatform,
       body,
       signature,
     );
 
-    return { received: true, duplicate: result.duplicate ?? false };
+    this.logger.log(`Received earnings webhook from ${normalizedPlatform}`);
+
+    const result = await this.webhooksService.processWebhook(
+      normalizedPlatform,
+      body,
+      signature,
+    );
+
+    return {
+      received: true,
+      duplicate: result.duplicate ?? false,
+      ...(result.earningId != null ? { earningId: result.earningId } : {}),
+    };
   }
 
   @Public()
   @Post('tiktok')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Receive TikTok webhook',
+    summary: 'Receive TikTok earnings webhook',
     description:
-      'Handles incoming TikTok webhook events with signature verification',
+      'Platform-specific TikTok handler with `x-tiktok-signature` verification.',
   })
   @ApiHeader({
     name: 'x-tiktok-signature',
-    description: 'TikTok webhook signature',
+    description: 'TikTok webhook signature (HMAC-SHA256 hex)',
     required: true,
   })
-  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
-  @ApiBadRequestResponse({ description: 'Invalid signature or payload' })
+  @ApiBody({ type: ProcessWebhookDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Webhook acknowledged',
+    schema: { example: { received: true } },
+  })
+  @ApiUnauthorizedResponse({ description: 'Invalid signature' })
+  @ApiBadRequestResponse({ description: 'Invalid payload' })
   async handleTikTokWebhook(
-    @Body() body: any,
+    @Body() body: ProcessWebhookDto,
     @Headers('x-tiktok-signature') signature: string,
   ) {
     this.logger.log('Received TikTok webhook');
-
-    const isValid = this.webhooksService.validateTikTokSignature(
-      body,
-      signature,
-    );
-
-    if (!isValid) {
-      throw new BadRequestException('Invalid signature');
-    }
-
+    this.webhooksService.assertValidSignature('tiktok', body, signature);
     await this.webhooksService.processTikTokWebhook(body);
-
     return { received: true };
   }
 
@@ -142,34 +170,61 @@ export class WebhooksController {
   @Post('youtube')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Receive YouTube webhook',
+    summary: 'Receive YouTube earnings webhook',
     description:
-      'Handles incoming YouTube PubSub webhook events with signature verification',
+      'Platform-specific YouTube handler with `x-hub-signature-256` verification.',
   })
   @ApiHeader({
     name: 'x-hub-signature-256',
-    description: 'YouTube webhook HMAC-SHA256 signature',
+    description: 'YouTube webhook HMAC-SHA256 signature (`sha256=<hex>`)',
     required: true,
   })
-  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
-  @ApiBadRequestResponse({ description: 'Invalid signature or payload' })
+  @ApiBody({ type: ProcessWebhookDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Webhook acknowledged',
+    schema: { example: { received: true } },
+  })
+  @ApiUnauthorizedResponse({ description: 'Invalid signature' })
+  @ApiBadRequestResponse({ description: 'Invalid payload' })
   async handleYouTubeWebhook(
-    @Body() body: any,
+    @Body() body: ProcessWebhookDto,
     @Headers('x-hub-signature-256') signature: string,
   ) {
     this.logger.log('Received YouTube webhook');
-
-    const isValid = this.webhooksService.validateYouTubeSignature(
-      body,
-      signature,
-    );
-
-    if (!isValid) {
-      throw new BadRequestException('Invalid signature');
-    }
-
+    this.webhooksService.assertValidSignature('youtube', body, signature);
     await this.webhooksService.processYouTubeWebhook(body);
+    return { received: true };
+  }
 
+  @Public()
+  @Post('instagram')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Receive Instagram earnings webhook',
+    description:
+      'Platform-specific Instagram handler with `x-hub-signature-256` verification.',
+  })
+  @ApiHeader({
+    name: 'x-hub-signature-256',
+    description: 'Instagram webhook HMAC-SHA256 signature (`sha256=<hex>`)',
+    required: true,
+  })
+  @ApiBody({ type: ProcessWebhookDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Webhook acknowledged',
+    schema: { example: { received: true } },
+  })
+  @ApiUnauthorizedResponse({ description: 'Invalid signature' })
+  @ApiBadRequestResponse({ description: 'Invalid payload' })
+  async handleInstagramWebhook(
+    @Body() body: ProcessWebhookDto,
+    @Headers('x-hub-signature-256') signature: string,
+  ) {
+    this.logger.log('Received Instagram webhook');
+    this.webhooksService.assertValidSignature('instagram', body, signature);
+    await this.webhooksService.processInstagramWebhook(body);
     return { received: true };
   }
 }

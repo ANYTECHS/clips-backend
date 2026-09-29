@@ -14,6 +14,11 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBody,
+  ApiParam,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { ClipRoyaltyService } from './clip-royalty.service';
 import {
@@ -30,6 +35,10 @@ import { Auth } from '../auth/decorators/auth.decorator';
  * Creators can set royalty recipients and basis points for secondary sales
  */
 @ApiTags('NFT Royalties')
+@ApiBearerAuth('access-token')
+@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiForbiddenResponse({ description: 'Forbidden' })
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts/royalties')
 export class ClipRoyaltyController {
   constructor(private clipRoyaltyService: ClipRoyaltyService) {}
@@ -69,15 +78,22 @@ export class ClipRoyaltyController {
   /**
    * PATCH /nfts/royalties/:clipId
    * Update or create royalty configuration for a clip
+   *
+   * ## Validation
+   * - Royalty BPS must be between 0 and 1500 (0% to 15%)
+   * - Recipient address must be a valid Stellar Ed25519 public key
+   * - Platform fee (if provided) must be non-negative
    */
   @Patch(':clipId')
   @Auth()
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Set or update royalty configuration for a clip',
     description:
-      'Allows creators to configure royalty recipients and basis points (max 1500 BPS = 15%)',
+      'Allows creators to configure royalty recipients and basis points. Maximum 1500 BPS (15%). Uses safe arithmetic validation.',
   })
+  @ApiParam({ name: 'clipId', description: 'Clip ID', example: 123 })
+  @ApiBody({ type: UpdateClipRoyaltyDto })
   @ApiResponse({
     status: 200,
     description: 'Royalty configuration updated successfully',
@@ -85,7 +101,7 @@ export class ClipRoyaltyController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid royalty configuration (BPS exceeds 15%, invalid address, etc.)',
+    description: 'Invalid royalty configuration: (1) BPS exceeds 1500, (2) invalid Stellar address, (3) BPS is not an integer, (4) negative platform fee',
   })
   @ApiResponse({
     status: 404,
@@ -122,12 +138,14 @@ export class ClipRoyaltyController {
    */
   @Post(':clipId')
   @Auth()
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Create new royalty configuration for a clip',
     description:
       'Creates a royalty configuration for a clip (if not already set). Rejected if BPS > 15% (1500 BPS).',
   })
+  @ApiParam({ name: 'clipId', description: 'Clip ID', example: 123 })
+  @ApiBody({ type: SetClipRoyaltyDto })
   @ApiResponse({
     status: 201,
     description: 'Royalty configuration created successfully',
@@ -156,12 +174,16 @@ export class ClipRoyaltyController {
   /**
    * POST /nfts/royalties/calculate
    * Calculate royalty amount for a sale
+   *
+   * ## Safe Arithmetic
+   * Uses BigInt-based checked arithmetic to prevent overflow and IEEE-754 precision loss.
+   * See docs/safe-math.md for details.
    */
   @Post('calculate')
   @ApiOperation({
     summary: 'Calculate royalty amount for a given sale price',
     description:
-      'Calculates the royalty payout in stroops based on sale price and basis points',
+      'Calculates the royalty payout in stroops based on sale price and basis points using safe arithmetic.',
   })
   @ApiResponse({
     status: 200,
@@ -170,7 +192,7 @@ export class ClipRoyaltyController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid calculation parameters',
+    description: 'Invalid calculation parameters. Reasons: (1) salePrice is not a non-negative integer, (2) basisPoints exceeds 1500, (3) calculation result exceeds Number.MAX_SAFE_INTEGER (≈ 9 × 10^15)',
   })
   async calculateRoyalty(
     @Body() dto: RoyaltyCalculationDto,
@@ -196,10 +218,15 @@ export class ClipRoyaltyController {
    */
   @Get('recipient/:address')
   @Auth('admin')
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Get all clip royalties for a recipient address (Admin only)',
     description: 'Retrieves all clips that have configured royalties for a given recipient wallet',
+  })
+  @ApiParam({
+    name: 'address',
+    description: 'Stellar wallet address of the royalty recipient',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @ApiResponse({
     status: 200,

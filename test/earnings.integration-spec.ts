@@ -5,7 +5,9 @@
  * EarningsService, CurrencyConversionService, and RedisService.
  */
 import { Test, TestingModule } from '@nestjs/testing';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EarningsService } from '../src/earnings/earnings.service';
+import { EarningsCacheService } from '../src/earnings/earnings-cache.service';
 import { EarningsAggregationService } from '../src/earnings/earnings-aggregation.service';
 import { EarningsExportService } from '../src/earnings/earnings-export.service';
 import { CurrencyConversionService } from '../src/earnings/currency-conversion.service';
@@ -13,6 +15,7 @@ import { TaxReportExportService } from '../src/earnings/tax-report-export.servic
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RedisService } from '../src/redis/redis.service';
 import { ConfigService } from '../src/config/config.service';
+import { CurrencyService } from '../src/common/services/currency.service';
 import { Currency } from '../src/earnings/earnings.types';
 
 describe('EarningsAggregationService (integration)', () => {
@@ -46,6 +49,7 @@ describe('EarningsAggregationService (integration)', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
+        EarningsCacheService,
         EarningsService,
         EarningsAggregationService,
         EarningsExportService,
@@ -64,6 +68,15 @@ describe('EarningsAggregationService (integration)', () => {
         {
           provide: ConfigService,
           useValue: { earningsCacheTtlSeconds: 3600, leaderboardEnabled: false },
+        },
+        { provide: EventEmitter2, useValue: { emit: jest.fn() } },
+        {
+          provide: CurrencyService,
+          useValue: {
+            getBaseCurrency: () => 'USD',
+            validateCurrency: jest.fn(),
+            convertToBaseCurrency: jest.fn(),
+          },
         },
       ],
     }).compile();

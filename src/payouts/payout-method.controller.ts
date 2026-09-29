@@ -17,6 +17,7 @@ import {
   ApiBody,
   ApiParam,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
   ApiNotFoundResponse,
@@ -34,7 +35,8 @@ interface RequestWithUser extends Request {
 
 @ApiTags('payout-methods')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiUnauthorizedResponse({ description: 'Unauthorized - missing or invalid token' })
+@ApiForbiddenResponse({ description: 'Forbidden - can only access own payout methods' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('payout-methods')
 @Auth()

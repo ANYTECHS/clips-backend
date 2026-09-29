@@ -26,6 +26,7 @@ import {
   ApiInternalServerErrorResponse,
   ApiConflictResponse,
   ApiOkResponse,
+  ApiBody,
 } from '@nestjs/swagger';
 import { API_ERROR_SCHEMA } from '../common/dtos';
 import { Throttle } from '@nestjs/throttler';
@@ -227,20 +228,28 @@ export class WalletsController {
       'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
       'If a wallet with the same address+chain already exists it is re-activated.',
   })
-  @ApiResponse({
-    status: 200,
-    description: 'Wallet connected successfully',
-    schema: {
-      example: {
-        id: 1,
-        userId: 7,
-        address: 'GBRP...OX2H',
-        chain: 'stellar',
-        type: 'freighter',
-        isActive: true,
+  @ApiBody({
+    type: CreateWalletConnectionDto,
+    examples: {
+      stellar: {
+        summary: 'Connect a Stellar wallet',
+        value: {
+          address: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          chain: 'stellar',
+          type: 'freighter',
+        },
+      },
+      solana: {
+        summary: 'Connect a Solana wallet',
+        value: {
+          address: '7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV1',
+          chain: 'solana',
+          type: 'phantom',
+        },
       },
     },
   })
+  @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
   @ApiBadRequestResponse({
     description: 'Invalid wallet data or signature verification failed',
   })
