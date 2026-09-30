@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -14,6 +15,7 @@ import {
   CircuitBreakerService,
 } from '../common/circuit-breaker/circuit-breaker.service';
 import { TransferNftResponseDto } from './dto/transfer-nft.dto';
+import { AdminContractService } from './admin-contract.service';
 
 /**
  * Builds unsigned Soroban `transfer_with_royalty` transactions (Issue #843).
@@ -35,6 +37,7 @@ export class NftTransferService {
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
     private readonly prisma: PrismaService,
     private readonly circuitBreakerService: CircuitBreakerService,
+    private readonly adminContractService: AdminContractService,
   ) {}
 
   private get CONTRACT_ID(): string {
@@ -84,6 +87,11 @@ export class NftTransferService {
       throw new ForbiddenException(
         ownership.error || 'Caller does not own this NFT on-chain',
       );
+    }
+
+    const freezeStatus = await this.adminContractService.getFreezeStatus(tokenId);
+    if (freezeStatus.frozen) {
+      throw new ConflictException(`NFT ${tokenId} is frozen and cannot be transferred`);
     }
 
     const soulbound = await this.isSoulbound(tokenId);

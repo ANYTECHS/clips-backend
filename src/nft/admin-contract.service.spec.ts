@@ -35,6 +35,7 @@ jest.mock('@stellar/stellar-sdk', () => {
       const numericValue = Number(scVal.__xdr);
       return Number.isNaN(numericValue) ? scVal.__xdr : numericValue;
     }),
+    nativeToScVal: jest.fn((value: unknown) => value),
   };
 
   return { __esModule: true, default: sdkShape, ...sdkShape };
@@ -45,6 +46,8 @@ describe('AdminContractService.getCollectionInfo (Issue #679)', () => {
   const stellarService = {
     rpcUrl: 'https://soroban-testnet.stellar.org',
     networkPassphrase: 'Test SDF Network ; September 2015',
+    network: 'testnet',
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
   };
   const circuitBreakerService = {
     execute: jest.fn((_config: unknown, fn: () => unknown) => fn()),
@@ -98,6 +101,7 @@ describe('AdminContractService.getTotalSupply', () => {
     rpcUrl: 'https://soroban-testnet.stellar.org',
     networkPassphrase: 'Test SDF Network ; September 2015',
     network: 'testnet',
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
   };
   const circuitBreakerService = {
     execute: jest.fn((_config: unknown, fn: () => unknown) => fn()),
@@ -125,5 +129,42 @@ describe('AdminContractService.getTotalSupply', () => {
     await expect(service.getTotalSupply()).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
+  });
+
+  it('prepares a freeze transaction after confirming the token is not frozen', async () => {
+    mockSimulateTransaction
+      .mockResolvedValueOnce({ results: [{ xdr: 'clip-42' }] })
+      .mockResolvedValueOnce({ results: [{ xdr: '0' }] });
+
+    const result = await service.prepareTokenFreezeTx(42, 'GADMIN', true);
+
+    expect(result).toMatchObject({ action: 'freeze', tokenId: '42', xdr: 'mock-xdr' });
+    expect(mockSimulateTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a duplicate freeze request with conflict', async () => {
+    mockSimulateTransaction
+      .mockResolvedValueOnce({ results: [{ xdr: 'clip-42' }] })
+      .mockResolvedValueOnce({ results: [{ xdr: '1' }] });
+
+    await expect(service.prepareTokenFreezeTx(42, 'GADMIN', true)).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
+  it('prepares an unfreeze transaction for a frozen token', async () => {
+    mockSimulateTransaction
+      .mockResolvedValueOnce({ results: [{ xdr: 'clip-42' }] })
+      .mockResolvedValueOnce({ results: [{ xdr: '1' }] });
+
+    const result = await service.prepareTokenFreezeTx(42, 'GADMIN', false);
+
+    expect(result).toMatchObject({ action: 'unfreeze', tokenId: '42', xdr: 'mock-xdr' });
+  });
+
+  it('returns not found when querying the freeze status of a missing token', async () => {
+    mockSimulateTransaction.mockResolvedValue({ results: [] });
+
+    await expect(service.getFreezeStatus(42)).rejects.toMatchObject({ status: 404 });
   });
 });

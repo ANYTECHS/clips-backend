@@ -374,6 +374,55 @@ it('validation errors include "details" array', async () => {
 Uses the `stellar-sdk` test utilities and a local Soroban sandbox (or testnet
 when `STELLAR_NETWORK=testnet`):
 
+Reusable invocation helpers live in `test/helpers/soroban-test.helper.ts`. Pass a
+`SorobanTestContext` containing a Soroban RPC server, contract ID, source account,
+and network passphrase. The helpers build and simulate calls without submitting
+or signing transactions; use an isolated sandbox or testnet contract with the
+required authorization and setup when asserting successful simulations.
+
+```typescript
+import StellarSdk from '@stellar/stellar-sdk';
+import {
+  mint_test_clip,
+  set_test_royalty,
+  simulate_test_sale,
+} from './helpers/soroban-test.helper';
+
+const context = {
+  server,
+  contractId: process.env.SOROBAN_NFT_CONTRACT_ID!,
+  sourceAccount,
+  networkPassphrase: StellarSdk.Networks.TESTNET,
+};
+
+const mint = await mint_test_clip(context, {
+  tokenId: 42,
+  owner: creatorAddress,
+  metadata: 'ipfs://test-metadata',
+  royaltyBps: 1000,
+});
+const royalties = await set_test_royalty(context, {
+  tokenId: 42,
+  shares: [{ recipient: creatorAddress, bps: 9000 }, { recipient: platformAddress, bps: 1000 }],
+});
+const sale = await simulate_test_sale(context, {
+  tokenId: 42,
+  seller: creatorAddress,
+  buyer: buyerAddress,
+  salePrice: 1_000_000_000n,
+  royaltyBps: 1000,
+});
+```
+
+Token IDs, metadata, royalty shares, sale price, and royalty basis points are
+configurable. Each helper returns the built transaction, simulation response,
+and invoked function name. `set_test_royalty` encodes recipient keys as Soroban
+addresses rather than symbols. Simulations are independent and do not commit
+ledger state: the example demonstrates call construction, not a stateful mint-
+then-set-royalty-then-sale sequence. For state-dependent assertions, submit
+signed calls to an isolated Soroban sandbox or test deployment and wait for each
+transaction to commit.
+
 ```typescript
 // test/soroban-bindings.integration-spec.ts
 describe('SorobanBindings (integration)', () => {

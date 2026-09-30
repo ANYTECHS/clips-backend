@@ -31,6 +31,8 @@ import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { SorobanContractController } from './soroban-contract.controller';
+import { AdminNftController } from './admin-nft.controller';
+import { NftFreezeAdminGuard } from './guards/nft-freeze-admin.guard';
 import { NftCollectionService } from './nft-collection.service';
 import { NftCollectionController } from './nft-collection.controller';
 
@@ -56,6 +58,7 @@ import { NftCollectionController } from './nft-collection.controller';
     BatchRoyaltyService,
     ClipRoyaltyService,
     NftMintGuard,
+    NftFreezeAdminGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
     AdminContractService,
@@ -74,6 +77,7 @@ import { NftCollectionController } from './nft-collection.controller';
     BatchRoyaltyController,
     ClipRoyaltyController,
     SorobanContractController,
+    AdminNftController,
     NftCollectionController,
   ],
   exports: [
