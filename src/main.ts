@@ -294,6 +294,23 @@ async function bootstrap() {
       '```\n\n' +
       'Internal stack traces are **never** returned in API or Swagger responses. ' +
       'Use the `requestId` when contacting support or searching structured application logs.\n\n' +
+      '## Stellar Network\n\n' +
+      'The Stellar network is selected with the `STELLAR_NETWORK` environment variable:\n\n' +
+      '| Value | Network | Horizon | Soroban RPC |\n' +
+      '|-------|---------|---------|-------------|\n' +
+      '| `testnet` (default) | Stellar Testnet | `https://horizon-testnet.stellar.org` | `https://soroban-testnet.stellar.org` |\n' +
+      '| `public` | Stellar Mainnet | `https://horizon.stellar.org` | `https://soroban-rpc.stellar.org` |\n\n' +
+      'Wallet balances, NFT minting, payouts and payment listening all target the configured network. ' +
+      'Addresses and transaction hashes from one network are not valid on the other.\n\n' +
+      '## Minimum Payout\n\n' +
+      'Payout requests below `MIN_STELLAR_PAYOUT` (USD equivalent, default `5`) are rejected with `400 Bad Request`:\n' +
+      '```json\n' +
+      '{\n' +
+      '  "statusCode": 400,\n' +
+      '  "message": "Minimum payout amount is 5 USD equivalent. Requested: 3 USD.",\n' +
+      '  "error": "Bad Request"\n' +
+      '}\n' +
+      '```\n\n' +
       '## API Versioning\n\n' +
       'This OpenAPI document reflects the current public API surface (SemVer; see `CHANGELOG.md` and `docs/versioning.md`). ' +
       'Breaking API changes bump the major version and are reflected in this Swagger/OpenAPI spec.',
