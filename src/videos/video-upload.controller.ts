@@ -20,11 +20,16 @@ import {
   ApiBadRequestResponse,
   ApiInternalServerErrorResponse,
   ApiPayloadTooLargeResponse,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
 import type { Request } from 'express';
+import {
+  QueueRateLimitGuard,
+  QueueRateLimit,
+} from '../common/guards/queue-rate-limit.guard';
 import { VideoUploadService } from './video-upload.service';
 import { Auth } from '../auth/decorators/auth.decorator';
 import {
@@ -55,6 +60,8 @@ export class VideoUploadController {
 
   @Post('upload')
   @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(QueueRateLimitGuard)
+  @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
   @ApiOperation({
     summary: 'Upload a video file for clip generation',
     description:
@@ -95,6 +102,10 @@ export class VideoUploadController {
     description: 'File exceeds the 500 MB upload limit',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Too many active clip-generation jobs for this user. Retry after the number of seconds in the Retry-After header.',
+  })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({

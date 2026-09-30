@@ -35,6 +35,10 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+import {
+  QueueRateLimitGuard,
+  QueueRateLimit,
+} from '../common/guards/queue-rate-limit.guard';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
@@ -468,10 +472,11 @@ export class NftController {
     return this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId);
   }
 
-  @UseGuards(NftMintGuard)
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
   @Post('mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
   @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Mint a clip as an NFT',
@@ -525,7 +530,8 @@ export class NftController {
   })
   @ApiTooManyRequestsResponse({
     description:
-      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). Retry after the window resets.',
+      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). ' +
+      'Per-user queue guard also applies: retry after the number of seconds in the Retry-After header.',
     schema: {
       example: {
         statusCode: 429,
@@ -592,9 +598,11 @@ export class NftController {
     });
   }
 
+  @UseGuards(QueueRateLimitGuard)
   @Post('batch-mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
   @ApiOperation({
     summary: 'Mint multiple clip NFTs in a single transaction (Issue #671)',
     description:
@@ -613,6 +621,10 @@ export class NftController {
       'Individual clips that cannot be minted — including clips already posted ' +
       'to a social platform (Issue #764) — are reported per-clip in ' +
       '`partialFailures` rather than failing the whole batch.',
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Too many active NFT mint jobs for this user. Retry after the number of seconds in the Retry-After header.',
   })
   async batchMint(@Body() dto: BatchMintDto): Promise<BatchMintResponseDto> {
     return this.nftService.batchMintClips(dto);
@@ -660,10 +672,11 @@ export class NftController {
    * The authenticated user must own the clip being minted.
    */
   @Auth()
-  @UseGuards(NftMintGuard)
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
   @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
@@ -707,7 +720,8 @@ export class NftController {
   })
   @ApiTooManyRequestsResponse({
     description:
-      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). Retry after the window resets.',
+      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). ' +
+      'Per-user queue guard also applies: retry after the number of seconds in the Retry-After header.',
     schema: {
       example: {
         statusCode: 429,
