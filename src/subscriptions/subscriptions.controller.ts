@@ -20,6 +20,7 @@ import {
   ApiInternalServerErrorResponse,
   ApiBody,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 
 import type { Request } from 'express';
 import { StellarPaymentService } from './stellar-payment.service';
@@ -29,8 +30,9 @@ import {
 } from './dto/create-stellar-subscription.dto';
 import { Auth } from '../auth/decorators/auth.decorator';
 
-@ApiTags('subscriptions')
+@ApiTags('subscriptions', 'payments')
 @ApiBearerAuth('access-token')
+@ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Auth()
