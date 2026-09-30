@@ -34,6 +34,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
 import { WalletBalanceService } from './wallet-balance.service';
 import { CreateWalletConnectionDto } from './dto/connect-wallet.dto';
+import { SUPPORTED_CHAINS } from './chain.constants';
 import { WalletNftsQueryDto } from './dto/wallet-nfts-query.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
 import { WalletBalanceResult } from '../stellar/stellar.service';
@@ -74,8 +75,8 @@ export class WalletsController {
         type: 'object',
         properties: {
           id: { type: 'number' },
-          address: { type: 'string', example: '******KPRQ6A' },
-          chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+          address: { type: 'string', example: 'GABC...X92K' },
+          chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
           type: { type: 'string', example: 'freighter' },
           connectedAt: { type: 'string', format: 'date-time' },
         },
@@ -104,8 +105,8 @@ export class WalletsController {
       type: 'object',
       properties: {
         id: { type: 'number' },
-        address: { type: 'string', example: '******KPRQ6A' },
-        chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+        address: { type: 'string', example: 'GABC...X92K' },
+        chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
         type: { type: 'string', example: 'freighter' },
         connectedAt: { type: 'string', format: 'date-time' },
       },
@@ -226,7 +227,38 @@ export class WalletsController {
       'Connect or update a wallet for the authenticated user. ' +
       'Supports Stellar (freighter, lobstr, albedo), Solana (phantom, solflare, backpack), ' +
       'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
-      'If a wallet with the same address+chain already exists it is re-activated.',
+      'If a wallet with the same address+chain already exists it is re-activated. ' +
+      'Wallet authentication: the client signs `signedMessage` with the wallet key and the server ' +
+      'verifies `signature` against `publicKey` before linking. EVM wallets (MetaMask, Coinbase, ' +
+      'WalletConnect — including BNB Smart Chain accounts) use the `base` chain value. ' +
+      'Requires a Bearer JWT.',
+  })
+  @ApiBody({
+    type: CreateWalletConnectionDto,
+    examples: {
+      stellar: {
+        summary: 'Stellar wallet (Freighter)',
+        value: {
+          address: 'GC6XJ3NVJ3Q5ZZQF2Y7J7JQ3WJ5KX4Y2JQ3Y7Z5Q3WJ5KX4Y2JQ3Y7Z5',
+          chain: 'stellar',
+          type: 'freighter',
+          publicKey: 'GC6XJ3NVJ3Q5ZZQF2Y7J7JQ3WJ5KX4Y2JQ3Y7Z5Q3WJ5KX4Y2JQ3Y7Z5',
+          signature: 'base64-encoded-ed25519-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
+        },
+      },
+      evm: {
+        summary: 'EVM / BNB wallet (MetaMask)',
+        value: {
+          address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          chain: 'base',
+          type: 'metamask',
+          publicKey: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          signature: '0x-hex-encoded-personal-sign-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
+        },
+      },
+    },
   })
   @ApiBody({
     type: CreateWalletConnectionDto,
@@ -252,8 +284,25 @@ export class WalletsController {
   @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
   @ApiBadRequestResponse({
     description: 'Invalid wallet data or signature verification failed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed',
+        error: 'Bad Request',
+        details: [
+          {
+            field: 'type',
+            errors: [
+              'type must be one of the following values: freighter, lobstr, albedo, ...',
+            ],
+          },
+        ],
+      },
+    },
   })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
   @HttpCode(HttpStatus.OK)
   async connect(
     @Req() req: AuthRequest,

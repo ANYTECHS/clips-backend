@@ -27,6 +27,13 @@ export interface NftMetadata {
   animation_url: string;
   external_url?: string;
   attributes: NftMetadataAttribute[];
+  collection?: {
+    name: string;
+    family: string;
+    collectionId: string;
+    type: string;
+    metadata: Record<string, unknown>;
+  };
   /** OpenSea-compatible creator royalty in basis points (e.g. 1000 = 10%). */
   seller_fee_basis_points: number;
   /** Optional royalty recipient (Stellar G... address when known). */

@@ -26,6 +26,7 @@ import {
   ApiNotFoundResponse,
   ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -58,6 +59,7 @@ interface AuthRequest extends Request {
  */
 @ApiTags('earnings')
 @ApiBearerAuth('access-token')
+@ApiStandardErrors()
 @Auth()
 @Controller('earnings')
 export class EarningsController {

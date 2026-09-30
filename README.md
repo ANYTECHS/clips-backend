@@ -389,10 +389,10 @@ The backend supports switching between Stellar **testnet** and **mainnet** (publ
 
 ### `STELLAR_NETWORK`
 
-| Value      | Network                | RPC URL                                  | Use when               |
-| ---------- | ---------------------- | ---------------------------------------- | ---------------------- |
-| `testnet`  | Stellar Testnet (SDF)  | `https://soroban-testnet.stellar.org`    | Development / staging  |
-| `public`   | Stellar Mainnet        | `https://soroban-rpc.stellar.org`        | Production             |
+| Value      | Network                | RPC URL                                  | Horizon URL                            | Use when               |
+| ---------- | ---------------------- | ---------------------------------------- | -------------------------------------- | ---------------------- |
+| `testnet`  | Stellar Testnet (SDF)  | `https://soroban-testnet.stellar.org`    | `https://horizon-testnet.stellar.org`  | Development / staging  |
+| `public`   | Stellar Mainnet        | `https://soroban-rpc.stellar.org`        | `https://horizon.stellar.org`          | Production             |
 
 **Default:** `testnet`
 
@@ -406,11 +406,11 @@ STELLAR_NETWORK=testnet
 STELLAR_NETWORK=public
 ```
 
-The `StellarService` reads this variable at startup and exposes the correct `rpcUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts).
+The `StellarService` reads this variable at startup and exposes the correct `rpcUrl`, `horizonUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts). The payment listener (`StellarConfig`) derives its Horizon URL from `STELLAR_NETWORK` as well, unless `STELLAR_HORIZON_URL` is set explicitly. Any value other than `public` falls back to `testnet`.
 
 ### `MIN_STELLAR_PAYOUT`
 
-Minimum payout amount in USD equivalent. Requests below this threshold are rejected with a `400` error to prevent fee-wasting micro-transactions.
+Minimum payout amount in USD equivalent. Requests below this threshold are rejected with a `400` error to prevent fee-wasting micro-transactions. Must be a positive number — the app refuses to start otherwise.
 
 ```env
 MIN_STELLAR_PAYOUT=5   # default: 5 USD

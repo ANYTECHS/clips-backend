@@ -1,4 +1,4 @@
-import { IsInt, IsString, IsNotEmpty, IsOptional, Min } from 'class-validator';
+import { IsInt, IsString, IsNotEmpty, IsOptional, Min, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -6,6 +6,15 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export type PrepareMintDto = CreateMintPreparationDto;
 
 export class CreateMintPreparationDto {
+  @ApiPropertyOptional({
+    description: 'NFT collection slug. Defaults to viral-clips.',
+    example: 'viral-clips',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  collectionId?: string;
+
   @ApiProperty({
     description: 'Clip ID to prepare for minting',
     example: 42,

@@ -598,10 +598,145 @@ For every new controller endpoint, verify:
 
 ---
 
+## Core Module Coverage Gate (#1026)
+
+`npm run test:cov:core` runs a **focused** coverage gate over the critical
+backend modules. The repository-wide `npm run test:cov` threshold is
+unchanged (35%); this gate enforces **80%+** on the modules themselves so a
+regression in Clips, Videos, Web3, Earnings, Payouts or queue-processor code is
+caught without waiting for the global report.
+
+```bash
+npm run test:cov:core
+```
+
+Configuration lives in `jest.core-coverage.config.js` (report written to
+`coverage/core-modules/`). Current baseline — **99.55% statements, 93.33%
+branches, 100% functions, 99.51% lines** across 10 modules:
+
+| Module | Area | % Stmts | % Branch | % Funcs |
+|--------|------|---------|----------|---------|
+| `payouts/payout-state-machine.service.ts` | Payouts | 100 | 97.36 | 100 |
+| `payouts/payout-retry-strategy.service.ts` | Payouts / queue | 96.87 | 94.44 | 100 |
+| `queue/retry-backoff-config.service.ts` | Queue processors | 100 | 75 | 100 |
+| `common/helpers/queue-registration.helper.ts` | Queue processors | 100 | 100 | 100 |
+| `videos/helpers/video-stats.helper.ts` | Videos | 100 | 100 | 100 |
+| `videos/helpers/video-validation.helper.ts` | Videos | 100 | 100 | 100 |
+| `videos/helpers/video-metadata.helper.ts` | Videos | 100 | 90 | 100 |
+| `clips/caption.util.ts` | Clips | 100 | 100 | 100 |
+| `nft/gas-metrics.service.ts` | Web3 / Stellar | 100 | 100 | 100 |
+| `earnings/currency-conversion.service.ts` | Earnings | 100 | 100 | 100 |
+
+To add a module to the gate, append its path to
+`CORE_MODULE_COVERAGE_PATTERNS` and its spec basename to `CORE_SUITE_PATTERN`
+in `jest.core-coverage.config.js`.
+
+---
+
 ## Test Helpers and Fixtures
+
+### `src/testing/`
+- `authenticated-request.util.ts` — `createAuthenticatedRequest(user)` builds a
+  supertest factory that signs a real JWT and attaches it as
+  `Authorization: Bearer <token>`, the same security scheme documented by
+  Swagger (`@Auth()` → `ApiBearerAuth('access-token')`) and read back by
+  `JwtStrategy` via `ExtractJwt.fromAuthHeaderAsBearerToken()`.
+  Covered by `authenticated-request.util.spec.ts` in `npm test`.
+- `test/helpers/authenticated-request.helper.ts` — re-export so specs under
+  `test/` have a stable import path.
+
+#### `createAuthenticatedRequest(user, options?)`
+
+```typescript
+import { createAuthenticatedRequest, TEST_USERS } from '../src/testing';
+
+// The app only needs to be listening when supertest drives a real socket.
+const http = createAuthenticatedRequest(TEST_USERS.user, {
+  app: app.getHttpServer(),
+});
+
+await http.get('/payouts').expect(200);
+await http.post('/payouts/request').send({ amount: 50, currency: 'USD' });
+```
+
+The app can also be bound later (`createAuthenticatedRequest(user).forApp(app)`)
+or passed per call (`http.get(app, '/payouts')`).
+
+| Option | Purpose |
+|--------|---------|
+| `app` / `agent` | supertest target — a Nest app, `app.getHttpServer()`, or `request(app)` |
+| `cookie` | also send `access_token=<jwt>`, mirroring `CookieService.setTokenCookies` |
+| `headers` | extra headers merged on every request |
+| `anonymous` | omit the `Authorization` header (assert `401`) |
+| `expiresIn`, `emailVerified`, `extraClaims` | per-token overrides |
+
+The returned factory also exposes:
+
+- `token` / `headers` / `user` — what was used to build the request.
+- `with(extraHeaders)` — derive a factory with more headers (CSRF, idempotency keys).
+- `unauthenticated()` — same request with the credentials stripped.
+
+Ready-made users live in `TEST_USERS` (`user`, `otherUser`, `editor`, `admin`,
+`unverified`). Roles are **not** JWT claims (see `SECURITY.md`), so
+`@Roles` / `@Admin` specs pair the helper with `overrideJwtAuthGuard`:
+
+```typescript
+import { Test } from '@nestjs/testing';
+import { overrideJwtAuthGuard, TEST_USERS } from '../src/testing';
+
+const moduleRef = await overrideJwtAuthGuard(
+  Test.createTestingModule({ controllers: [PayoutsController], providers }),
+  TEST_USERS.admin,
+).compile();
+```
+
+Lower-level helpers (`signTestAccessToken`, `authHeadersFor`, `authCookieFor`,
+`buildTestJwtPayload`) are exported for specs that need the token without
+supertest.
 
 ### `test/helpers/`
 - `ffmpeg-mock.helper.ts` — fluent-ffmpeg mock for clip-generation tests.
+- `authenticated-request.helper.ts` — re-export of `src/testing/authenticated-request.util`.
+
+### `src/videos/helpers/mocks/`
+- `claude.mock.ts` — reusable Claude (Anthropic) API mock for AI tests (#1027).
+
+#### Claude API mock
+
+`detectMomentsWithClaude()` loads `@anthropic-ai/sdk` through an indirect
+dynamic import so the SDK stays an optional runtime dependency. That import
+always throws inside a Jest run, which meant every AI test silently exercised
+the "API unavailable" fallback. The mock plugs a fake SDK into the
+`setAnthropicSdkLoader` seam, so the success, empty, malformed, API-failure,
+rate-limit and timeout paths are all exercised without a real API call.
+
+```typescript
+import { claude, defaultMockMoments } from './helpers/mocks/claude.mock';
+
+beforeEach(() => claude.install());
+afterEach(() => claude.restore());
+
+it('uses the AI moments', async () => {
+  claude.mockSuccess({ clipCount: 12, clipDuration: 30 });
+  const result = await service.detectViralTimestamps(1);
+  expect(result).toHaveLength(12);
+});
+```
+
+| Scenario helper | Simulates |
+|------------------|-----------|
+| `mockSuccess()` | 200 with a JSON `clips` array (defaults to 12 clips, clearing `minClips`) |
+| `mockEmptyResponse()` | 200 with an empty / refusal body |
+| `mockMalformedResponse()` | 200 with a non-JSON or unusable-JSON body |
+| `mockTooFewClips()` / `mockUnexpectedShape()` | Valid JSON below `minClips`, or a `clips` key of the wrong type |
+| `mockApiFailure()` / `mockNetworkError()` | HTTP 500 and a transport-level failure |
+| `mockRateLimit()` / `mockTimeout()` / `mockOverloaded()` | 429, 408 and 529 |
+| `mockFailure(kind, message?)` | any of the above, with a custom message |
+
+The mock also records every request (`claude.lastRequest`, `claude.callCount`),
+so specs can assert the model, `max_tokens`, temperature and the media content
+sent to Claude. `claude.reset()` clears recorded requests between tests, and
+`restore()` puts the production lazy import back.
 
 ### `test/mocks/`
 - `cloudinary.mock.ts` — Cloudinary SDK upload stub.

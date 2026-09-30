@@ -1,16 +1,6 @@
 /**
- * NftMintService
- *
- * Issue #748 — uploadMetadataToIPFS(clipId):
- *   Generates standard NFT metadata JSON (name, description, animation_url,
- *   image, attributes, royalty info) from the Clip record and uploads it to
- *   decentralised storage via Pinata or nft.storage.  Persists the returned
- *   IPFS CID to Clip.metadataUri and returns both the CID and full URI.
- *
- * Issue #749 — prepareMintTx(clipId, walletAddress):
- *   Validates the clip and wallet, ensures a metadataUri exists (uploading
- *   if absent), then returns an unsigned Soroban transaction XDR for the
- *   frontend to sign with Freighter or Albedo.
+ * NftMintService handles clip metadata uploads, ownership checks, and Soroban
+ * mint transaction preparation.
  */
 import {
   Injectable,
@@ -27,11 +17,8 @@ import { StellarService } from '../stellar/stellar.service';
 import { NftConfig } from '../nft/nft.config';
 
 export interface UploadMetadataResult {
-  /** Numeric clip ID */
   clipId: number;
-  /** Raw IPFS CID without the ipfs:// prefix */
   cid: string;
-  /** Full URI: ipfs://<cid> — stored on Clip.metadataUri */
   metadataUri: string;
 }
 
@@ -40,6 +27,7 @@ export interface PrepareMintTxResult {
   network: string;
   contractId: string;
   clipId: number;
+  collectionId: string;
   walletAddress: string;
   metadataUri: string;
   royaltyBps: number;
@@ -104,8 +92,12 @@ export class NftMintService {
       );
     }
 
-    // Idempotent: reuse the existing CID when already uploaded.
     if (clip.metadataUri) {
+      if (clip.collectionId && clip.collectionId !== collectionId) {
+        throw new BadRequestException(
+          `Clip ${clipId} metadata already belongs to collection '${clip.collectionId}'`,
+        );
+      }
       const cid = clip.metadataUri.replace(/^ipfs:\/\//, '');
       this.logger.log(
         `Clip ${clipId} already has IPFS metadata — returning cached CID: ${cid}`,
@@ -113,9 +105,6 @@ export class NftMintService {
       return { clipId, cid, metadataUri: clip.metadataUri };
     }
 
-    // Build OpenSea-compatible metadata using NftMetadataService.
-    // NftMetadataService.build() produces a fully-typed NftMetadata object
-    // that includes all required fields for IpfsUploadService.validateMetadata().
     const metadata = this.nftMetadataService.build({
       id: clip.id,
       title: clip.title,
@@ -126,7 +115,17 @@ export class NftMintService {
       viralityScore: clip.viralityScore,
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
+      collection: {
+        collectionId: collection.collectionId,
+        name: collection.name,
+        type: collection.type,
+        metadata: collection.metadata as Record<string, unknown>,
+      },
     });
+    const metadataUri = await this.ipfsUploadService.uploadMetadata(
+      metadata,
+      clipId,
+    );
 
     // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
@@ -138,17 +137,19 @@ export class NftMintService {
     // skip the upload step.
     await this.prisma.clip.update({
       where: { id: clipId },
-      data: { metadataUri },
+      data: {
+        metadataUri,
+        collectionId,
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
     });
 
     const cid = metadataUri.replace(/^ipfs:\/\//, '');
-
     this.logger.log(
-      `Clip ${clipId} metadata uploaded to IPFS — CID: ${cid} | provider: ${
-        process.env.IPFS_PROVIDER ?? 'pinata'
-      }`,
+      `Clip ${clipId} metadata uploaded to IPFS — CID: ${cid} | provider: ${process.env.IPFS_PROVIDER ?? 'pinata'}`,
     );
-
     return { clipId, cid, metadataUri };
   }
 
@@ -177,7 +178,6 @@ export class NftMintService {
       );
     }
 
-    // Ensure metadataUri exists — upload if not yet done.
     let metadataUri = clip.metadataUri;
     if (!metadataUri) {
       this.logger.log(
@@ -186,7 +186,7 @@ export class NftMintService {
       metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
     }
 
-    const royaltyBps = clip.royaltyBps ?? 1000;
+    const royaltyBps = collection.royaltyBps ?? clip.royaltyBps ?? 1000;
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId) {
       throw new BadRequestException(
@@ -212,7 +212,7 @@ export class NftMintService {
     });
 
     this.logger.log(
-      `Mint XDR prepared — clip: ${clipId}, wallet: ${walletAddress}, network: ${this.stellarService.network}, royaltyBps: ${royaltyBps}`,
+      `Mint XDR prepared — clip: ${clipId}, collection: ${selectedCollectionId}, wallet: ${walletAddress}, network: ${this.stellarService.network}, royaltyBps: ${royaltyBps}`,
     );
 
     return {
@@ -225,10 +225,6 @@ export class NftMintService {
       royaltyBps,
     };
   }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Shared helpers
-  // ──────────────────────────────────────────────────────────────────────────
 
   async validateClipOwner(clipId: number, userId: number): Promise<void> {
     const clip = await this.prisma.clip.findUnique({
@@ -361,6 +357,7 @@ export class NftMintService {
 
   private buildMintXdr(params: {
     clipId: number;
+    collectionId: string;
     walletAddress: string;
     contractId: string;
     metadataUri: string;

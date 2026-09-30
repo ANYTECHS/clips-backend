@@ -1,16 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { SOROBAN_NFT_EVENT_TYPES, SorobanNftEventType } from '../event-types';
 
 export class BlockchainEventsQueryDto {
   @ApiPropertyOptional({
     example: 'Mint',
-    description:
-      'Filter by event type: Mint, Transfer, RoyaltyPaid, Burn, RoyaltyClaimed',
+    description: 'Filter by a supported Soroban NFT event type',
+    enum: [...SOROBAN_NFT_EVENT_TYPES],
   })
   @IsOptional()
-  @IsString()
-  type?: string;
+  @IsIn(SOROBAN_NFT_EVENT_TYPES)
+  type?: SorobanNftEventType;
 
   @ApiPropertyOptional({ example: 42 })
   @IsOptional()
@@ -39,7 +40,7 @@ export class BlockchainEventItemDto {
   @ApiProperty({ example: 'clxyz123' })
   id: string;
 
-  @ApiProperty({ example: 'Mint' })
+  @ApiProperty({ example: 'Mint', enum: [...SOROBAN_NFT_EVENT_TYPES] })
   eventType: string;
 
   @ApiPropertyOptional({ example: 42, nullable: true })

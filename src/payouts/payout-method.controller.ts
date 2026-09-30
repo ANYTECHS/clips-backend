@@ -22,6 +22,7 @@ import {
   ApiBadRequestResponse,
   ApiNotFoundResponse,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutMethodService } from './payout-method.service';
 import { CreatePayoutMethodDto } from './dto/create-payout-method.dto';

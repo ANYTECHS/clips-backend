@@ -162,6 +162,10 @@ import {
 import { NftTransferService } from './nft-transfer.service';
 import { NftTransferHistoryService } from './nft-transfer-history.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
+import {
+  DEFAULT_NFT_COLLECTION_ID,
+  isSupportedNftCollectionId,
+} from './nft-collections.constants';
 
 @ApiTags('nfts')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
@@ -460,7 +464,8 @@ export class NftController {
   ): Promise<NftUploadMetadataResponseDto> {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
-    return this.nftMintService.uploadMetadataToIPFS(dto.clipId);
+    const collectionId = dto.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    return this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId);
   }
 
   @UseGuards(NftMintGuard)
@@ -472,7 +477,7 @@ export class NftController {
     summary: 'Mint a clip as an NFT',
     description:
       'Builds metadata, uploads to IPFS when needed, then mints with split royalties. ' +
-      'The authenticated caller must own the clip being minted.',
+      'The authenticated caller must own the clip being minted. collectionId selects one of the supported clip collections.',
   })
   @ApiBody({ type: MintNftDto })
   @ApiResponse({
@@ -482,12 +487,11 @@ export class NftController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid mint payload, or the clip cannot be minted because it is already minting/minted ' +
-      'or has already been posted to a social platform (business rule: posted clips cannot be minted).',
+      'Invalid mint payload or collectionId, an unsupported collection, exhausted collection supply, or a clip that is already minting/minted or has already been posted to a social platform.',
     schema: {
       example: {
         statusCode: 400,
-        message: 'Posted clips cannot be minted.',
+        message: 'Unsupported collectionId: unknown-collection',
         error: 'Bad Request',
       },
     },
@@ -540,15 +544,51 @@ export class NftController {
     // Reject mint requests for clips that don't exist or don't belong to the caller.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
 
+    const collectionId = dto.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    if (!isSupportedNftCollectionId(collectionId)) {
+      throw new BadRequestException(`Unsupported collectionId: ${collectionId}`);
+    }
+    const collection = await this.prisma.nftCollection.findUnique({
+      where: { collectionId },
+    });
+    if (!collection) {
+      throw new BadRequestException(`Unsupported collectionId: ${collectionId}`);
+    }
+    if (collection.maxSupply !== null) {
+      const supply = await this.prisma.clip.count({
+        where: {
+          collectionId,
+          mintAddress: { not: null },
+          nftStatus: { not: 'burned' },
+        },
+      });
+      if (supply >= collection.maxSupply) {
+        throw new BadRequestException(
+          `Collection '${collectionId}' has reached its maximum supply`,
+        );
+      }
+    }
+
     const metadataUri =
       dto.metadataUri ??
-      (await this.nftMintService.uploadMetadataToIPFS(dto.clipId)).metadataUri;
+      (await this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId)).metadataUri;
+
+    await this.prisma.clip.update({
+      where: { id: dto.clipId },
+      data: {
+        collectionId,
+        ...(dto.royaltyBps === undefined && collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
+    });
 
     return this.nftService.mintClip({
       clipId: String(dto.clipId),
+      collectionId,
       creatorWallet: dto.creatorWallet,
       metadataUri,
-      royaltyBps: dto.royaltyBps,
+      royaltyBps: dto.royaltyBps ?? collection.royaltyBps ?? undefined,
     });
   }
 
@@ -645,7 +685,7 @@ export class NftController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid clipId/walletAddress, clip not ready, or posted clips cannot be minted.',
+      'Invalid clipId, walletAddress, or collectionId; unsupported collection; exhausted collection supply; clip not ready; or posted clip.',
     type: NftPrepareMintBadRequestDto,
   })
   @ApiUnauthorizedResponse({
@@ -697,7 +737,11 @@ export class NftController {
       );
     }
 
-    return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
+    return this.nftMintService.prepareMintTx(
+      dto.clipId,
+      dto.walletAddress,
+      dto.collectionId,
+    );
   }
 
   @Auth()
@@ -780,11 +824,11 @@ export class NftController {
           { trait_type: 'Royalty Percent', value: 10 },
         ],
         seller_fee_basis_points: 1000,
-        fee_recipient: 'GC6X********UTZF3',
+        fee_recipient: 'GABC...X92K',
         royalty: {
           bps: 1000,
           percent: 10,
-          recipient: 'GC6X********UTZF3',
+          recipient: 'GABC...X92K',
         },
       },
     },

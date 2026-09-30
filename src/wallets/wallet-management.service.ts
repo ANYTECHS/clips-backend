@@ -7,7 +7,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectWalletDto } from './dto/connect-wallet.dto';
 import { WalletValidationService } from './wallet-validation.service';
-import { DEFAULT_CHAIN, SupportedChain } from './chain.constants';
+import {
+  DEFAULT_CHAIN,
+  SUPPORTED_CHAINS,
+  isSupportedChain,
+} from './chain.constants';
 import { maskAddress } from './wallet.utils';
 
 export interface DisconnectResult {
@@ -102,7 +106,12 @@ export class WalletManagementService {
   }
 
   async connect(userId: number, dto: ConnectWalletDto) {
-    const chain = (dto.chain ?? DEFAULT_CHAIN) as SupportedChain;
+    const chain = dto.chain ?? DEFAULT_CHAIN;
+    if (!isSupportedChain(chain)) {
+      throw new BadRequestException(
+        `Unsupported chain "${chain}". Supported chains: ${SUPPORTED_CHAINS.join(', ')}`,
+      );
+    }
 
     this.walletValidationService.validateAddressForChain(dto.address, chain);
 
