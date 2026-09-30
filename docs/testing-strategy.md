@@ -551,8 +551,68 @@ For every new controller endpoint, verify:
 
 ## Test Helpers and Fixtures
 
+### `src/testing/`
+- `authenticated-request.util.ts` — `createAuthenticatedRequest(user)` builds a
+  supertest factory that signs a real JWT and attaches it as
+  `Authorization: Bearer <token>`, the same security scheme documented by
+  Swagger (`@Auth()` → `ApiBearerAuth('access-token')`) and read back by
+  `JwtStrategy` via `ExtractJwt.fromAuthHeaderAsBearerToken()`.
+  Covered by `authenticated-request.util.spec.ts` in `npm test`.
+- `test/helpers/authenticated-request.helper.ts` — re-export so specs under
+  `test/` have a stable import path.
+
+#### `createAuthenticatedRequest(user, options?)`
+
+```typescript
+import { createAuthenticatedRequest, TEST_USERS } from '../src/testing';
+
+// The app only needs to be listening when supertest drives a real socket.
+const http = createAuthenticatedRequest(TEST_USERS.user, {
+  app: app.getHttpServer(),
+});
+
+await http.get('/payouts').expect(200);
+await http.post('/payouts/request').send({ amount: 50, currency: 'USD' });
+```
+
+The app can also be bound later (`createAuthenticatedRequest(user).forApp(app)`)
+or passed per call (`http.get(app, '/payouts')`).
+
+| Option | Purpose |
+|--------|---------|
+| `app` / `agent` | supertest target — a Nest app, `app.getHttpServer()`, or `request(app)` |
+| `cookie` | also send `access_token=<jwt>`, mirroring `CookieService.setTokenCookies` |
+| `headers` | extra headers merged on every request |
+| `anonymous` | omit the `Authorization` header (assert `401`) |
+| `expiresIn`, `emailVerified`, `extraClaims` | per-token overrides |
+
+The returned factory also exposes:
+
+- `token` / `headers` / `user` — what was used to build the request.
+- `with(extraHeaders)` — derive a factory with more headers (CSRF, idempotency keys).
+- `unauthenticated()` — same request with the credentials stripped.
+
+Ready-made users live in `TEST_USERS` (`user`, `otherUser`, `editor`, `admin`,
+`unverified`). Roles are **not** JWT claims (see `SECURITY.md`), so
+`@Roles` / `@Admin` specs pair the helper with `overrideJwtAuthGuard`:
+
+```typescript
+import { Test } from '@nestjs/testing';
+import { overrideJwtAuthGuard, TEST_USERS } from '../src/testing';
+
+const moduleRef = await overrideJwtAuthGuard(
+  Test.createTestingModule({ controllers: [PayoutsController], providers }),
+  TEST_USERS.admin,
+).compile();
+```
+
+Lower-level helpers (`signTestAccessToken`, `authHeadersFor`, `authCookieFor`,
+`buildTestJwtPayload`) are exported for specs that need the token without
+supertest.
+
 ### `test/helpers/`
 - `ffmpeg-mock.helper.ts` — fluent-ffmpeg mock for clip-generation tests.
+- `authenticated-request.helper.ts` — re-export of `src/testing/authenticated-request.util`.
 
 ### `test/mocks/`
 - `cloudinary.mock.ts` — Cloudinary SDK upload stub.
