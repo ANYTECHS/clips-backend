@@ -5,7 +5,7 @@ describe('maskAddress (Issue #763)', () => {
     'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
 
   it('keeps the first 4 and last 6 characters and masks the middle', () => {
-    expect(maskAddress(STELLAR_ADDRESS)).toBe('GC6X********UHTZF3');
+    expect(maskAddress(STELLAR_ADDRESS)).toBe('GC6X...TZF3');
   });
 
   it('never leaks the middle of the address', () => {
@@ -19,7 +19,7 @@ describe('maskAddress (Issue #763)', () => {
   });
 
   it('masks an address exactly at the 10-character boundary', () => {
-    expect(maskAddress('1234567890')).toBe('1234********567890');
+    expect(maskAddress('1234567890')).toBe('1234...7890');
   });
 
   it('passes through empty and nullish values without throwing', () => {

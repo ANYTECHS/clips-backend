@@ -34,6 +34,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
 import { WalletBalanceService } from './wallet-balance.service';
 import { CreateWalletConnectionDto } from './dto/connect-wallet.dto';
+import { SUPPORTED_CHAINS } from './chain.constants';
 import { WalletNftsQueryDto } from './dto/wallet-nfts-query.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
 import { WalletBalanceResult } from '../stellar/stellar.service';
@@ -74,8 +75,8 @@ export class WalletsController {
         type: 'object',
         properties: {
           id: { type: 'number' },
-          address: { type: 'string', example: '******KPRQ6A' },
-          chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+          address: { type: 'string', example: 'GABC...X92K' },
+          chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
           type: { type: 'string', example: 'freighter' },
           connectedAt: { type: 'string', format: 'date-time' },
         },
@@ -104,8 +105,8 @@ export class WalletsController {
       type: 'object',
       properties: {
         id: { type: 'number' },
-        address: { type: 'string', example: '******KPRQ6A' },
-        chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+        address: { type: 'string', example: 'GABC...X92K' },
+        chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
         type: { type: 'string', example: 'freighter' },
         connectedAt: { type: 'string', format: 'date-time' },
       },

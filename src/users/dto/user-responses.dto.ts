@@ -17,7 +17,7 @@ export class UserResponseDto {
   @ApiPropertyOptional({ example: '2026-07-26T12:00:00.000Z' })
   emailVerified?: Date | null;
 
-  @ApiPropertyOptional({ example: 'GC6X********UTZF3' })
+  @ApiPropertyOptional({ example: 'GABC...X92K' })
   stellarPublicKey?: string | null;
 
   @ApiPropertyOptional({ example: 'custodial' })
