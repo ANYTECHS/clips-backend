@@ -20,7 +20,7 @@ export class MailService {
   }
 
   async sendTemplatedEmail(job: EmailDeliveryJobData): Promise<void> {
-    const content = this.buildTemplate(job.template, job.context.token);
+    const content = this.buildTemplate(job.template, job.context.token, job.context.link);
     const info = await this.transporter.sendMail({
       from: process.env.SMTP_FROM || '"Clips App" <noreply@clips.app>',
       to: job.to,
@@ -80,8 +80,24 @@ export class MailService {
     });
   }
 
-  private buildTemplate(template: EmailDeliveryJobData['template'], token: string) {
+  private buildTemplate(
+    template: EmailDeliveryJobData['template'],
+    token: string,
+    link?: string,
+  ) {
     const baseUrl = process.env.APP_BASE_URL || 'http://localhost:3000';
+    if (template === 'job-completed') {
+      const preview = link ?? token;
+      return {
+        text: `Your clips are ready! View them here:\n\n${preview}`,
+        html: `
+        <p>Your clips are ready! Click below to view them.</p>
+        <a href="${preview}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#fff;border-radius:6px;text-decoration:none;">View clips</a>
+        <p>Or copy this URL: ${preview}</p>
+      `,
+      };
+    }
+
     if (template === 'magic-link') {
       const link = `${baseUrl}/auth/verify-magic?token=${token}`;
       return {

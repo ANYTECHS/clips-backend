@@ -7,7 +7,7 @@ export const EMAIL_DELIVERY_JOB = 'deliver-email';
  */
 export const EMAIL_DELIVERY_QUEUE_PRIORITY = 5;
 
-export type EmailTemplate = 'verification' | 'password-reset' | 'magic-link' | 'queue-alert';
+export type EmailTemplate = 'verification' | 'password-reset' | 'magic-link' | 'queue-alert' | 'job-completed';
 
 export interface EmailDeliveryJobData {
   to: string;
@@ -15,6 +15,8 @@ export interface EmailDeliveryJobData {
   template: EmailTemplate;
   context: {
     token: string;
+    /** Optional deep link included by job-completed notifications (#917). */
+    link?: string;
   };
 }
 

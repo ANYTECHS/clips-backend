@@ -1,6 +1,8 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Job } from 'bullmq';
+import { JOB_COMPLETED_EVENT } from '../clips/clips.events';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import { VideoProgressGateway } from './video-progress.gateway';
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,11 +41,12 @@ export interface ClipGenerationJobData {
 @Processor(CLIP_GENERATION_QUEUE)
 export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(ClipGenerationProcessor.name);
-
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly progressGateway?: VideoProgressGateway,
-    @Optional() private readonly shutdownService?: GracefulShutdownService,
+    @Optional() private readonly shutdownService?:
+GracefulShutdownService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {
     super();
   }
@@ -120,6 +123,15 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       if (this.progressGateway) {
         this.progressGateway.emitCompleted(userId, videoId, clipsGenerated);
       }
+
+      this.eventEmitter?.emit(JOB_COMPLETED_EVENT, {
+        jobId: job.id ?? `clip-generation-${videoId}`,
+        type: 'clip-generation',
+        userId,
+        title: 'Your clips are ready',
+        body: 'Video processing finished',
+        link: `/videos/${videoId}`,
+      });
 
       this.logger.log(
         `Job ${job.id}: video ${videoId} processed — ${clipsGenerated} clip(s)`,

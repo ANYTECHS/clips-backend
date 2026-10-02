@@ -242,6 +242,30 @@ export class VideoProgressGateway
   }
 
   /**
+   * Emit a job-completion notification event to all of the user's sockets (#917).
+   */
+  emitNotification(
+    userId: number,
+    payload: {
+      id: number;
+      jobId: string;
+      type: string;
+      title: string;
+      body?: string;
+      link?: string;
+    },
+  ): void {
+    const sockets = this.userSockets.get(userId) ?? new Set<string>();
+    for (const socketId of sockets) {
+      try {
+        this.server?.to(socketId).emit('notification.created', payload);
+      } catch (err) {
+        this.logger.warn(`Failed to emit notification.created to socket ${socketId}`);
+      }
+    }
+  }
+
+  /**
    * Emit a failure event when a job fails (including timeout).
    */
   emitFailed(userId: number, videoId: number, reason: string): void {
