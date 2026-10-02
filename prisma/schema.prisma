@@ -216,6 +216,22 @@ model UserPlatform {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+model Notification {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  jobId     String
+  type      String
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, type])
+  @@index([userId, createdAt])
+}
+
 model Wallet {
   id          Int       @id @default(autoincrement())
   userId      Int

@@ -65,6 +65,6 @@ import { QueueOverflowService } from '../common/queue/queue-overflow.service';
     AdminGuard,
     QueueOverflowService,
   ],
-  exports: [MailService, JwtModule, PassportModule, AdminGuard],
+  exports: [MailService, JwtModule, PassportModule, AdminGuard, EmailDeliveryService],
 })
 export class AuthModule {}

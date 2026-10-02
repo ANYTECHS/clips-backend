@@ -16,6 +16,7 @@ import { NftModule } from './nft/nft.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { VideosModule } from './videos/videos.module';
 import { JobsModule } from './jobs/jobs.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { PayoutsModule } from './payouts/payouts.module';
 import { StellarModule } from './stellar/stellar.module';
 import { CsrfModule } from './csrf/csrf.module';
@@ -124,6 +125,7 @@ import { BlockchainModule } from './blockchain/blockchain.module';
     ClipsModule,
     VideosModule,
     JobsModule,
+    NotificationsModule,
     StellarModule,
     CsrfModule,
     EncryptionModule,

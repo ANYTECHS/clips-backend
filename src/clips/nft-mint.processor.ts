@@ -1,8 +1,10 @@
-import { Logger, OnModuleInit } from '@nestjs/common';
+import { Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Job } from 'bullmq';
 import { NFT_MINT_QUEUE } from './nft-mint.queue';
+import { JOB_COMPLETED_EVENT } from './clips.events';
 import { NftMintService } from './nft-mint.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
@@ -24,6 +26,7 @@ export class NftMintProcessor extends WorkerHost implements OnModuleInit {
     private readonly nftMintService: NftMintService,
     private readonly metricsService: MetricsService,
     private readonly shutdownService: GracefulShutdownService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {
     super();
   }
@@ -74,5 +77,13 @@ export class NftMintProcessor extends WorkerHost implements OnModuleInit {
   @OnWorkerEvent('completed')
   onCompleted(job: Job<NftMintJob>): void {
     this.logger.log(`NFT mint job ${job.id} completed for clip ${job.data.clipId}`);
+    this.eventEmitter?.emit(JOB_COMPLETED_EVENT, {
+      jobId: job.id ?? `nft-mint-clip-${job.data.clipId}`,
+      type: 'nft-mint',
+      userId: job.data.userId,
+      title: 'Your NFT mint completed',
+      body: 'Mint transaction finished',
+      link: `/clips/${job.data.clipId}`,
+    });
   }
 }

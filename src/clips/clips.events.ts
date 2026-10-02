@@ -84,3 +84,25 @@ export interface ClipFailedPayload {
 export const WS_CLIP_PROGRESS = 'clip.progress';
 export const WS_CLIP_COMPLETED = 'clip.completed';
 export const WS_CLIP_FAILED = 'clip.failed';
+/** Emitted to `user:{id}` room when a job-completion notification is created (#917). */
+export const WS_NOTIFICATION_CREATED = 'notification.created';
+/** Internal event bus topic fanned out to NotificationsService (#917). */
+export const JOB_COMPLETED_EVENT = 'job.completed';
+
+export interface JobCompletedEvent {
+  jobId: string;
+  type: string;
+  userId: number;
+  title: string;
+  body?: string;
+  link?: string;
+}
+
+export interface NotificationCreatedPayload {
+  id: number;
+  jobId: string;
+  type: string;
+  title: string;
+  body?: string;
+  link?: string;
+}
