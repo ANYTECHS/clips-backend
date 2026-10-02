@@ -13,6 +13,10 @@ import { NftMetadataService } from '../nft/nft-metadata.service';
 import { RoyaltyConfigurationService } from '../nft/royalty-configuration.service';
 import { registerQueue } from '../common';
 import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
+import { NFT_MINT_QUEUE } from './nft-mint.queue';
+import { NftMintProcessor } from './nft-mint.processor';
+import { NftMintEnqueueService } from './nft-mint-enqueue.service';
+import { QueueOverflowService } from '../common/queue/queue-overflow.service';
 
 @Module({
   imports: [
@@ -21,6 +25,7 @@ import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
     CircuitBreakerModule,
     IpfsUploadModule,
     registerQueue(CLIP_GENERATION_QUEUE),
+    registerQueue(NFT_MINT_QUEUE),
   ],
   controllers: [ClipsController],
   providers: [
@@ -30,8 +35,11 @@ import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
     NftConfig,
     NftMetadataService,
     NftMintService,
+    NftMintEnqueueService,
+    NftMintProcessor,
     RoyaltyConfigurationService,
+    QueueOverflowService,
   ],
-  exports: [ClipsService, CloudinaryService, NftMintService],
+  exports: [ClipsService, CloudinaryService, NftMintService, NftMintEnqueueService],
 })
 export class ClipsModule {}
