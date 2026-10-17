@@ -15,6 +15,10 @@ import { NftMetadataService } from '../nft/nft-metadata.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { StellarService } from '../stellar/stellar.service';
 import { NftConfig } from '../nft/nft.config';
+import {
+  DEFAULT_NFT_COLLECTION_ID,
+  isSupportedNftCollectionId,
+} from '../nft/nft-collections.constants';
 
 export interface UploadMetadataResult {
   clipId: number;
@@ -77,7 +81,11 @@ export class NftMintService {
    * @param clipId  Clip whose metadata should be uploaded.
    * @returns       UploadMetadataResult with clipId, cid, and metadataUri.
    */
-  async uploadMetadataToIPFS(clipId: number): Promise<UploadMetadataResult> {
+  async uploadMetadataToIPFS(
+    clipId: number,
+    collectionId: string = DEFAULT_NFT_COLLECTION_ID,
+  ): Promise<UploadMetadataResult> {
+    const collection = await this.requireCollection(collectionId);
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
       include: { video: { select: { userId: true } } },
@@ -122,19 +130,12 @@ export class NftMintService {
         metadata: collection.metadata as Record<string, unknown>,
       },
     });
+
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
       metadata,
       clipId,
     );
 
-    // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
-    const metadataUri = await this.ipfsUploadService.uploadMetadata(
-      metadata,
-      clipId,
-    );
-
-    // Persist the CID to the Clip record so subsequent mint calls can
-    // skip the upload step.
     await this.prisma.clip.update({
       where: { id: clipId },
       data: {
@@ -160,6 +161,7 @@ export class NftMintService {
   async prepareMintTx(
     clipId: number,
     walletAddress: string,
+    collectionId?: string,
   ): Promise<PrepareMintTxResult> {
     const addrValidation = this.stellarService.validateAddress(walletAddress);
     if (!addrValidation.valid) {
@@ -170,12 +172,37 @@ export class NftMintService {
 
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress)
+    if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new ConflictException(`Clip ${clipId} is already minted`);
+    if (clip.nftStatus === 'minting')
+      throw new ConflictException(
+        `Clip ${clipId} is currently being minted. Please wait.`,
+      );
     if (this.isPosted(clip.postStatus)) {
       throw new BadRequestException(
         `Posted clips cannot be minted. Clip ${clipId} has already been posted.`,
       );
+    }
+
+    const selectedCollectionId =
+      collectionId ?? clip.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    const collection = await this.requireCollection(selectedCollectionId);
+    if (
+      clip.metadataUri &&
+      clip.collectionId &&
+      clip.collectionId !== selectedCollectionId
+    ) {
+      throw new BadRequestException(
+        `Clip ${clipId} metadata already belongs to collection '${clip.collectionId}'`,
+      );
+    }
+    if (collection.maxSupply !== null) {
+      const supply = await this.getCollectionSupply(selectedCollectionId);
+      if (supply >= collection.maxSupply) {
+        throw new BadRequestException(
+          `Collection '${selectedCollectionId}' has reached its maximum supply`,
+        );
+      }
     }
 
     let metadataUri = clip.metadataUri;
@@ -183,10 +210,21 @@ export class NftMintService {
       this.logger.log(
         `Clip ${clipId} has no metadataUri — uploading to IPFS before building XDR`,
       );
-      metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
+      metadataUri = (
+        await this.uploadMetadataToIPFS(clipId, selectedCollectionId)
+      ).metadataUri;
     }
 
     const royaltyBps = collection.royaltyBps ?? clip.royaltyBps ?? 1000;
+    const creatorRoyaltyBps = royaltyBps;
+    const platformRoyaltyBps = this.nftConfig.platformRoyaltyBps;
+    const totalBps = creatorRoyaltyBps + platformRoyaltyBps;
+    if (totalBps > 10000) {
+      throw new BadRequestException(
+        `Combined royalty (${totalBps} bps = ${creatorRoyaltyBps} creator + ${platformRoyaltyBps} platform) exceeds maximum of 10000 bps`,
+      );
+    }
+
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId) {
       throw new BadRequestException(
@@ -196,18 +234,25 @@ export class NftMintService {
 
     await this.prisma.clip.update({
       where: { id: clipId },
-      data: { nftStatus: 'minting' },
+      data: {
+        collectionId: selectedCollectionId,
+        nftStatus: 'minting',
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
     });
 
     const xdr = this.buildMintXdr({
       clipId,
+      collectionId: selectedCollectionId,
       walletAddress,
       contractId,
       metadataUri,
       royaltyBps,
-      creatorRoyaltyBps: this.nftConfig.creatorRoyaltyBps,
+      creatorRoyaltyBps,
       platformWallet: this.nftConfig.platformWallet,
-      platformRoyaltyBps: this.nftConfig.platformRoyaltyBps,
+      platformRoyaltyBps,
       network: this.stellarService.network,
     });
 
@@ -220,11 +265,13 @@ export class NftMintService {
       network: this.stellarService.network,
       contractId,
       clipId,
+      collectionId: selectedCollectionId,
       walletAddress,
       metadataUri,
       royaltyBps,
     };
   }
+
 
   async validateClipOwner(clipId: number, userId: number): Promise<void> {
     const clip = await this.prisma.clip.findUnique({
@@ -239,10 +286,10 @@ export class NftMintService {
   async confirmMint(
     clipId: number,
     mintAddress: string,
-  ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date }> {
+  ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress)
+    if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new BadRequestException(`Clip ${clipId} already minted`);
     const mintedAt = new Date();
     await this.prisma.clip.update({
@@ -252,8 +299,9 @@ export class NftMintService {
     this.logger.log(
       `Clip ${clipId} confirmed as minted — token: ${mintAddress}`,
     );
-    return { clipId, mintAddress, mintedAt };
+    return { clipId, mintAddress, mintedAt, nftStatus: 'minted' };
   }
+
 
   async prepareBurnTx(
     clipId: number,
@@ -355,6 +403,33 @@ export class NftMintService {
     );
   }
 
+  private async requireCollection(collectionId: string) {
+    if (!isSupportedNftCollectionId(collectionId)) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    const collection = await this.prisma.nftCollection.findUnique({
+      where: { collectionId },
+    });
+    if (!collection) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    return collection;
+  }
+
+  private async getCollectionSupply(collectionId: string): Promise<number> {
+    return this.prisma.clip.count({
+      where: {
+        collectionId,
+        mintAddress: { not: null },
+        nftStatus: { not: 'burned' },
+      },
+    });
+  }
+
   private buildMintXdr(params: {
     clipId: number;
     collectionId: string;
@@ -374,6 +449,7 @@ export class NftMintService {
         args: {
           to: params.walletAddress,
           token_id: String(params.clipId),
+          collection_id: params.collectionId,
           metadata: params.metadataUri,
           royalty_bps: params.royaltyBps,
         },
@@ -397,3 +473,4 @@ export class NftMintService {
     ).toString('base64');
   }
 }
+

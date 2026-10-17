@@ -24,7 +24,19 @@ export class NftOwnershipResultDto {
     description: 'Whether the wallet owns the NFT',
     example: true,
   })
-  valid: boolean;
+  owner: boolean;
+
+  @ApiProperty({
+    description: 'Human-readable result message',
+    example: 'Wallet owns NFT',
+  })
+  message: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the wallet owns the NFT (backward-compatible field)',
+    example: true,
+  })
+  valid?: boolean;
 
   @ApiPropertyOptional({
     description: 'Error message when valid is false',

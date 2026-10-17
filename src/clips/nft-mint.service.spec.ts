@@ -553,6 +553,7 @@ describe('NftMintService.confirmMint', () => {
       clipId: 5,
       mintAddress: 'MY_TOKEN',
       mintedAt: expect.any(Date),
+      nftStatus: 'minted',
     });
   });
 });
