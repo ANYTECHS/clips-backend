@@ -94,7 +94,7 @@ export class NftRoyaltyResponseDto {
 
   @ApiProperty({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GABC...X92K',
+    example: 'GABF...KJ93XD',
   })
   recipient: string;
 }
@@ -308,7 +308,7 @@ export class NftRoyaltyInfoDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GABC...X92K',
+    example: 'GABF...KJ93XD',
   })
   recipient?: string;
 }
@@ -345,7 +345,7 @@ export class NftMetadataResponseDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address receiving the fee',
-    example: 'GABC...X92K',
+    example: 'GABF...KJ93XD',
   })
   fee_recipient?: string;
 

@@ -229,7 +229,7 @@ Returns the authenticated user's profile, including a masked `stellarPublicKey`.
   "email": "user@example.com",
   "name": "Jane Doe",
   "role": "user",
-  "stellarPublicKey": "GC6X****UTZF3",
+  "stellarPublicKey": "GABF...KJ93XD",
   "walletType": "custodial",
   "showOnLeaderboard": false
 }
@@ -245,7 +245,7 @@ Generate a custodial Stellar wallet for the authenticated user.
 
 ```json
 {
-  "stellarPublicKey": "GC6X****UTZF3",
+  "stellarPublicKey": "GABF...KJ93XD",
   "walletType": "custodial"
 }
 ```
@@ -457,7 +457,7 @@ Set the NFT royalty in basis points (BPS) for a clip. Range: 0–1500 (0–15%).
 
 All wallet endpoints require `Authorization: Bearer <token>`.
 
-> Wallet addresses are **partially masked** in all responses (e.g. `******KPRQ6A`).
+> Wallet addresses are **partially masked** in all responses (e.g. `GABF...KJ93XD`).
 
 #### `GET /wallets`
 
@@ -469,7 +469,7 @@ List all wallets for the authenticated user.
 [
   {
     "id": 1,
-    "address": "******KPRQ6A",
+    "address": "GABF...KJ93XD",
     "chain": "stellar",
     "type": "freighter",
     "connectedAt": "2026-08-01T10:00:00.000Z"

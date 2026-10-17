@@ -53,6 +53,10 @@ import { ClipResponseDto } from './dto/clip-response.dto';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto';
 import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto';
 import { UpdateClipRoyaltyDto } from './dto/update-clip-royalty.dto';
+import {
+  SetRoyaltyBpsDto,
+  SetRoyaltyBpsResponseDto,
+} from './dto/set-royalty-bps.dto';
 import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto';
 
 /**
@@ -341,5 +345,57 @@ export class ClipsController {
       userId,
       dto.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
     );
+  }
+
+  /**
+   * PATCH /clips/:id/royalty-bps
+   *
+   * Issue #747: Allow creators to configure a custom royalty percentage
+   * (0–15%) per clip before minting as an NFT.
+   */
+  @Patch(':id/royalty-bps')
+  @ApiOperation({
+    summary: 'Set clip NFT royalty BPS (Issue #747)',
+    description:
+      'Allow creators to configure a custom royalty percentage (0–15%) per clip before minting. ' +
+      'Defaults to 1000 BPS (10%) when omitted.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiOkResponse({
+    description: 'Stored royalty in basis points',
+    type: SetRoyaltyBpsResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'royaltyBps must be 0–1500' })
+  @ApiForbiddenResponse({ description: 'Clip does not belong to the requesting user' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async setRoyaltyBps(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetRoyaltyBpsDto,
+    @Req() req: Request,
+  ) {
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipsService.setRoyaltyBps(id, userId, dto.royaltyBps);
+  }
+
+  /**
+   * GET /clips/:id/royalty-bps
+   *
+   * Get the current royalty BPS for a clip.
+   */
+  @Get(':id/royalty-bps')
+  @ApiOperation({
+    summary: 'Get clip NFT royalty BPS (Issue #747)',
+    description: 'Returns the configured royalty BPS for a clip, defaulting to 1000 (10%).',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiOkResponse({
+    description: 'Current royalty BPS for the clip',
+    type: SetRoyaltyBpsResponseDto,
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async getRoyaltyBps(@Param('id', ParseIntPipe) id: number) {
+    return this.clipsService.getRoyaltyBps(id);
   }
 }

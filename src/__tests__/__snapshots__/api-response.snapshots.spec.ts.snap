@@ -57,7 +57,7 @@ exports[`API response snapshots (#1024) Earnings matches documented earnings tot
 
 exports[`API response snapshots (#1024) Wallet information matches documented wallet list item shape with masked address 1`] = `
 {
-  "address": "GAAA********AAAWHF",
+  "address": "GAAA...AAAWHF",
   "chain": "stellar",
   "connectedAt": "2026-07-27T12:00:00.000Z",
   "id": 1,
