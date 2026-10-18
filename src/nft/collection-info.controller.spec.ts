@@ -1,3 +1,4 @@
+import { NftMintStatusService } from './nft-mint-status.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NftController } from './nft.controller';
 import { NftOwnershipService } from './nft-ownership.service';
@@ -17,6 +18,7 @@ import { NftTransferHistoryService } from './nft-transfer-history.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { LoginGuard } from '../auth/guards/login.guard';
+import { QueueRateLimitGuard } from '../common/guards/queue-rate-limit.guard';
 
 describe('NftController – GET /nfts/collection (Issue #679)', () => {
   let controller: NftController;
@@ -45,11 +47,14 @@ describe('NftController – GET /nfts/collection (Issue #679)', () => {
         { provide: NftTransferService, useValue: { prepareTransferTx: jest.fn() } },
         { provide: NftTransferHistoryService, useValue: { getTransfers: jest.fn() } },
         { provide: NftMetadataRefreshService, useValue: { prepareRefreshWithCooldown: jest.fn() } },
+        { provide: NftMintStatusService, useValue: { getOrCreate: jest.fn() } },
       ],
     })
       .overrideGuard(LoginGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(NftMintGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(QueueRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

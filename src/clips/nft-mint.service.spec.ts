@@ -25,6 +25,18 @@ const prismaMock = {
   clip: {
     findUnique: jest.fn(),
     update: jest.fn(),
+    count: jest.fn().mockResolvedValue(0),
+  },
+  nftCollection: {
+    findUnique: jest.fn().mockResolvedValue({
+      collectionId: 'viral-clips',
+      name: 'Viral Clips',
+      type: 'viral',
+      metadata: {},
+      royaltyBps: null,
+      maxSupply: null,
+      contractAddress: 'CCONTRACTADDRESS',
+    }),
   },
 };
 
@@ -170,7 +182,7 @@ describe('NftMintService.uploadMetadataToIPFS', () => {
     expect(ipfsUploadServiceMock.uploadMetadata).toHaveBeenCalledTimes(1);
     expect(prismaMock.clip.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { metadataUri: 'ipfs://bafyNewCid123' },
+      data: { collectionId: 'viral-clips', metadataUri: 'ipfs://bafyNewCid123' },
     });
     expect(result).toEqual({
       clipId: 5,
@@ -359,7 +371,7 @@ describe('NftMintService.prepareMintTx', () => {
 
     expect(prismaMock.clip.update).toHaveBeenCalledWith({
       where: { id: 5 },
-      data: { nftStatus: 'minting' },
+      data: { collectionId: 'viral-clips', nftStatus: 'minting' },
     });
   });
 

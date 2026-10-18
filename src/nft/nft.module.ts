@@ -35,6 +35,7 @@ import { AdminNftController } from './admin-nft.controller';
 import { NftFreezeAdminGuard } from './guards/nft-freeze-admin.guard';
 import { NftCollectionService } from './nft-collection.service';
 import { NftCollectionController } from './nft-collection.controller';
+import { NftMintStatusService } from './nft-mint-status.service';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { NftCollectionController } from './nft-collection.controller';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftMintStatusService,
     NftCollectionService,
   ],
   controllers: [
@@ -100,6 +102,7 @@ import { NftCollectionController } from './nft-collection.controller';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftMintStatusService,
     NftCollectionService,
   ],
 })
