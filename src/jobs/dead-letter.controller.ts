@@ -28,7 +28,7 @@ export class DeadLetterController {
   @ApiOperation({
     summary: 'Inspect dead-letter (permanently failed) jobs',
     description:
-      'Lists retained failed jobs across all queues. Failed jobs are kept (removeOnFail: false) for manual investigation instead of being silently removed.',
+      'Lists retained failed jobs across all queues. Failed jobs are kept (removeOnFail: false) for manual investigation instead of being silently removed. Admin only.',
   })
   @ApiQuery({
     name: 'queue',
@@ -44,7 +44,11 @@ export class DeadLetterController {
   })
   @ApiResponse({ status: 200, description: 'Dead-letter jobs returned' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
+  })
   async list(
     @Query('queue') queue?: string,
     @Query('limit') limit?: string,
@@ -56,12 +60,16 @@ export class DeadLetterController {
   @Post('retry/:jobId')
   @ApiOperation({
     summary: 'Replay a dead-letter job',
-    description: 'Moves a failed job back to the waiting state for another attempt.',
+    description: 'Moves a failed job back to the waiting state for another attempt. Admin only.',
   })
   @ApiParam({ name: 'jobId', description: 'Failed job ID to replay' })
   @ApiResponse({ status: 200, description: 'Job replay initiated' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden — admin only' })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
+  })
   @ApiNotFoundResponse({ description: 'Failed job not found in dead letter' })
   async retry(@Param('jobId') jobId: string, @Query('queue') queue?: string) {
     return this.deadLetterService.retry(jobId, queue);

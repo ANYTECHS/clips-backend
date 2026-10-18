@@ -184,6 +184,79 @@ async function bootstrap() {
     .setTitle('ClipCash API')
     .setDescription(
       'ClipCash backend API documentation\n\n' +
+      '## Authentication\n\n' +
+      'The API supports multiple authentication methods:\n\n' +
+      '### Bearer Token (JWT)\n\n' +
+      'Most endpoints use JWT Bearer tokens in the `Authorization` header:\n\n' +
+      '```http\n' +
+      'GET /clips HTTP/1.1\n' +
+      'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\n' +
+      '```\n\n' +
+      '**Obtaining a Token:**\n\n' +
+      '1. Call `POST /auth/login` with email and password\n' +
+      '2. Response includes `accessToken` (JWT) and optional `refreshToken`\n' +
+      '3. Include `accessToken` in `Authorization: Bearer <token>` header for authenticated requests\n' +
+      '4. Access tokens expire after `JWT_EXPIRES` seconds (default 3600s)\n' +
+      '5. Use `refreshToken` with `POST /auth/refresh` to get a new access token\n\n' +
+      '**Token Claims:**\n\n' +
+      '- `sub`: User ID (numeric)\n' +
+      '- `email`: User email address\n' +
+      '- `emailVerified`: Boolean (false tokens are rejected by protected endpoints)\n' +
+      '- `iat`: Token issued-at timestamp\n' +
+      '- `exp`: Token expiration timestamp\n\n' +
+      '### Cookie Authentication\n\n' +
+      'Alternatively, tokens can be sent via secure httpOnly cookies:\n\n' +
+      '```http\n' +
+      'GET /clips HTTP/1.1\n' +
+      'Cookie: access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\n' +
+      'X-CSRF-Token: abc123def456\n' +
+      '```\n\n' +
+      '**Cookie Attributes:**\n\n' +
+      '- `httpOnly: true` — JavaScript cannot access via `document.cookie` (XSS protection)\n' +
+      '- `secure: true` — Only sent over HTTPS connections\n' +
+      '- `sameSite: strict` — Only sent with same-site requests (CSRF protection)\n' +
+      '- `path: /` — Sent to all API paths\n\n' +
+      '**CSRF Protection:**\n\n' +
+      'When using cookie authentication, state-changing requests (POST, PUT, PATCH, DELETE) must include:\n\n' +
+      '```http\n' +
+      'POST /wallets/connect HTTP/1.1\n' +
+      'Cookie: access_token=...; _csrf=abc123...\n' +
+      'X-CSRF-Token: abc123\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "walletAddress": "GABC..." }\n' +
+      '```\n\n' +
+      'The `X-CSRF-Token` header value must match the `_csrf` cookie value.\n\n' +
+      '### Logout\n\n' +
+      'Call `POST /auth/logout` to invalidate the current session:\n\n' +
+      '```http\n' +
+      'POST /auth/logout HTTP/1.1\n' +
+      'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }\n' +
+      '```\n\n' +
+      '**Response (200 OK):**\n\n' +
+      '```json\n' +
+      '{ "message": "Logged out successfully" }\n' +
+      '```\n\n' +
+      '**Errors:**\n\n' +
+      '- `401 Unauthorized` — Invalid or missing access token\n' +
+      '- `400 Bad Request` — Invalid refresh token (if provided for revocation)\n\n' +
+      '### Token Refresh\n\n' +
+      'To obtain a new access token using a refresh token:\n\n' +
+      '```http\n' +
+      'POST /auth/refresh HTTP/1.1\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }\n' +
+      '```\n\n' +
+      '**Response (200 OK):**\n\n' +
+      '```json\n' +
+      '{\n' +
+      '  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",\n' +
+      '  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."\n' +
+      '}\n' +
+      '```\n\n' +
+      '**Errors:**\n\n' +
+      '- `401 Unauthorized` — Refresh token invalid, expired, or revoked\n\n' +
       '## API Security Contract\n\n' +
       'All protected endpoints must require server-side authentication and authorization. ' +
       'JWT bearer auth is required for authenticated API traffic, `401 Unauthorized` is returned ' +
@@ -191,6 +264,17 @@ async function bootstrap() {
       'and `429 Too Many Requests` is returned when a throttle limit is exceeded.\n\n' +
       'Sensitive endpoints should also advertise their security contract in Swagger via `@ApiBearerAuth`, ' +
       '`@ApiUnauthorizedResponse`, `@ApiForbiddenResponse`, and `@ApiTooManyRequestsResponse` decorators.\n\n' +
+      '## Encrypted Fields\n\n' +
+      '**IMPORTANT:** The following sensitive fields are encrypted in the database and are **NEVER** returned in API responses:\n\n' +
+      '- `accessToken` (social platform integration tokens)\n' +
+      '- `refreshToken` (social platform integration refresh tokens)\n' +
+      '- `platformPassword` (third-party platform credentials)\n' +
+      '- `apiSecret` (internal API secrets)\n' +
+      '- `webhookSecret` (webhook signing secrets)\n' +
+      '- `stripeToken` (payment processor tokens)\n' +
+      '- `privateKey` (blockchain private keys if stored)\n\n' +
+      'If you ever encounter these fields in an API response body, it is a **security vulnerability** that must be reported immediately.\n\n' +
+      'Instead, response DTOs mask sensitive identifiers (e.g., `GABC...X92K` for wallet addresses) or omit them entirely.\n\n' +
       '## Rate Limits\n\n' +
       'All API endpoints are protected by rate limiting to ensure fair usage and system stability.\n\n' +
       '### Rate Limit Tiers\n\n' +
@@ -325,7 +409,37 @@ async function bootstrap() {
       },
       'access-token',
     )
-    .addTag('auth', 'Authentication and authorization')
+    .addCookieAuth(
+      'access_token',
+      {
+        type: 'apiKey',
+        in: 'cookie',
+        name: 'access_token',
+        description: 'JWT access token sent via secure httpOnly cookie. ' +
+          'Cookie attributes: httpOnly=true, secure=true, sameSite=strict, path=/. ' +
+          'Must be paired with X-CSRF-Token header for state-changing requests.',
+      },
+    )
+    .addCookieAuth(
+      '_csrf',
+      {
+        type: 'apiKey',
+        in: 'cookie',
+        name: '_csrf',
+        description: 'CSRF protection token cookie. Value must match X-CSRF-Token header.',
+      },
+    )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-CSRF-Token',
+        description: 'CSRF token for cookie-authenticated state-changing requests (POST, PUT, PATCH, DELETE). ' +
+          'Must match the _csrf cookie value. Not needed with Bearer authentication.',
+      },
+      'csrf-token',
+    )
+    .addTag('auth', 'Authentication and authorization — login, logout, token refresh, signup. All responses contain JWT tokens for Bearer authentication.')
     .addTag('users', 'User management')
     .addTag('videos', 'Video upload and management')
     .addTag('clips', 'Clip generation and management')
@@ -341,7 +455,7 @@ async function bootstrap() {
     .addTag('stellar', 'Stellar network interactions')
     .addTag('jobs', 'Background job management')
     .addTag('platforms', 'Social platform integrations')
-    .addTag('admin', 'Admin-only endpoints')
+    .addTag('admin', 'Admin-only endpoints — restricted to users with admin role. Returns 403 Forbidden if called without admin authorization. Requires Bearer JWT with admin role claim.')
     .addTag('queues', 'BullMQ queue management')
     .addTag('circuit-breaker', 'Circuit breaker monitoring and management')
     .addTag('metrics', 'Prometheus metrics endpoint')
