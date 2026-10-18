@@ -277,6 +277,10 @@ async function bootstrap() {
       'Configure additional development or staging origins with the `ALLOWED_ORIGINS` environment variable, ' +
       'e.g. `ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173`. Allowed methods and headers can ' +
       'similarly be overridden via `ALLOWED_METHODS` and `ALLOWED_HEADERS`.\n\n' +
+      '### Swagger UI Accessibility\n\n' +
+      'Swagger UI remains fully accessible even with CORS restrictions in place. ' +
+      'The Swagger UI is served from the same origin as the API (`/api/docs` in non-production or when `ENABLE_SWAGGER_UI=true`), ' +
+      'so it is not affected by CORS policy restrictions and remains accessible regardless of the `ALLOWED_ORIGINS` configuration.\n\n' +
       '## Correlation / Request IDs\n\n' +
       'Every request is assigned a correlation ID for end-to-end tracing:\n\n' +
       '| Header | Direction | Description |\n' +
@@ -325,32 +329,32 @@ async function bootstrap() {
       },
       'access-token',
     )
-    .addTag('auth', 'Authentication and authorization')
-    .addTag('users', 'User management')
+    .addTag('auth', 'Authentication, login, registration, email verification, and two-factor authentication (2FA)')
+    .addTag('users', 'User profile management and wallet creation')
     .addTag('videos', 'Video upload and management')
     .addTag('clips', 'Clip generation and management')
     .addTag('subscriptions', 'Subscription plans and lifecycle')
     .addTag('payments', 'Fiat and Stellar subscription payments')
     .addTag('webhooks', 'Webhook endpoints for external services')
-    .addTag('wallets', 'Blockchain wallet management')
-    .addTag('payouts', 'Revenue payouts')
-    .addTag('earnings', 'Earnings tracking')
-    .addTag('nfts', 'NFT minting and royalty queries')
+    .addTag('wallets', 'Blockchain wallet management and Stellar wallet connections')
+    .addTag('payouts', 'Revenue payouts and payout requests')
+    .addTag('earnings', 'Earnings tracking, history, and exports')
+    .addTag('nfts', 'NFT minting, royalty queries, and metadata')
     .addTag('nft', 'NFT minting and royalty management')
     .addTag('payout', 'Payout requests and processing')
-    .addTag('stellar', 'Stellar network interactions')
-    .addTag('jobs', 'Background job management')
+    .addTag('stellar', 'Stellar network interactions and blockchain operations')
+    .addTag('jobs', 'Background job management and processing')
     .addTag('platforms', 'Social platform integrations')
-    .addTag('admin', 'Admin-only endpoints')
-    .addTag('queues', 'BullMQ queue management')
+    .addTag('admin', 'Admin-only endpoints for platform management')
+    .addTag('queues', 'BullMQ queue management and monitoring')
     .addTag('circuit-breaker', 'Circuit breaker monitoring and management')
-    .addTag('metrics', 'Prometheus metrics endpoint')
-    .addTag('user-platforms', 'Social platform connections')
-    .addTag('platform', 'Platform revenue queries')
-    .addTag('health', 'System health checks')
-    .addTag('blockchain', 'Indexed Soroban contract events')
-    .addTag('transactions', 'Blockchain transactions')
-    .addTag('payout-methods', 'Payout method management')
+    .addTag('metrics', 'Prometheus metrics endpoint for monitoring')
+    .addTag('user-platforms', 'Social platform connections and OAuth integrations')
+    .addTag('platform', 'Platform revenue queries and analytics')
+    .addTag('health', 'System health checks and readiness probes')
+    .addTag('blockchain', 'Indexed Soroban contract events and blockchain indexing')
+    .addTag('transactions', 'Blockchain transactions and transaction history')
+    .addTag('payout-methods', 'Payout method management (Stellar, bank transfer, etc.)')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);
