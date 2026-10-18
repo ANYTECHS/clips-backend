@@ -15,6 +15,17 @@ import { NftMetadataService } from '../nft/nft-metadata.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { StellarService } from '../stellar/stellar.service';
 import { NftConfig } from '../nft/nft.config';
+import {
+  DEFAULT_NFT_COLLECTION_ID,
+  isSupportedNftCollectionId,
+} from '../nft/nft-collections.constants';
+import {
+  Contract,
+  TransactionBuilder,
+  TimeoutInfinite,
+  nativeToScVal,
+  xdr,
+} from '@stellar/stellar-sdk';
 
 export interface UploadMetadataResult {
   clipId: number;
@@ -74,18 +85,24 @@ export class NftMintService {
    *  - Persists the returned CID to Clip.metadataUri in the database.
    *  - Delegates provider resolution (Pinata vs nft.storage) to IpfsUploadService.
    *
-   * @param clipId  Clip whose metadata should be uploaded.
-   * @returns       UploadMetadataResult with clipId, cid, and metadataUri.
+   * @param clipId       Clip whose metadata should be uploaded.
+   * @param collectionId Collection the clip is being minted into (metadata is
+   *                     stamped with the collection's name/type/category).
+   * @returns            UploadMetadataResult with clipId, cid, and metadataUri.
    */
-  async uploadMetadataToIPFS(clipId: number): Promise<UploadMetadataResult> {
+  async uploadMetadataToIPFS(
+    clipId: number,
+    collectionId = DEFAULT_NFT_COLLECTION_ID,
+  ): Promise<UploadMetadataResult> {
+    const collection = await this.requireCollection(collectionId);
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
       include: { video: { select: { userId: true } } },
     });
+
     if (!clip) {
       throw new NotFoundException(`Clip ${clipId} not found`);
     }
-
     if (!clip.clipUrl) {
       throw new BadRequestException(
         `Clip ${clipId} is missing a clip URL — metadata cannot be built until the clip has been generated`,
@@ -122,11 +139,6 @@ export class NftMintService {
         metadata: collection.metadata as Record<string, unknown>,
       },
     });
-    const metadataUri = await this.ipfsUploadService.uploadMetadata(
-      metadata,
-      clipId,
-    );
-
     // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
       metadata,
@@ -160,6 +172,7 @@ export class NftMintService {
   async prepareMintTx(
     clipId: number,
     walletAddress: string,
+    collectionId?: string,
   ): Promise<PrepareMintTxResult> {
     const addrValidation = this.stellarService.validateAddress(walletAddress);
     if (!addrValidation.valid) {
@@ -178,12 +191,35 @@ export class NftMintService {
       );
     }
 
+    const selectedCollectionId =
+      collectionId ?? clip.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    const collection = await this.requireCollection(selectedCollectionId);
+    if (
+      clip.metadataUri &&
+      clip.collectionId &&
+      clip.collectionId !== selectedCollectionId
+    ) {
+      throw new BadRequestException(
+        `Clip ${clipId} metadata already belongs to collection '${clip.collectionId}'`,
+      );
+    }
+    if (collection.maxSupply !== null) {
+      const supply = await this.getCollectionSupply(selectedCollectionId);
+      if (supply >= collection.maxSupply) {
+        throw new BadRequestException(
+          `Collection '${selectedCollectionId}' has reached its maximum supply`,
+        );
+      }
+    }
+
     let metadataUri = clip.metadataUri;
     if (!metadataUri) {
       this.logger.log(
         `Clip ${clipId} has no metadataUri — uploading to IPFS before building XDR`,
       );
-      metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
+      metadataUri = (
+        await this.uploadMetadataToIPFS(clipId, selectedCollectionId)
+      ).metadataUri;
     }
 
     const royaltyBps = collection.royaltyBps ?? clip.royaltyBps ?? 1000;
@@ -196,11 +232,18 @@ export class NftMintService {
 
     await this.prisma.clip.update({
       where: { id: clipId },
-      data: { nftStatus: 'minting' },
+      data: {
+        collectionId: selectedCollectionId,
+        nftStatus: 'minting',
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
     });
 
-    const xdr = this.buildMintXdr({
+    const xdr = await this.buildMintXdr({
       clipId,
+      collectionId: selectedCollectionId,
       walletAddress,
       contractId,
       metadataUri,
@@ -220,6 +263,7 @@ export class NftMintService {
       network: this.stellarService.network,
       contractId,
       clipId,
+      collectionId: selectedCollectionId,
       walletAddress,
       metadataUri,
       royaltyBps,
@@ -355,7 +399,34 @@ export class NftMintService {
     );
   }
 
-  private buildMintXdr(params: {
+  private async requireCollection(collectionId: string) {
+    if (!isSupportedNftCollectionId(collectionId)) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    const collection = await this.prisma.nftCollection.findUnique({
+      where: { collectionId },
+    });
+    if (!collection) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    return collection;
+  }
+
+  private async getCollectionSupply(collectionId: string): Promise<number> {
+    return this.prisma.clip.count({
+      where: {
+        collectionId,
+        mintAddress: { not: null },
+        nftStatus: { not: 'burned' },
+      },
+    });
+  }
+
+  private async buildMintXdr(params: {
     clipId: number;
     collectionId: string;
     walletAddress: string;
@@ -366,34 +437,56 @@ export class NftMintService {
     platformWallet: string;
     platformRoyaltyBps: number;
     network: string;
-  }): string {
-    return Buffer.from(
-      JSON.stringify({
-        contract: params.contractId,
-        function: 'mint',
-        args: {
-          to: params.walletAddress,
-          token_id: String(params.clipId),
-          metadata: params.metadataUri,
-          royalty_bps: params.royaltyBps,
-        },
-        royalty_extension: {
-          recipients: [
-            {
-              wallet: params.walletAddress,
-              bps: params.creatorRoyaltyBps,
-              label: 'creator',
-            },
-            {
-              wallet: params.platformWallet,
-              bps: params.platformRoyaltyBps,
-              label: 'platform',
-            },
-          ],
-        },
-        network: params.network,
-        built_at: new Date().toISOString(),
-      }),
-    ).toString('base64');
+  }): Promise<string> {
+    const mapOf = (entries: Array<[string, xdr.ScVal]>): xdr.ScVal =>
+      xdr.ScVal.scvMap(
+        entries.map(
+          ([k, v]) =>
+            new xdr.ScMapEntry({
+              key: nativeToScVal(k, { type: 'string' }),
+              val: v,
+            }),
+        ),
+      );
+
+    const recipientsVec = xdr.ScVal.scvVec([
+      mapOf([
+        ['wallet', nativeToScVal(params.walletAddress, { type: 'address' })],
+        ['bps', nativeToScVal(params.creatorRoyaltyBps, { type: 'u32' })],
+        ['label', nativeToScVal('creator', { type: 'string' })],
+      ]),
+      mapOf([
+        ['wallet', nativeToScVal(params.platformWallet, { type: 'address' })],
+        ['bps', nativeToScVal(params.platformRoyaltyBps, { type: 'u32' })],
+        ['label', nativeToScVal('platform', { type: 'string' })],
+      ]),
+    ]);
+
+    const royaltyExtension = mapOf([['recipients', recipientsVec]]);
+
+    const args: xdr.ScVal[] = [
+      nativeToScVal(params.walletAddress, { type: 'address' }),
+      nativeToScVal(String(params.clipId), { type: 'string' }),
+      nativeToScVal(params.collectionId, { type: 'string' }),
+      nativeToScVal(params.metadataUri, { type: 'string' }),
+      nativeToScVal(params.royaltyBps, { type: 'u32' }),
+      royaltyExtension,
+    ];
+
+    const sourceAccount = await this.stellarService.getAccount(
+      params.walletAddress,
+    );
+    const contract = new Contract(params.contractId);
+    const operation = contract.call('mint', ...args);
+
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(TimeoutInfinite)
+      .build();
+
+    return tx.toXDR();
   }
 }
