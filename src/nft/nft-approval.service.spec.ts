@@ -115,6 +115,40 @@ describe('NftApprovalService (Issue #842)', () => {
     expect(disabled.liveUntilLedger).toBe(0);
   });
 
+  it('prepares single-token approval revocation as an owner-sourced u32 call', async () => {
+    const result = await service.prepareRevokeApproval(42, OWNER);
+
+    expect(result).toMatchObject({
+      tokenId: 42,
+      owner: OWNER,
+      emits: 'revoke_approval',
+      xdr: 'mock-approve-xdr',
+    });
+    expect(mockGetAccount).toHaveBeenCalledWith(OWNER);
+    expect(mockCall).toHaveBeenCalledWith('revoke_approval', { v: 42 });
+  });
+
+  it('prepares global approval revocation as an owner-sourced call', async () => {
+    const result = await service.prepareRevokeAllApprovals(OWNER);
+
+    expect(result).toMatchObject({
+      owner: OWNER,
+      emits: 'revoke_all_approvals',
+      xdr: 'mock-approve-xdr',
+    });
+    expect(mockGetAccount).toHaveBeenCalledWith(OWNER);
+    expect(mockCall).toHaveBeenCalledWith('revoke_all_approvals');
+  });
+
+  it('rejects token IDs outside the u32 range for revocation', async () => {
+    await expect(service.prepareRevokeApproval(-1, OWNER)).rejects.toThrow(
+      'tokenId must be a u32',
+    );
+    await expect(
+      service.prepareRevokeApproval(0x1_0000_0000, OWNER),
+    ).rejects.toThrow('tokenId must be a u32');
+  });
+
   it('rejects missing or out-of-range approval expiry ledgers', async () => {
     await expect(service.prepareApprove(42, OWNER, SPENDER)).rejects.toThrow(
       'liveUntilLedger',
