@@ -59,7 +59,7 @@ import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto';
  * All clip endpoints require a valid JWT.
  * Protected via the @Auth() composite decorator (issue #850).
  */
-@ApiTags('clips')
+@ApiTags('Clips')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized — JWT token required' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })

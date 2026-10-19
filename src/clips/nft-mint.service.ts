@@ -124,10 +124,10 @@ export class NftMintService {
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
       collection: {
-        collectionId: collection.collectionId,
-        name: collection.name,
-        type: collection.type,
-        metadata: collection.metadata as Record<string, unknown>,
+        collectionId: clip.collection.collectionId,
+        name: clip.collection.name,
+        type: clip.collection.type,
+        metadata: clip.collection.metadata as Record<string, unknown>,
       },
     });
 
@@ -135,6 +135,19 @@ export class NftMintService {
       metadata,
       clipId,
     );
+    // Persist the CID to the Clip record so subsequent mint calls can
+    // skip the upload step.
+    await this.prisma.clip.update({
+      where: { id: clipId },
+      data: {
+        metadataUri,
+        collectionId,
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
+    });
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
 
     await this.prisma.clip.update({
       where: { id: clipId },
@@ -225,6 +238,7 @@ export class NftMintService {
       );
     }
 
+    const royaltyBps = clip.collection.royaltyBps ?? clip.royaltyBps ?? 1000;
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId) {
       throw new BadRequestException(
@@ -308,6 +322,9 @@ export class NftMintService {
     walletAddress: string,
     refundRoyalties = false,
   ) {
+    if (!Number.isSafeInteger(clipId) || clipId <= 0) {
+      throw new BadRequestException('Token ID must be a positive safe integer');
+    }
     const addrValidation = this.stellarService.validateAddress(walletAddress);
     if (!addrValidation.valid)
       throw new BadRequestException(addrValidation.message);

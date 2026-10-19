@@ -34,7 +34,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
  * Endpoints for managing clip-level royalty configurations
  * Creators can set royalty recipients and basis points for secondary sales
  */
-@ApiTags('NFT Royalties')
+@ApiTags('NFTs')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiForbiddenResponse({ description: 'Forbidden' })
