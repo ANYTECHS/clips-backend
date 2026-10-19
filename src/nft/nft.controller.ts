@@ -1051,20 +1051,20 @@ export class NftController {
 
     const refundRoyalties = dto.refundRoyalties === true;
     let refundRecipient: string | null = null;
-    let refundAmount = 0;
+    let refundAmount = 0n;
     if (refundRoyalties) {
       try {
         const royaltyInfo = await this.royaltyQueryService.getRoyaltyInfo(
           id.toString(),
         );
         refundRecipient = royaltyInfo.recipient;
-        refundAmount = await this.claimRoyaltyService.getClaimableBalance(
+        refundAmount = await this.claimRoyaltyService.getClaimableBalanceExact(
           id,
           refundRecipient,
         );
-        if (!Number.isSafeInteger(refundAmount) || refundAmount < 0) {
+        if (refundAmount < 0n) {
           throw new BadRequestException(
-            'Claimable royalty balance is outside the safe integer range',
+            'Claimable royalty balance cannot be negative',
           );
         }
       } catch (error) {
@@ -1456,12 +1456,12 @@ export class NftController {
   @ApiOperation({
     summary: 'Approve or revoke an operator for all NFTs (Issue #842)',
     description:
-      'Prepares unsigned `set_approval_for_all(owner, operator, approved)` XDR. ' +
-      'Emits ApprovalForAll on-chain when submitted.',
+      'Prepares unsigned SEP-0050 `approve_for_all(owner, operator, live_until_ledger)` XDR. ' +
+      'Set liveUntilLedger to 0 to revoke the operator approval.',
   })
   @ApiBody({ type: SetApprovalForAllDto })
   @ApiOkResponse({
-    description: 'Unsigned set_approval_for_all XDR',
+    description: 'Unsigned approve_for_all XDR',
     type: SetApprovalForAllResponseDto,
   })
   @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
@@ -1472,7 +1472,7 @@ export class NftController {
     return this.nftApprovalService.prepareSetApprovalForAll(
       dto.ownerAddress,
       dto.operatorAddress,
-      dto.approved,
+      dto.liveUntilLedger,
     );
   }
 
@@ -1493,9 +1493,7 @@ export class NftController {
     return this.nftApprovalService.getApproved(id);
   }
 
-  /**
-   * POST /nfts/:id/approve — approve(owner, spender, token_id) (Issue #842).
-   */
+  /** POST /nfts/:id/approve — SEP-0050 per-token approval. */
   @UseGuards(LoginGuard)
   @Post(':id/approve')
   @HttpCode(HttpStatus.CREATED)
@@ -1503,8 +1501,8 @@ export class NftController {
   @ApiOperation({
     summary: 'Approve a spender for a specific NFT (Issue #842)',
     description:
-      'Prepares unsigned `approve(owner, spender, token_id)` XDR. ' +
-      'Pass empty spenderAddress to revoke. Emits Approval on-chain when submitted. ' +
+      'Prepares unsigned SEP-0050 `approve(approver, approved, token_id, live_until_ledger)` XDR. ' +
+      'Pass the owner address or an empty spenderAddress to revoke. ' +
       'Unauthorized callers (non-owners) fail ownership validation.',
   })
   @ApiParam({ name: 'id', description: 'Numeric token / clip ID', example: 42 })
@@ -1524,6 +1522,7 @@ export class NftController {
       id,
       dto.ownerAddress,
       dto.spenderAddress,
+      dto.liveUntilLedger,
     );
   }
 
@@ -1837,9 +1836,8 @@ export class NftController {
   /**
    * POST /nfts/tokens/:tokenId/approve
    *
-   * Prepares an unsigned Soroban `approve(owner, spender, token_id)` XDR
-   * for the owner to sign. Grants `spender` the right to transfer one
-   * specific token (Issue #675).
+    * Prepares an unsigned SEP-0050 `approve(approver, approved, token_id,
+    * live_until_ledger)` XDR for the owner to sign.
    */
   @Auth()
   @Post('tokens/:tokenId/approve')
@@ -1848,9 +1846,9 @@ export class NftController {
   @ApiOperation({
     summary: 'Approve a spender for a specific NFT token (Issue #675)',
     description:
-      'Calls the Soroban `approve(owner, spender, token_id)` function. ' +
-      'Grants `spenderAddress` the right to call `transfer_from` for this ' +
-      'single token. Pass `spenderAddress` as null / empty string to revoke.',
+      'Calls the SEP-0050 `approve(approver, approved, token_id, live_until_ledger)` function. ' +
+      'Pass `liveUntilLedger` as a u32 ledger number. Pass `spenderAddress` as null / empty string ' +
+      'to revoke by approving the owner address.',
   })
   @ApiParam({ name: 'tokenId', description: 'On-chain token ID', example: 42 })
   @ApiBody({
@@ -1858,6 +1856,7 @@ export class NftController {
       example: {
         ownerAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
         spenderAddress: 'GDEST...ABC',
+        liveUntilLedger: 1234567,
       },
     },
   })
@@ -1869,6 +1868,8 @@ export class NftController {
         tokenId: 42,
         owner: 'GC6X...',
         spender: 'GDEST...',
+        liveUntilLedger: 1234567,
+        emits: 'approve',
         contractId: 'CAA...',
         network: 'testnet',
       },
@@ -1878,13 +1879,27 @@ export class NftController {
   @ApiBadRequestResponse({ description: 'Invalid address or token not owned by caller' })
   async prepareApprove(
     @Param('tokenId', ParseIntPipe) tokenId: number,
-    @Body() body: { ownerAddress: string; spenderAddress: string },
+    @Body() body: {
+      ownerAddress: string;
+      spenderAddress?: string;
+      liveUntilLedger: number;
+    },
     @Req() req: Request,
   ) {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(tokenId, userId);
 
-    const { ownerAddress, spenderAddress } = body;
+    const { ownerAddress } = body;
+    const spenderAddress = body.spenderAddress?.trim() || ownerAddress;
+    if (
+      !Number.isInteger(body.liveUntilLedger) ||
+      body.liveUntilLedger < 1 ||
+      body.liveUntilLedger > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        'liveUntilLedger must be an integer between 1 and 4294967295',
+      );
+    }
     [ownerAddress, spenderAddress].forEach((addr) => {
       const check = (this as any).stellarService?.validateAddress(addr) ??
         { valid: addr?.length > 0 };
@@ -1908,6 +1923,7 @@ export class NftController {
       StellarSdk.Address.fromString(ownerAddress).toScVal(),
       StellarSdk.Address.fromString(spenderAddress).toScVal(),
       StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(body.liveUntilLedger, { type: 'u32' }),
     );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -1923,6 +1939,8 @@ export class NftController {
       tokenId,
       owner: ownerAddress,
       spender: spenderAddress,
+      liveUntilLedger: body.liveUntilLedger,
+      emits: 'approve',
       contractId,
       network: (this as any).stellarService?.network ?? process.env.STELLAR_NETWORK ?? 'testnet',
     };
@@ -1932,8 +1950,7 @@ export class NftController {
    * POST /nfts/approvals/operator
    *
    * Grant or revoke operator-level approval for ALL tokens owned by the
-   * caller. Prepares an unsigned Soroban `set_approval_for_all` XDR
-   * (Issue #675).
+  * caller. Prepares an unsigned SEP-0050 `approve_for_all` XDR.
    */
   @Auth()
   @Post('approvals/operator')
@@ -1942,28 +1959,29 @@ export class NftController {
   @ApiOperation({
     summary: 'Grant or revoke operator approval for all tokens (Issue #675)',
     description:
-      'Calls the Soroban `set_approval_for_all(owner, operator, approved)` ' +
-      'function. When `approved` is true, `operatorAddress` may call ' +
-      '`transfer_from` on any of the owner\'s tokens. ' +
-      'Set `approved` to false to revoke. Returns an unsigned XDR for signing.',
+      'Calls SEP-0050 `approve_for_all(owner, operator, live_until_ledger)`. ' +
+      'Set `liveUntilLedger` to 0 to revoke; otherwise it is the approval expiry ledger. ' +
+      'Returns an unsigned XDR for signing.',
   })
   @ApiBody({
     schema: {
       example: {
         ownerAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
         operatorAddress: 'GDEST...ABC',
-        approved: true,
+        liveUntilLedger: 1234567,
       },
     },
   })
   @ApiOkResponse({
-    description: 'Unsigned set_approval_for_all XDR returned',
+    description: 'Unsigned SEP-0050 approve_for_all XDR returned',
     schema: {
       example: {
         xdr: 'AAAA...',
         owner: 'GC6X...',
         operator: 'GDEST...',
         approved: true,
+        liveUntilLedger: 1234567,
+        emits: 'approve_for_all',
         contractId: 'CAA...',
         network: 'testnet',
       },
@@ -1972,9 +1990,22 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
   @ApiBadRequestResponse({ description: 'Invalid Stellar address' })
   async prepareSetApprovalForAll(
-    @Body() body: { ownerAddress: string; operatorAddress: string; approved: boolean },
+    @Body() body: {
+      ownerAddress: string;
+      operatorAddress: string;
+      liveUntilLedger: number;
+    },
   ) {
-    const { ownerAddress, operatorAddress, approved } = body;
+    const { ownerAddress, operatorAddress, liveUntilLedger } = body;
+    if (
+      !Number.isInteger(liveUntilLedger) ||
+      liveUntilLedger < 0 ||
+      liveUntilLedger > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        'liveUntilLedger must be an integer between 0 and 4294967295',
+      );
+    }
 
     const StellarSdk = (await import('@stellar/stellar-sdk')).default;
     const contractId =
@@ -1993,10 +2024,10 @@ export class NftController {
     const sourceAccount = await server.getAccount(ownerAddress);
 
     const op = contract.call(
-      'set_approval_for_all',
+      'approve_for_all',
       StellarSdk.Address.fromString(ownerAddress).toScVal(),
       StellarSdk.Address.fromString(operatorAddress).toScVal(),
-      StellarSdk.nativeToScVal(approved, { type: 'bool' }),
+      StellarSdk.nativeToScVal(liveUntilLedger, { type: 'u32' }),
     );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -2011,7 +2042,9 @@ export class NftController {
       xdr: tx.toXDR(),
       owner: ownerAddress,
       operator: operatorAddress,
-      approved,
+      approved: liveUntilLedger !== 0,
+      liveUntilLedger,
+      emits: 'approve_for_all',
       contractId,
       network: (this as any).stellarService?.network ?? process.env.STELLAR_NETWORK ?? 'testnet',
     };
