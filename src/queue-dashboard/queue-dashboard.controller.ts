@@ -51,7 +51,12 @@ export class QueueDashboardController {
   @Post('pause')
   @ApiOperation({
     summary: 'Pause queue processing',
-    description: 'Pause a specific queue or all queues',
+    description: 'Pause a specific queue or all queues. Admin only.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
   })
   async pause(@Body() body: { queue?: string }) {
     if (body.queue) {
@@ -70,7 +75,12 @@ export class QueueDashboardController {
   @Post('resume')
   @ApiOperation({
     summary: 'Resume queue processing',
-    description: 'Resume a specific queue or all queues',
+    description: 'Resume a specific queue or all queues. Admin only.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
   })
   async resume(@Body() body: { queue?: string }) {
     if (body.queue) {

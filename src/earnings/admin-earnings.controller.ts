@@ -57,6 +57,19 @@ export class AdminEarningsController {
       },
     },
   })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 403 },
+        message: { type: 'string', example: 'Insufficient permissions' },
+        error: { type: 'string', example: 'Forbidden' },
+      },
+    },
+  })
   @ApiNotFoundResponse({
     description: 'Earning not found or is not soft-deleted',
   })
@@ -67,9 +80,14 @@ export class AdminEarningsController {
   @Get('anomalies')
   @ApiOperation({
     summary: 'Get unresolved anomaly alerts',
-    description: 'Returns all unresolved earnings anomaly alerts (admin only)',
+    description: 'Returns all unresolved earnings anomaly alerts. Admin only.',
   })
   @ApiResponse({ status: 200, description: 'List of unresolved alerts' })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
+  })
   async getUnresolvedAlerts() {
     return this.anomalyDetectionService.getUnresolvedAlerts();
   }
@@ -78,10 +96,15 @@ export class AdminEarningsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Resolve an anomaly alert',
-    description: 'Marks an anomaly alert as resolved (admin only)',
+    description: 'Marks an anomaly alert as resolved. Admin only.',
   })
   @ApiParam({ name: 'id', description: 'Anomaly alert ID', type: 'number' })
   @ApiResponse({ status: 200, description: 'Alert resolved successfully' })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
+  })
   @ApiNotFoundResponse({ description: 'Alert not found' })
   async resolveAlert(@Param('id') id: string) {
     await this.anomalyDetectionService.resolveAlert(parseInt(id, 10));

@@ -145,7 +145,18 @@ export class BlockchainController {
     type: ContractPauseStatusDto,
   })
   @ApiForbiddenResponse({
-    description: 'Caller is not the configured admin',
+    description: 'Forbidden — Caller is not the configured admin. ' +
+      'The adminAddress in the request does not match the ADMIN_STELLAR_ADDRESS environment variable. ' +
+      'Only the configured admin can schedule contract pauses. ' +
+      'If you believe you should have admin access, contact support.',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 403 },
+        message: { type: 'string', example: 'Caller is not the configured admin' },
+        error: { type: 'string', example: 'Forbidden' },
+      },
+    },
   })
   async schedulePause(
     @Body() dto: SchedulePauseDto,
@@ -169,7 +180,18 @@ export class BlockchainController {
     type: ContractPauseStatusDto,
   })
   @ApiForbiddenResponse({
-    description: 'Caller is not the configured admin',
+    description: 'Forbidden — Caller is not the configured admin. ' +
+      'The adminAddress in the request does not match the ADMIN_STELLAR_ADDRESS environment variable. ' +
+      'Only the configured admin can cancel contract pauses. ' +
+      'If you believe you should have admin access, contact support.',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 403 },
+        message: { type: 'string', example: 'Caller is not the configured admin' },
+        error: { type: 'string', example: 'Forbidden' },
+      },
+    },
   })
   @ApiNotFoundResponse({
     description: 'No pending pause exists to cancel',
