@@ -7,6 +7,7 @@ import {
 import * as nodemailer from 'nodemailer';
 import * as PDFDocument from 'pdfkit';
 import { PrismaService } from '../prisma/prisma.service';
+import { maskAddress } from '../shared/address';
 
 export interface PayoutReceiptData {
   payoutId: number;
@@ -62,7 +63,9 @@ export class PayoutReceiptService {
   /**
    * Generate receipt, store metadata, and send email
    */
-  async generateAndSendReceipt(data: PayoutReceiptData): Promise<ReceiptResponse> {
+  async generateAndSendReceipt(
+    data: PayoutReceiptData,
+  ): Promise<ReceiptResponse> {
     const receiptId = this.generateReceiptId();
 
     try {
@@ -137,9 +140,7 @@ export class PayoutReceiptService {
     });
 
     if (!receipt) {
-      throw new NotFoundException(
-        `Receipt not found for payout ${payoutId}`,
-      );
+      throw new NotFoundException(`Receipt not found for payout ${payoutId}`);
     }
 
     return receipt;
@@ -163,7 +164,10 @@ export class PayoutReceiptService {
   /**
    * Get receipt PDF buffer
    */
-  async getReceiptPdf(payoutId: number, data: PayoutReceiptData): Promise<Buffer> {
+  async getReceiptPdf(
+    payoutId: number,
+    data: PayoutReceiptData,
+  ): Promise<Buffer> {
     // Verify receipt exists
     await this.getReceiptByPayoutId(payoutId);
 
@@ -196,7 +200,10 @@ export class PayoutReceiptService {
 
       // Add fee information if available
       if (data.feeAmount !== undefined && data.feePercentage !== undefined) {
-        details.push(['Fee', `${data.feeAmount} ${data.currency} (${data.feePercentage}%)`]);
+        details.push([
+          'Fee',
+          `${data.feeAmount} ${data.currency} (${data.feePercentage}%)`,
+        ]);
       }
 
       // Add net amount if available
@@ -241,8 +248,7 @@ export class PayoutReceiptService {
   }
 
   private maskWallet(address: string): string {
-    if (address.length <= 10) return address;
-    return `${address.slice(0, 4)}...${address.slice(-6)}`;
+    return maskAddress(address) || address;
   }
 
   private buildPlainText(data: PayoutReceiptData): string {
@@ -253,7 +259,9 @@ export class PayoutReceiptService {
     ];
 
     if (data.feeAmount !== undefined && data.feePercentage !== undefined) {
-      lines.push(`Fee: ${data.feeAmount} ${data.currency} (${data.feePercentage}%)`);
+      lines.push(
+        `Fee: ${data.feeAmount} ${data.currency} (${data.feePercentage}%)`,
+      );
     }
 
     if (data.finalAmount !== undefined) {
@@ -275,10 +283,7 @@ export class PayoutReceiptService {
       lines.push(`Wallet: ${this.maskWallet(data.walletAddress)}`);
     }
 
-    lines.push(
-      '',
-      'A PDF receipt is attached to this email.',
-    );
+    lines.push('', 'A PDF receipt is attached to this email.');
 
     return lines.join('\n');
   }

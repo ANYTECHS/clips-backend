@@ -74,6 +74,7 @@ export class CreateWalletConnectionDto {
     description: `The blockchain network. Defaults to "${DEFAULT_CHAIN}" when omitted.`,
     enum: SUPPORTED_CHAINS,
     default: DEFAULT_CHAIN,
+    example: DEFAULT_CHAIN,
   })
   @IsOptional()
   @IsString()

@@ -139,6 +139,7 @@ import { CollectionInfoResponseDto } from './dto/collection-info.dto';
 import { TotalSupplyResponseDto } from './dto/total-supply.dto';
 import { GasStatsResponseDto } from './dto/gas-stats.dto';
 import { GasMetricsService } from './gas-metrics.service';
+import { NftMintEnqueueService } from '../clips/nft-mint-enqueue.service';
 import {
   UpdateMetadataDto,
   UpdateMetadataResponseDto,
@@ -171,7 +172,7 @@ import {
   isSupportedNftCollectionId,
 } from './nft-collections.constants';
 
-@ApiTags('nfts')
+@ApiTags('NFTs')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
 export class NftController {
@@ -195,6 +196,7 @@ export class NftController {
     private readonly nftMetadataRefreshService: NftMetadataRefreshService,
     private readonly claimRoyaltyService: ClaimRoyaltyService,
     private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
+    private readonly nftMintEnqueueService: NftMintEnqueueService,
   ) {}
 
   @Auth()
@@ -777,6 +779,89 @@ export class NftController {
   }
 
   @Auth()
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
+  @Post('enqueue-mint')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Enqueue an NFT mint job on the dedicated nft-mint queue',
+    description:
+      'Moves Soroban mint processing off the request path into the dedicated nft-mint BullMQ queue ' +
+      '(own worker, concurrency and retry policy), so video processing never blocks minting. ' +
+      'Returns the BullMQ jobId immediately; use GET /nfts/mint-status/:jobId to track transaction states. ' +
+      'Duplicate active jobs for the same clip return 409.',
+  })
+  @ApiBody({ type: MintNftDto })
+  @ApiResponse({
+    status: 202,
+    description: 'Mint job enqueued; returns jobId for status tracking',
+    schema: {
+      example: { jobId: 'nft-mint-clip-42', delayed: false, delayMs: 0 },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid mint payload' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description: 'A mint job for this clip is already queued or running (duplicate prevented)',
+    type: NftMintConflictDto,
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Too many active NFT mint jobs for this user. Retry after the number of seconds in the Retry-After header.',
+  })
+  async enqueueMint(
+    @Body() dto: MintNftDto,
+    @Req() req: Request,
+  ): Promise<{ jobId: string; delayed: boolean; delayMs: number }> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    return this.nftMintEnqueueService.enqueueMint({
+      clipId: dto.clipId,
+      walletAddress: dto.creatorWallet,
+      userId,
+    });
+  }
+
+  @Auth()
+  @Get('mint-status/:jobId')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get NFT mint job transaction status',
+    description:
+      'Tracks a BullMQ mint job (returned by enqueue-mint) through pending → confirmed/failed states. ' +
+      'pending covers waiting/active/delayed; confirmed means the mint transaction completed; ' +
+      'failed includes the failure reason.',
+  })
+  @ApiParam({ name: 'jobId', description: 'BullMQ job ID returned by enqueue-mint', example: 'nft-mint-clip-42' })
+  @ApiResponse({
+    status: 200,
+    description: 'Mint job status with transaction state',
+    schema: {
+      example: {
+        jobId: 'nft-mint-clip-42',
+        state: 'completed',
+        txState: 'confirmed',
+        attemptsMade: 1,
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiNotFoundResponse({ description: 'Mint job not found' })
+  async mintJobStatus(@Param('jobId') jobId: string) {
+    return this.nftMintEnqueueService.getMintStatus(jobId);
+  }
+
+  @Auth()
   @Post('confirm-mint')
   @HttpCode(HttpStatus.OK)
   @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
@@ -856,11 +941,11 @@ export class NftController {
           { trait_type: 'Royalty Percent', value: 10 },
         ],
         seller_fee_basis_points: 1000,
-        fee_recipient: 'GABC...X92K',
+        fee_recipient: 'GABF...KJ93XD',
         royalty: {
           bps: 1000,
           percent: 10,
-          recipient: 'GABC...X92K',
+          recipient: 'GABF...KJ93XD',
         },
       },
     },
@@ -1083,20 +1168,20 @@ export class NftController {
 
     const refundRoyalties = dto.refundRoyalties === true;
     let refundRecipient: string | null = null;
-    let refundAmount = 0;
+    let refundAmount = 0n;
     if (refundRoyalties) {
       try {
         const royaltyInfo = await this.royaltyQueryService.getRoyaltyInfo(
           id.toString(),
         );
         refundRecipient = royaltyInfo.recipient;
-        refundAmount = await this.claimRoyaltyService.getClaimableBalance(
+        refundAmount = await this.claimRoyaltyService.getClaimableBalanceExact(
           id,
           refundRecipient,
         );
-        if (!Number.isSafeInteger(refundAmount) || refundAmount < 0) {
+        if (refundAmount < 0n) {
           throw new BadRequestException(
-            'Claimable royalty balance is outside the safe integer range',
+            'Claimable royalty balance cannot be negative',
           );
         }
       } catch (error) {
@@ -1515,12 +1600,12 @@ export class NftController {
   @ApiOperation({
     summary: 'Approve or revoke an operator for all NFTs (Issue #842)',
     description:
-      'Prepares unsigned `set_approval_for_all(owner, operator, approved)` XDR. ' +
-      'Emits ApprovalForAll on-chain when submitted.',
+      'Prepares unsigned SEP-0050 `approve_for_all(owner, operator, live_until_ledger)` XDR. ' +
+      'Set liveUntilLedger to 0 to revoke the operator approval.',
   })
   @ApiBody({ type: SetApprovalForAllDto })
   @ApiOkResponse({
-    description: 'Unsigned set_approval_for_all XDR',
+    description: 'Unsigned approve_for_all XDR',
     type: SetApprovalForAllResponseDto,
   })
   @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
@@ -1531,7 +1616,7 @@ export class NftController {
     return this.nftApprovalService.prepareSetApprovalForAll(
       dto.ownerAddress,
       dto.operatorAddress,
-      dto.approved,
+      dto.liveUntilLedger,
     );
   }
 
@@ -1553,9 +1638,7 @@ export class NftController {
     return this.nftApprovalService.getApproved(id);
   }
 
-  /**
-   * POST /nfts/:id/approve — approve(owner, spender, token_id) (Issue #842).
-   */
+  /** POST /nfts/:id/approve — SEP-0050 per-token approval. */
   @UseGuards(LoginGuard)
   @Post(':id/approve')
   @HttpCode(HttpStatus.CREATED)
@@ -1563,8 +1646,8 @@ export class NftController {
   @ApiOperation({
     summary: 'Approve a spender for a specific NFT (Issue #842)',
     description:
-      'Prepares unsigned `approve(owner, spender, token_id)` XDR. ' +
-      'Pass empty spenderAddress to revoke. Emits Approval on-chain when submitted. ' +
+      'Prepares unsigned SEP-0050 `approve(approver, approved, token_id, live_until_ledger)` XDR. ' +
+      'Pass the owner address or an empty spenderAddress to revoke. ' +
       'Unauthorized callers (non-owners) fail ownership validation.',
   })
   @ApiParam({ name: 'id', description: 'Numeric token / clip ID', example: 42 })
@@ -1586,6 +1669,7 @@ export class NftController {
       id,
       dto.ownerAddress,
       dto.spenderAddress,
+      dto.liveUntilLedger,
     );
   }
 
@@ -1924,9 +2008,8 @@ export class NftController {
   /**
    * POST /nfts/tokens/:tokenId/approve
    *
-   * Prepares an unsigned Soroban `approve(owner, spender, token_id)` XDR
-   * for the owner to sign. Grants `spender` the right to transfer one
-   * specific token (Issue #675).
+    * Prepares an unsigned SEP-0050 `approve(approver, approved, token_id,
+    * live_until_ledger)` XDR for the owner to sign.
    */
   @Auth()
   @Post('tokens/:tokenId/approve')
@@ -1935,9 +2018,9 @@ export class NftController {
   @ApiOperation({
     summary: 'Approve a spender for a specific NFT token (Issue #675)',
     description:
-      'Calls the Soroban `approve(owner, spender, token_id)` function. ' +
-      'Grants `spenderAddress` the right to call `transfer_from` for this ' +
-      'single token. Pass `spenderAddress` as null / empty string to revoke.',
+      'Calls the SEP-0050 `approve(approver, approved, token_id, live_until_ledger)` function. ' +
+      'Pass `liveUntilLedger` as a u32 ledger number. Pass `spenderAddress` as null / empty string ' +
+      'to revoke by approving the owner address.',
   })
   @ApiParam({ name: 'tokenId', description: 'On-chain token ID', example: 42 })
   @ApiBody({
@@ -1946,6 +2029,7 @@ export class NftController {
         ownerAddress:
           'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
         spenderAddress: 'GDEST...ABC',
+        liveUntilLedger: 1234567,
       },
     },
   })
@@ -1957,6 +2041,8 @@ export class NftController {
         tokenId: 42,
         owner: 'GC6X...',
         spender: 'GDEST...',
+        liveUntilLedger: 1234567,
+        emits: 'approve',
         contractId: 'CAA...',
         network: 'testnet',
       },
@@ -1968,13 +2054,27 @@ export class NftController {
   })
   async prepareApprove(
     @Param('tokenId', ParseIntPipe) tokenId: number,
-    @Body() body: { ownerAddress: string; spenderAddress: string },
+    @Body() body: {
+      ownerAddress: string;
+      spenderAddress?: string;
+      liveUntilLedger: number;
+    },
     @Req() req: Request,
   ) {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(tokenId, userId);
 
-    const { ownerAddress, spenderAddress } = body;
+    const { ownerAddress } = body;
+    const spenderAddress = body.spenderAddress?.trim() || ownerAddress;
+    if (
+      !Number.isInteger(body.liveUntilLedger) ||
+      body.liveUntilLedger < 1 ||
+      body.liveUntilLedger > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        'liveUntilLedger must be an integer between 1 and 4294967295',
+      );
+    }
     [ownerAddress, spenderAddress].forEach((addr) => {
       const check = (this as any).stellarService?.validateAddress(addr) ?? {
         valid: addr?.length > 0,
@@ -2001,6 +2101,7 @@ export class NftController {
       StellarSdk.Address.fromString(ownerAddress).toScVal(),
       StellarSdk.Address.fromString(spenderAddress).toScVal(),
       StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(body.liveUntilLedger, { type: 'u32' }),
     );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -2016,6 +2117,8 @@ export class NftController {
       tokenId,
       owner: ownerAddress,
       spender: spenderAddress,
+      liveUntilLedger: body.liveUntilLedger,
+      emits: 'approve',
       contractId,
       network:
         (this as any).stellarService?.network ??
@@ -2028,8 +2131,7 @@ export class NftController {
    * POST /nfts/approvals/operator
    *
    * Grant or revoke operator-level approval for ALL tokens owned by the
-   * caller. Prepares an unsigned Soroban `set_approval_for_all` XDR
-   * (Issue #675).
+  * caller. Prepares an unsigned SEP-0050 `approve_for_all` XDR.
    */
   @Auth()
   @Post('approvals/operator')
@@ -2042,6 +2144,9 @@ export class NftController {
       'function. When `approved` is true, `operatorAddress` may call ' +
       "`transfer_from` on any of the owner's tokens. " +
       'Set `approved` to false to revoke. Returns an unsigned XDR for signing.',
+      'Calls SEP-0050 `approve_for_all(owner, operator, live_until_ledger)`. ' +
+      'Set `liveUntilLedger` to 0 to revoke; otherwise it is the approval expiry ledger. ' +
+      'Returns an unsigned XDR for signing.',
   })
   @ApiBody({
     schema: {
@@ -2049,18 +2154,20 @@ export class NftController {
         ownerAddress:
           'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
         operatorAddress: 'GDEST...ABC',
-        approved: true,
+        liveUntilLedger: 1234567,
       },
     },
   })
   @ApiOkResponse({
-    description: 'Unsigned set_approval_for_all XDR returned',
+    description: 'Unsigned SEP-0050 approve_for_all XDR returned',
     schema: {
       example: {
         xdr: 'AAAA...',
         owner: 'GC6X...',
         operator: 'GDEST...',
         approved: true,
+        liveUntilLedger: 1234567,
+        emits: 'approve_for_all',
         contractId: 'CAA...',
         network: 'testnet',
       },
@@ -2074,9 +2181,22 @@ export class NftController {
       ownerAddress: string;
       operatorAddress: string;
       approved: boolean;
+    @Body() body: {
+      ownerAddress: string;
+      operatorAddress: string;
+      liveUntilLedger: number;
     },
   ) {
-    const { ownerAddress, operatorAddress, approved } = body;
+    const { ownerAddress, operatorAddress, liveUntilLedger } = body;
+    if (
+      !Number.isInteger(liveUntilLedger) ||
+      liveUntilLedger < 0 ||
+      liveUntilLedger > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        'liveUntilLedger must be an integer between 0 and 4294967295',
+      );
+    }
 
     const StellarSdk = (await import('@stellar/stellar-sdk')).default;
     const contractId =
@@ -2095,10 +2215,10 @@ export class NftController {
     const sourceAccount = await server.getAccount(ownerAddress);
 
     const op = contract.call(
-      'set_approval_for_all',
+      'approve_for_all',
       StellarSdk.Address.fromString(ownerAddress).toScVal(),
       StellarSdk.Address.fromString(operatorAddress).toScVal(),
-      StellarSdk.nativeToScVal(approved, { type: 'bool' }),
+      StellarSdk.nativeToScVal(liveUntilLedger, { type: 'u32' }),
     );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -2113,7 +2233,9 @@ export class NftController {
       xdr: tx.toXDR(),
       owner: ownerAddress,
       operator: operatorAddress,
-      approved,
+      approved: liveUntilLedger !== 0,
+      liveUntilLedger,
+      emits: 'approve_for_all',
       contractId,
       network:
         (this as any).stellarService?.network ??
@@ -2516,7 +2638,7 @@ export class NftController {
   @Get(':id/metadata-preview')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
-  @ApiTags('NFT Metadata')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'Preview NFT metadata without uploading to IPFS',
     description:
@@ -2592,7 +2714,7 @@ export class NftController {
   @Get(':id/mint-status')
   @UseGuards(LoginGuard)
   @ApiBearerAuth('access-token')
-  @ApiTags('NFT Mint Status')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'Get NFT mint lifecycle status',
     description:
@@ -2646,7 +2768,7 @@ export class NftController {
   @UseGuards(LoginGuard)
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
-  @ApiTags('NFT Metadata Validation')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'Validate NFT metadata before minting',
     description:

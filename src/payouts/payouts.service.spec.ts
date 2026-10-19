@@ -203,8 +203,6 @@ describe('PayoutsService', () => {
             sendEmail: jest.fn().mockResolvedValue(undefined),
           },
         },
-          useValue: mockPayoutLimitsService,
-        },
         PayoutValidationService,
         PayoutProcessingService,
       ],

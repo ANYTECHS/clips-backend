@@ -48,7 +48,7 @@ interface RequestWithAdmin extends Request {
  * Lifecycle:
  *   pending → under_review → approved | rejected → processing → completed | failed
  */
-@ApiTags('admin')
+@ApiTags('Admin')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized — missing or invalid access token' })
 @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })

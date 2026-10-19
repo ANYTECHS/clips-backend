@@ -9,6 +9,7 @@ export const SOROBAN_NFT_EVENT_TYPES = [
   'Frozen',
   'Unfrozen',
   'Burn',
+  'Refunded',
   'RoyaltyPaid',
   'RoyaltyClaimed',
 ] as const;

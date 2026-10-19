@@ -13,7 +13,10 @@ export class NftCollectionResponseDto {
   @ApiProperty({ example: 'Short-form clips selected for viral potential.' })
   description!: string;
 
-  @ApiProperty({ enum: ['viral', 'podcast', 'comedy', 'educational'] })
+  @ApiProperty({
+    enum: ['viral', 'podcast', 'comedy', 'educational'],
+    example: 'viral',
+  })
   type!: string;
 
   @ApiProperty({

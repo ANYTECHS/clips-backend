@@ -17,15 +17,8 @@ import { MailService } from '../auth/mail.service';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
 import { buildPaginationArgs } from '../prisma/query-helpers';
 
-import {
-  OPEN_PAYOUT_STATUSES,
-  expandStatusFilter,
-  normalizePayoutStatusFilter,
-import {
-  ADMIN_PENDING_PAYOUT_STATUSES,
-  PAID_OUT_PAYOUT_STATUSES,
-  PAYOUT_STATUSES,
-} from './payouts.constants';
+import { OPEN_PAYOUT_STATUSES, expandStatusFilter, normalizePayoutStatusFilter } from './payouts.constants';
+import { ADMIN_PENDING_PAYOUT_STATUSES, PAID_OUT_PAYOUT_STATUSES, PAYOUT_STATUSES } from './payouts.constants';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
@@ -90,7 +83,7 @@ export class PayoutsService {
       ''
     );
   }
-  ) {}
+  }
 
   async initiateStellarPayout(
     userId: number,

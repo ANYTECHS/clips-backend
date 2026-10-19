@@ -63,12 +63,11 @@ interface RequestWithUser extends Request {
 
 const validationErrorSchema = API_ERROR_SCHEMA;
 
-@ApiTags('Payouts')
 const payoutError = (statusCode: number, error: string, message: string) => ({
   value: { statusCode, message, error },
 });
 
-@ApiTags('payout')
+@ApiTags('Payouts')
 @ApiBearerAuth('access-token')
 @ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
@@ -636,6 +635,19 @@ export class PayoutsController {
     description:
       'Paginated list of the caller\'s payouts including onChainTxHash and confirmedAt',
     schema: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          items: { $ref: '#/components/schemas/PayoutResponseDto' },
+        },
+        total: { type: 'number', example: 1 },
+        page: { type: 'number', example: 1 },
+        limit: { type: 'number', example: 20 },
+        totalPages: { type: 'number', example: 1 },
+        hasNextPage: { type: 'boolean', example: false },
+        hasPrevPage: { type: 'boolean', example: false },
+      },
       example: {
         items: [
           {
@@ -655,6 +667,16 @@ export class PayoutsController {
         totalPages: 1,
         hasNextPage: false,
         hasPrevPage: false,
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid status, page, or limit query parameter',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: ['page must not be less than 1'],
+        error: 'Bad Request',
       },
     },
   })
@@ -706,6 +728,16 @@ export class PayoutsController {
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized — JWT required', schema: API_ERROR_SCHEMA })
   @ApiForbiddenResponse({ description: 'Forbidden', schema: API_ERROR_SCHEMA })
+  @ApiBadRequestResponse({
+    description: 'Payout ID must be a positive integer',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed (numeric string is expected)',
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiNotFoundResponse({
     description: 'Payout not found (missing or not owned by caller)',
     schema: API_ERROR_SCHEMA,
@@ -729,7 +761,36 @@ export class PayoutsController {
     status: 200,
     description:
       'On-chain verification result with onChainTxHash and confirmation status',
+    schema: {
+      example: {
+        id: 101,
+        amount: 100,
+        transactionId: 'abcd1234',
+        stellarXdr: 'AAAAAgAAAADh1...',
+        status: 'pending',
+      },
+    },
     type: OnChainStatusResponseDto,
+    schema: {
+      type: 'object',
+      required: ['id', 'status', 'onChainTxHash', 'confirmedAt', 'onChain'],
+      properties: {
+        id: { type: 'number', example: 1 },
+        status: { type: 'string', example: 'completed' },
+        onChainTxHash: { type: 'string', nullable: true, example: 'a1b2c3d4e5f6...' },
+        confirmedAt: { type: 'string', format: 'date-time', nullable: true, example: '2026-07-26T12:05:00.000Z' },
+        onChain: {
+          type: 'object',
+          properties: {
+            found: { type: 'boolean', example: true },
+            successful: { type: 'boolean', example: true },
+            confirmedAt: { type: 'string', format: 'date-time', example: '2026-07-26T12:05:00.000Z' },
+            destination: { type: 'string', example: 'GABCDEF...' },
+            transferredAmount: { type: 'number', example: 120 },
+          },
+        },
+      },
+    },
     content: {
       'application/json': {
         examples: {
@@ -761,6 +822,16 @@ export class PayoutsController {
         statusCode: 404,
         error: 'Not Found',
         message: 'transaction-not-found',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Payout ID must be a positive integer',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed (numeric string is expected)',
+        error: 'Bad Request',
       },
     },
   })

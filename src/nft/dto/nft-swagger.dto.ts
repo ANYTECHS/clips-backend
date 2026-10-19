@@ -24,7 +24,19 @@ export class NftOwnershipResultDto {
     description: 'Whether the wallet owns the NFT',
     example: true,
   })
-  valid: boolean;
+  owner: boolean;
+
+  @ApiProperty({
+    description: 'Human-readable result message',
+    example: 'Wallet owns NFT',
+  })
+  message: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the wallet owns the NFT (backward-compatible field)',
+    example: true,
+  })
+  valid?: boolean;
 
   @ApiPropertyOptional({
     description: 'Error message when valid is false',
@@ -105,7 +117,7 @@ export class NftRoyaltyResponseDto {
 
   @ApiProperty({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GABC...X92K',
+    example: 'GABF...KJ93XD',
   })
   recipient: string;
 }
@@ -326,7 +338,7 @@ export class NftRoyaltyInfoDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GABC...X92K',
+    example: 'GABF...KJ93XD',
   })
   recipient?: string;
 }
@@ -366,13 +378,18 @@ export class NftMetadataResponseDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address receiving the fee',
-    example: 'GABC...X92K',
+    example: 'GABF...KJ93XD',
   })
   fee_recipient?: string;
 
   @ApiProperty({
     type: NftRoyaltyInfoDto,
     description: 'Explicit royalty block for marketplaces / mint clients',
+    example: {
+      bps: 1000,
+      percent: 10,
+      recipient: 'GABC...X92K',
+    },
   })
   royalty: NftRoyaltyInfoDto;
 

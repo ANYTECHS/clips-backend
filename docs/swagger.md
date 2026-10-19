@@ -8,16 +8,18 @@ Swagger UI is served at `/api/docs` in non-production environments (or when
 
 | Tag | Covers |
 |-----|--------|
-| `auth` | Registration, login, tokens, MFA |
-| `users` | User profile management |
-| `videos` / `clips` | Video upload and clip generation |
-| `wallets` | Stellar wallet connection |
-| `nfts` / `nft` | NFT minting and royalties |
-| `subscriptions` | Subscription plans and lifecycle |
-| `payments` | Fiat and Stellar subscription payments |
-| `payout` / `payout-methods` | Payout requests, Stellar payouts, status, history |
+| `Authentication` | Authentication and authorization |
+| `Users` | User profile management |
+| `Videos` | Video upload and management |
+| `Clips` | Clip generation and management |
+| `Wallets` | Stellar wallet connection |
+| `NFTs` | NFT minting, collections, and royalties |
+| `Subscriptions` | Subscription plans and lifecycle |
+| `Payments` | Fiat and Stellar subscription payments |
+| `Payouts` | Payout requests, methods, status, and history |
+| `Admin` | Admin-only endpoints |
 | `earnings` | Earnings summary, history, exports |
-| `webhooks` | Inbound webhooks from external services |
+| `Webhooks` | Inbound webhooks from external services |
 
 Add `@ApiTags('<tag>')` to every controller and register new tags in
 `src/main.ts` via `DocumentBuilder.addTag()`.

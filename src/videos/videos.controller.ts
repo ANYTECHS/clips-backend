@@ -13,7 +13,7 @@ import {
 import { ClipsService } from '../clips/clips.service';
 import { Auth } from '../auth/decorators/auth.decorator';
 
-@ApiTags('videos')
+@ApiTags('Videos')
 @ApiBadRequestResponse({ description: 'Invalid request parameters' })
 @ApiUnauthorizedResponse({ description: 'JWT token required' })
 @ApiNotFoundResponse({ description: 'Video not found' })

@@ -254,14 +254,24 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
     const { xdr } = await service.prepareMintTx(1, VALID_WALLET);
     const decoded = JSON.parse(Buffer.from(xdr, 'base64').toString('utf8'));
 
-    expect(decoded.royalty_extension.recipients).toHaveLength(2);
-
-    const labels = decoded.royalty_extension.recipients.map(
-      (r: { label: string }) => r.label,
+    const creatorRecipient = decoded.royalty_extension.recipients.find(
+      (r: { label: string }) => r.label === 'creator',
     );
-    expect(labels).toContain('creator');
-    expect(labels).toContain('platform');
+    const platformRecipient = decoded.royalty_extension.recipients.find(
+      (r: { label: string }) => r.label === 'platform',
+    );
+    expect(creatorRecipient.bps).toBe(1000);
+    expect(platformRecipient.bps).toBe(200);
   });
+
+  it('rejects mint preparation when combined creator and platform royalty exceeds 10000 bps', async () => {
+    const { service } = buildService({ royaltyBps: 9900 });
+
+    await expect(service.prepareMintTx(1, VALID_WALLET)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
 
   // ── database side-effect ──────────────────────────────────────────────────
 

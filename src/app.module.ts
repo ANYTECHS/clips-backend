@@ -54,70 +54,93 @@ import { BlockchainModule } from './blockchain/blockchain.module';
       useFactory: (
         config: ConfigService,
         storage: ThrottlerStorageRedisService,
-      ) => ({
-        storage,
-        throttlers: [
-          {
-            name: 'default',
-            ttl: config.get<number>('THROTTLE_DEFAULT_TTL', 60000),
-            limit: config.get<number>('THROTTLE_DEFAULT_LIMIT', 100),
+      ) => {
+        const configuredTtlSeconds = config.get<string>('RATE_LIMIT_TTL');
+        const ttl =
+          configuredTtlSeconds === undefined
+            ? Number(config.get('THROTTLE_DEFAULT_TTL', 60000))
+            : Number(configuredTtlSeconds) * 1000;
+        const limit = Number(
+          config.get('RATE_LIMIT_LIMIT') ??
+            config.get('THROTTLE_DEFAULT_LIMIT', 100),
+        );
+
+        if (
+          !Number.isSafeInteger(ttl) ||
+          ttl <= 0 ||
+          !Number.isSafeInteger(limit) ||
+          limit <= 0
+        ) {
+          throw new Error(
+            'RATE_LIMIT_TTL and RATE_LIMIT_LIMIT must be positive integers',
+          );
+        }
+
+        return {
+          storage,
+          throttlers: [
+            {
+              name: 'default',
+              ttl,
+              limit,
+            },
+            {
+              name: 'auth',
+              ttl: 60000,
+              limit: 10,
+            },
+            // Stricter tier for high-value auth actions (login, signup, refresh,
+            // password reset, OTP verification) per security hardening requirements.
+            {
+              name: 'authStrict',
+              ttl: 60000,
+              limit: 5,
+            },
+            {
+              name: 'sensitive',
+              ttl: 900000,
+              limit: 3,
+            },
+            {
+              name: 'emailVerify',
+              ttl: 3600000,
+              limit: 3,
+            },
+            {
+              name: 'clipGenerate',
+              ttl: 60000,
+              limit: 10,
+            },
+            {
+              name: 'nftMint',
+              ttl: 60000,
+              limit: 5,
+            },
+            {
+              name: 'walletConnect',
+              ttl: 60000,
+              limit: 10,
+            },
+            {
+              name: 'walletDisconnect',
+              ttl: 60000,
+              limit: 10,
+            },
+            {
+              name: 'transactionSend',
+              ttl: 60000,
+              limit: 5,
+            },
+          ],
+          skipIf: (context) => {
+            const request = context.switchToHttp().getRequest();
+            const whitelist = config.get<string>('THROTTLER_WHITELIST');
+            if (!whitelist) return false;
+            const whitelistedIps = whitelist.split(',').map((ip) => ip.trim());
+            return whitelistedIps.includes(request.ip);
           },
-          {
-            name: 'auth',
-            ttl: 60000,
-            limit: 10,
-          },
-          // Stricter tier for high-value auth actions (login, signup, refresh,
-          // password reset, OTP verification) per security hardening requirements.
-          {
-            name: 'authStrict',
-            ttl: 60000,
-            limit: 5,
-          },
-          {
-            name: 'sensitive',
-            ttl: 900000,
-            limit: 3,
-          },
-          {
-            name: 'emailVerify',
-            ttl: 3600000,
-            limit: 3,
-          },
-          {
-            name: 'clipGenerate',
-            ttl: 60000,
-            limit: 10,
-          },
-          {
-            name: 'nftMint',
-            ttl: 60000,
-            limit: 5,
-          },
-          {
-            name: 'walletConnect',
-            ttl: 60000,
-            limit: 10,
-          },
-          {
-            name: 'walletDisconnect',
-            ttl: 60000,
-            limit: 10,
-          },
-          {
-            name: 'transactionSend',
-            ttl: 60000,
-            limit: 5,
-          },
-        ],
-        skipIf: (context) => {
-          const request = context.switchToHttp().getRequest();
-          const whitelist = config.get<string>('THROTTLER_WHITELIST');
-          if (!whitelist) return false;
-          const whitelistedIps = whitelist.split(',').map((ip) => ip.trim());
-          return whitelistedIps.includes(request.ip);
-        },
-      }),
+        };
+      },
     }),
     LoggerModule,
     AuthModule,
