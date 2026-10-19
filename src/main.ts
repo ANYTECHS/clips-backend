@@ -146,6 +146,11 @@ async function bootstrap() {
   }
 
   // Swagger setup - only available in non-production environments
+  // The Swagger UI itself is served at /api/docs and works seamlessly with Helmet.
+  // CSP exceptions are configured above to allow:
+  // - script-src 'unsafe-inline' for SwaggerUIBundle initialization
+  // - style-src 'unsafe-inline' for Swagger styles
+  // These exceptions only apply when ENABLE_SWAGGER_UI=true.
   const swaggerConfig = new DocumentBuilder()
     .setTitle('ClipCash API')
     .setDescription(
