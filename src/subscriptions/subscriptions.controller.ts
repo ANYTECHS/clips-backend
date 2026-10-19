@@ -34,6 +34,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 
 @ApiTags('subscriptions', 'payments')
 @ApiExtraModels(StellarPaymentIntentDto)
+@ApiTags('Subscriptions', 'Payments')
 @ApiBearerAuth('access-token')
 @ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })

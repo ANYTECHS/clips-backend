@@ -23,7 +23,7 @@ import { Admin } from '../auth/decorators/admin.decorator';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { AnomalyDetectionService } from './anomaly-detection.service';
 
-@ApiTags('admin')
+@ApiTags('Admin')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })

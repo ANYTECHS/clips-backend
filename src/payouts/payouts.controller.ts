@@ -63,12 +63,11 @@ interface RequestWithUser extends Request {
 
 const validationErrorSchema = API_ERROR_SCHEMA;
 
-@ApiTags('Payouts')
 const payoutError = (statusCode: number, error: string, message: string) => ({
   value: { statusCode, message, error },
 });
 
-@ApiTags('payout')
+@ApiTags('Payouts')
 @ApiBearerAuth('access-token')
 @ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })

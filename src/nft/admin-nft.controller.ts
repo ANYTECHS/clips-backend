@@ -21,7 +21,7 @@ import { NftFreezeAdminGuard } from './guards/nft-freeze-admin.guard';
 import { PrepareNftFreezeDto } from './dto/freeze-nft.dto';
 import { AdminContractService } from './admin-contract.service';
 
-@ApiTags('nfts')
+@ApiTags('Admin', 'NFTs')
 @Controller('admin/nfts')
 export class AdminNftController {
   constructor(private readonly adminContractService: AdminContractService) {}
