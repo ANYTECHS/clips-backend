@@ -49,7 +49,7 @@ const ALLOWED_MIME_TYPES = [
 ];
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
-@ApiTags('videos')
+@ApiTags('Videos')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })

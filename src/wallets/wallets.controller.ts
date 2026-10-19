@@ -44,7 +44,7 @@ interface AuthRequest extends Request {
   user: { userId: number; email: string | null };
 }
 
-@ApiTags('wallets')
+@ApiTags('Wallets')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
 @ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })

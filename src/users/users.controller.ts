@@ -22,7 +22,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
 import { UserResponseDto } from './dto/user-responses.dto';
 
-@ApiTags('users')
+@ApiTags('Users')
 @ApiBearerAuth('access-token')
 @ApiBadRequestResponse({ description: 'Invalid request parameters' })
 @ApiUnauthorizedResponse({ description: 'JWT token required' })
