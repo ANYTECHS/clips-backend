@@ -47,11 +47,21 @@ export class NftOwnershipResultDto {
 
 export class NftOwnerResponseDto {
   @ApiProperty({
-    description: 'The Stellar wallet address of the owner, or null if not minted',
+    description:
+      'The Stellar wallet address of the owner, or null if not minted',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
     nullable: true,
   })
   owner: string | null;
+
+  @ApiProperty({
+    description:
+      'ClipCash database Clip ID stored on-chain inside `TokenData.clip_id`, ' +
+      'linking this NFT back to its original clip. Null when the token does not exist.',
+    example: 42,
+    nullable: true,
+  })
+  clipId: number | null;
 }
 
 export class WalletNftsResponseDto {
@@ -75,7 +85,8 @@ export class WalletNftsResponseDto {
   balance: number;
 
   @ApiPropertyOptional({
-    description: 'Cursor (offset) for the next page. Null when no more pages exist.',
+    description:
+      'Cursor (offset) for the next page. Null when no more pages exist.',
     example: 20,
     nullable: true,
   })
@@ -136,7 +147,10 @@ export class RoyaltyRecipientDto {
 }
 
 export class NftMintResponseDto {
-  @ApiProperty({ example: 'viral-clips', description: 'NFT collection containing this token' })
+  @ApiProperty({
+    example: 'viral-clips',
+    description: 'NFT collection containing this token',
+  })
   collectionId: string;
 
   @ApiProperty({ example: '42', description: 'Clip ID that was minted' })
@@ -184,7 +198,8 @@ export class NftPrepareMintResponseDto {
   collectionId: string;
 
   @ApiProperty({
-    description: 'Unsigned Soroban transaction XDR for the client wallet to sign',
+    description:
+      'Unsigned Soroban transaction XDR for the client wallet to sign',
     example:
       'AAAAAgAAAABjc+6XXsdHPixc8hbEdqMxK3+GpP9M7FLQ8kG2fH3+AAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABjc+6XXsdHPixc8hbEdqMxK3+GpP9M7FLQ8kG2fH3+',
   })
@@ -307,7 +322,10 @@ export class NftMetadataAttributeDto {
   @ApiProperty({ example: 'Virality Score' })
   trait_type: string;
 
-  @ApiProperty({ example: 87, description: 'String or numeric attribute value' })
+  @ApiProperty({
+    example: 87,
+    description: 'String or numeric attribute value',
+  })
   value: string | number;
 }
 
@@ -352,7 +370,10 @@ export class NftMetadataResponseDto {
   })
   attributes: NftMetadataAttributeDto[];
 
-  @ApiProperty({ example: 1000, description: 'Creator royalty in basis points' })
+  @ApiProperty({
+    example: 1000,
+    description: 'Creator royalty in basis points',
+  })
   seller_fee_basis_points: number;
 
   @ApiPropertyOptional({
@@ -378,10 +399,16 @@ export class NftMetadataResponseDto {
   @ApiPropertyOptional({ example: 87, description: 'Clip virality score' })
   viralityScore?: number;
 
-  @ApiPropertyOptional({ example: 34, description: 'Original clip duration in seconds' })
+  @ApiPropertyOptional({
+    example: 34,
+    description: 'Original clip duration in seconds',
+  })
   originalDuration?: number;
 
-  @ApiPropertyOptional({ example: '2026-07-20T09:30:00.000Z', description: 'Creation timestamp' })
+  @ApiPropertyOptional({
+    example: '2026-07-20T09:30:00.000Z',
+    description: 'Creation timestamp',
+  })
   createdAt?: string;
 
   @ApiProperty({
