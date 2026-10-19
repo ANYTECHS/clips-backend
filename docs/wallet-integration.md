@@ -719,24 +719,30 @@ The backend calls `getTransaction(hash)` on the Soroban RPC and maps the result:
 
 ## 9. Address Masking
 
-All wallet addresses returned by the API are **partially masked**. Only the last 6 characters are shown; the rest are replaced with asterisks.
+All wallet addresses returned by the API are **partially masked** for privacy. The first 4 characters and last 6 characters are preserved, while the middle is replaced with `...`.
 
 **Examples:**
 
 | Raw Address | Masked Address |
 |---|---|
-| `GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3RPVMVP5QQ` | `******P5QQ` |
-| `0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045` | `******96045` |
-| `7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgHkv` | `******gHkv` |
+| `GABF0000000000000000000000000000000000000000000000000KJ93XD` | `GABF...KJ93XD` |
+| `GAHJJJKMOKYE4RVPZEWZTKH5FVI4PA3VL7GK2LFNUBSGBV3RPVMVP5QQ` | `GAHJ...VP5QQ` |
+| `0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045` | `0xd8...96045` |
+| `7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgHkv` | `7xKX...JosgHkv` |
 
 **Implementation:**
 
 ```typescript
-function maskAddress(address: string): string {
-  if (address.length <= 6) {
-    return '******';
+export function maskAddress(
+  address: string | null | undefined,
+): string | null | undefined {
+  if (!address || address.length < 10) {
+    return address;
   }
-  return `******${address.slice(-6)}`;
+
+  const start = address.slice(0, 4);
+  const end = address.slice(-6);
+  return `${start}...${end}`;
 }
 ```
 

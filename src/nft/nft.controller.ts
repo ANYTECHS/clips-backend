@@ -923,11 +923,11 @@ export class NftController {
           { trait_type: 'Royalty Percent', value: 10 },
         ],
         seller_fee_basis_points: 1000,
-        fee_recipient: 'GABC...X92K',
+        fee_recipient: 'GABF...KJ93XD',
         royalty: {
           bps: 1000,
           percent: 10,
-          recipient: 'GABC...X92K',
+          recipient: 'GABF...KJ93XD',
         },
       },
     },
