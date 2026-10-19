@@ -74,9 +74,27 @@ export class RoyaltyClaimHistoryMetaDto {
 }
 
 export class RoyaltyClaimHistoryResponseDto {
-  @ApiProperty({ type: [RoyaltyClaimItemDto] })
+  @ApiProperty({
+    type: [RoyaltyClaimItemDto],
+    example: [
+      {
+        id: 1,
+        tokenId: 42,
+        recipient: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        amount: '5000000',
+        assetContractId: null,
+        txHash: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
+        ledger: 1234567,
+        claimedAt: '2026-08-29T05:00:00.000Z',
+        createdAt: '2026-08-29T05:00:01.000Z',
+      },
+    ],
+  })
   data: RoyaltyClaimItemDto[];
 
-  @ApiProperty({ type: RoyaltyClaimHistoryMetaDto })
+  @ApiProperty({
+    type: RoyaltyClaimHistoryMetaDto,
+    example: { total: 42, page: 1, limit: 20, totalPages: 3 },
+  })
   meta: RoyaltyClaimHistoryMetaDto;
 }

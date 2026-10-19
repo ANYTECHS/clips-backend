@@ -34,7 +34,20 @@ export class DailyEarningItemDto {
 }
 
 export class DailyEarningsResponseDto {
-  @ApiProperty({ type: [DailyEarningItemDto] })
+  @ApiProperty({
+    type: [DailyEarningItemDto],
+    example: [
+      {
+        id: 1,
+        date: '2026-09-26T00:00:00.000Z',
+        currency: 'USD',
+        totalAmount: 125.5,
+        totalInBaseCurrency: 125.5,
+        earningCount: 12,
+        clipCount: 4,
+      },
+    ],
+  })
   items: DailyEarningItemDto[];
 
   @ApiProperty({

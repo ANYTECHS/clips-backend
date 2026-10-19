@@ -36,7 +36,27 @@ export class PayoutRequestResponseDto {
  * Response when a split payout creates multiple records (Issue #981).
  */
 export class SplitPayoutRequestResponseDto {
-  @ApiProperty({ type: [PayoutRequestResponseDto] })
+  @ApiProperty({
+    type: [PayoutRequestResponseDto],
+    example: [
+      {
+        payoutId: 'payout_124',
+        status: 'pending',
+        id: 124,
+        amount: 70,
+        currency: 'USD',
+        method: 'fiat',
+      },
+      {
+        payoutId: 'payout_125',
+        status: 'pending',
+        id: 125,
+        amount: 30,
+        currency: 'USD',
+        method: 'stellar',
+      },
+    ],
+  })
   payouts: PayoutRequestResponseDto[];
 
   @ApiProperty({

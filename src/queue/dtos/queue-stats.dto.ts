@@ -69,6 +69,14 @@ export class QueueHealthDto {
   @ApiProperty({
     type: QueueJobCountDto,
     description: 'Job counts by state',
+    example: {
+      waiting: 10,
+      active: 2,
+      completed: 150,
+      failed: 5,
+      delayed: 3,
+      prioritized: 1,
+    },
   })
   jobs: QueueJobCountDto;
 
@@ -117,6 +125,24 @@ export class QueueHealthResponseDto {
   @ApiProperty({
     type: [QueueHealthDto],
     description: 'Health metrics for each queue',
+    example: [
+      {
+        queue: 'clip-generation',
+        status: 'healthy',
+        jobs: {
+          waiting: 10,
+          active: 2,
+          completed: 150,
+          failed: 5,
+          delayed: 3,
+          prioritized: 1,
+        },
+        totalJobs: 171,
+        failureRate: 3.2,
+        avgRetryCount: 1.2,
+        timestamp: '2026-06-27T10:30:45.123Z',
+      },
+    ],
   })
   queues: QueueHealthDto[];
 
@@ -156,6 +182,14 @@ export class QueueStatisticsDto {
   @ApiProperty({
     type: QueueJobCountDto,
     description: 'Current job counts by state',
+    example: {
+      waiting: 10,
+      active: 2,
+      completed: 150,
+      failed: 5,
+      delayed: 3,
+      prioritized: 1,
+    },
   })
   jobCounts: QueueJobCountDto;
 
@@ -224,6 +258,27 @@ export class QueueStatisticsResponseDto {
   @ApiProperty({
     type: [QueueStatisticsDto],
     description: 'Statistics for each queue',
+    example: [
+      {
+        queue: 'clip-generation',
+        jobCounts: {
+          waiting: 10,
+          active: 2,
+          completed: 150,
+          failed: 5,
+          delayed: 3,
+          prioritized: 1,
+        },
+        totalProcessed: 1000,
+        successCount: 950,
+        failureCount: 50,
+        failureRate: 5,
+        avgProcessingTimeSeconds: 12.5,
+        avgRetryCount: 0.8,
+        failureReasonCounts: { timeout: 10, network_error: 3 },
+        timestamp: '2026-06-27T10:30:45.123Z',
+      },
+    ],
   })
   queues: QueueStatisticsDto[];
 

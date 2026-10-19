@@ -234,6 +234,11 @@ export class PayoutOnChainStatusResponseDto {
   @ApiProperty({
     type: HorizonTxStatusDto,
     description: 'Live transaction status queried from Horizon',
+    example: {
+      found: true,
+      successful: true,
+      confirmedAt: '2026-07-27T12:05:00.000Z',
+    },
   })
   onChain: HorizonTxStatusDto;
 }
@@ -304,10 +309,10 @@ export class PayoutMethodResponseDto {
   @ApiPropertyOptional({ example: '1234' })
   lastFourDigits?: string | null;
 
-  @ApiProperty()
+  @ApiProperty({ example: '2026-08-24T12:00:00.000Z' })
   createdAt: Date;
 
-  @ApiProperty()
+  @ApiProperty({ example: '2026-08-24T12:00:00.000Z' })
   updatedAt: Date;
 
   @Exclude()
@@ -360,6 +365,13 @@ export class PayoutOnChainStatusResponseDto {
   @ApiPropertyOptional({ example: null, nullable: true })
   confirmedAt: Date | null;
 
-  @ApiProperty({ type: OnChainTransactionStateDto })
+  @ApiProperty({
+    type: OnChainTransactionStateDto,
+    example: {
+      found: true,
+      successful: true,
+      confirmedAt: '2026-07-27T12:05:00.000Z',
+    },
+  })
   onChain: OnChainTransactionStateDto;
 }

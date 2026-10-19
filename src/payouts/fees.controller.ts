@@ -23,7 +23,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { Admin } from '../auth/decorators/admin.decorator';
 import { FeeService } from './fee.service';
 
-@ApiTags('admin')
+@ApiTags('Admin')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
 @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })

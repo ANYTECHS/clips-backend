@@ -57,6 +57,14 @@ export class BulkProcessPayoutsResponseDto {
   @ApiProperty({
     type: [BulkPayoutItemResultDto],
     description: 'Per-item results identifying successful and failed payouts',
+    example: [
+      { id: 1, status: 'completed' },
+      {
+        id: 2,
+        status: 'failed',
+        error: 'Payout must be approved before processing',
+      },
+    ],
   })
   results: BulkPayoutItemResultDto[];
 }

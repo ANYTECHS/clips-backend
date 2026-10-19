@@ -72,10 +72,16 @@ export class ClipRoyaltyResponseDto {
   })
   platformFeeBps!: number;
 
-  @ApiProperty({ description: 'Created timestamp' })
+  @ApiProperty({
+    description: 'Created timestamp',
+    example: '2026-08-29T05:00:00.000Z',
+  })
   createdAt!: Date;
 
-  @ApiProperty({ description: 'Last updated timestamp' })
+  @ApiProperty({
+    description: 'Last updated timestamp',
+    example: '2026-08-29T05:00:00.000Z',
+  })
   updatedAt!: Date;
 }
 
