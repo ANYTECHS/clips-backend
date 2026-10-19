@@ -88,9 +88,10 @@ describe('WalletManagementService.disconnect', () => {
   });
 
   it('throws ConflictException when pending payouts exist', async () => {
-    mockPrisma.wallet.findUnique.mockResolvedValue({
-      ...baseWallet,
-      payouts: [{ id: 5, status: 'pending' }],
+    mockPrisma.wallet.findUnique.mockResolvedValue(baseWallet);
+    mockPrisma.payout.findFirst.mockResolvedValueOnce({
+      id: 5,
+      status: 'pending',
     });
     mockPrisma.clip.findFirst.mockResolvedValue(null);
     await expect(service.disconnect(1, 42)).rejects.toThrow(ConflictException);
