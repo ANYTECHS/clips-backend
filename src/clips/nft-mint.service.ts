@@ -9,6 +9,8 @@ import {
   BadRequestException,
   ForbiddenException,
   ConflictException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NftMetadataService } from '../nft/nft-metadata.service';
@@ -182,6 +184,7 @@ export class NftMintService {
         addrValidation.message ?? `Invalid Stellar wallet: ${walletAddress}`,
       );
     }
+    await this.assertMintCooldown(walletAddress);
 
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
@@ -251,6 +254,7 @@ export class NftMintService {
       data: {
         collectionId: selectedCollectionId,
         nftStatus: 'minting',
+        mintWalletAddress: walletAddress,
         ...(collection.royaltyBps !== null
           ? { royaltyBps: collection.royaltyBps }
           : {}),
@@ -297,19 +301,68 @@ export class NftMintService {
       throw new ForbiddenException(`You do not own clip ${clipId}`);
   }
 
+  async assertMintCooldown(walletAddress: string): Promise<void> {
+    const cooldownSeconds =
+      this.nftConfig.nftMintWalletCooldownSeconds ?? 60;
+    if (cooldownSeconds <= 0) return;
+
+    const lastMint = await this.prisma.nftWalletMintCooldown.findUnique({
+      where: { walletAddress },
+    });
+    if (!lastMint) return;
+
+    const retryAt = new Date(
+      lastMint.lastMintAt.getTime() + cooldownSeconds * 1000,
+    );
+    const retryAfterSeconds = Math.ceil((retryAt.getTime() - Date.now()) / 1000);
+    if (retryAfterSeconds <= 0) return;
+
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: `Wallet mint cooldown is active. Retry in ${retryAfterSeconds} second(s).`,
+        error: 'Too Many Requests',
+        retryAfterSeconds,
+        retryAt: retryAt.toISOString(),
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  async recordSuccessfulMint(walletAddress: string): Promise<void> {
+    const lastMintAt = new Date();
+    await this.prisma.nftWalletMintCooldown.upsert({
+      where: { walletAddress },
+      create: { walletAddress, lastMintAt },
+      update: { lastMintAt },
+    });
+  }
+
   async confirmMint(
     clipId: number,
     mintAddress: string,
+    onChainOwnerAddress: string,
   ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
     if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new BadRequestException(`Clip ${clipId} already minted`);
+    if (
+      !clip.mintWalletAddress ||
+      clip.mintWalletAddress !== onChainOwnerAddress
+    ) {
+      throw new ConflictException(
+        `On-chain owner does not match the wallet used to prepare clip ${clipId} mint`,
+      );
+    }
     const mintedAt = new Date();
     await this.prisma.clip.update({
       where: { id: clipId },
       data: { mintAddress, mintedAt, nftStatus: 'minted' },
     });
+    if (clip.mintWalletAddress) {
+      await this.recordSuccessfulMint(clip.mintWalletAddress);
+    }
     this.logger.log(
       `Clip ${clipId} confirmed as minted — token: ${mintAddress}`,
     );

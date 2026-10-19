@@ -15,6 +15,8 @@ import {
   GetApprovedResponseDto,
   IsApprovedForAllResponseDto,
   SetApprovalForAllResponseDto,
+  RevokeNftApprovalResponseDto,
+  RevokeAllNftApprovalsResponseDto,
 } from './dto/nft-approval.dto';
 
 /**
@@ -155,6 +157,80 @@ export class NftApprovalService {
       contractId: this.CONTRACT_ID,
       network: this.stellarService.network,
       emits: 'approve_for_all',
+    };
+  }
+
+  /** Prepare the owner-authorized `revoke_approval(token_id)` call. */
+  async prepareRevokeApproval(
+    tokenId: number,
+    ownerAddress: string,
+  ): Promise<RevokeNftApprovalResponseDto> {
+    if (
+      !Number.isInteger(tokenId) ||
+      tokenId < 0 ||
+      tokenId > 0xffff_ffff
+    ) {
+      throw new BadRequestException('tokenId must be a u32');
+    }
+    this.assertAddress(ownerAddress, 'ownerAddress');
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(ownerAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(
+      'revoke_approval',
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    );
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      tokenId,
+      owner: ownerAddress,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+      emits: 'revoke_approval',
+    };
+  }
+
+  /** Prepare the owner-authorized `revoke_all_approvals()` call. */
+  async prepareRevokeAllApprovals(
+    ownerAddress: string,
+  ): Promise<RevokeAllNftApprovalsResponseDto> {
+    this.assertAddress(ownerAddress, 'ownerAddress');
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(ownerAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call('revoke_all_approvals');
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      owner: ownerAddress,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+      emits: 'revoke_all_approvals',
     };
   }
 

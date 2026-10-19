@@ -73,6 +73,16 @@ export class SetApprovalForAllDto {
   liveUntilLedger!: number;
 }
 
+export class RevokeNftApprovalDto {
+  @ApiProperty({
+    description: 'Current NFT owner Stellar address that will sign the XDR',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @IsString()
+  @IsNotEmpty()
+  ownerAddress!: string;
+}
+
 export class ApproveNftResponseDto {
   @ApiProperty({ example: 'AAAAAgAAAA...' })
   xdr!: string;
@@ -131,6 +141,43 @@ export class SetApprovalForAllResponseDto {
   network!: string;
 
   @ApiProperty({ example: 'approve_for_all' })
+  emits!: string;
+}
+
+export class RevokeNftApprovalResponseDto {
+  @ApiProperty({ example: 'AAAAAgAAAA...' })
+  xdr!: string;
+
+  @ApiProperty({ example: 42, description: 'Revoked token ID (u32).' })
+  tokenId!: number;
+
+  @ApiProperty({ example: 'GC6X...' })
+  owner!: string;
+
+  @ApiProperty({ example: 'CAA...' })
+  contractId!: string;
+
+  @ApiProperty({ example: 'testnet' })
+  network!: string;
+
+  @ApiProperty({ example: 'revoke_approval' })
+  emits!: string;
+}
+
+export class RevokeAllNftApprovalsResponseDto {
+  @ApiProperty({ example: 'AAAAAgAAAA...' })
+  xdr!: string;
+
+  @ApiProperty({ example: 'GC6X...' })
+  owner!: string;
+
+  @ApiProperty({ example: 'CAA...' })
+  contractId!: string;
+
+  @ApiProperty({ example: 'testnet' })
+  network!: string;
+
+  @ApiProperty({ example: 'revoke_all_approvals' })
   emits!: string;
 }
 

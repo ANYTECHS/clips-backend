@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
@@ -86,6 +87,9 @@ import {
   SetApprovalForAllResponseDto,
   GetApprovedResponseDto,
   IsApprovedForAllResponseDto,
+  RevokeNftApprovalDto,
+  RevokeNftApprovalResponseDto,
+  RevokeAllNftApprovalsResponseDto,
 } from './dto/nft-approval.dto';
 import { AdminConfigService } from './admin-config.service';
 import { NftApprovalService } from './nft-approval.service';
@@ -548,12 +552,14 @@ export class NftController {
   @ApiTooManyRequestsResponse({
     description:
       'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). ' +
-      'Per-user queue guard also applies: retry after the number of seconds in the Retry-After header.',
+      'Wallet mint cooldown also applies; retry after retryAfterSeconds or the Retry-After header.',
     schema: {
       example: {
         statusCode: 429,
-        message: 'ThrottlerException: Too Many Requests',
+        message: 'Wallet mint cooldown is active. Retry in 60 second(s).',
         error: 'Too Many Requests',
+        retryAfterSeconds: 60,
+        retryAt: '2026-10-19T12:01:00.000Z',
       },
     },
   })
@@ -565,6 +571,7 @@ export class NftController {
 
     // Reject mint requests for clips that don't exist or don't belong to the caller.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    await this.nftMintService.assertMintCooldown(dto.creatorWallet);
 
     const collectionId = dto.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
     if (!isSupportedNftCollectionId(collectionId)) {
@@ -610,13 +617,15 @@ export class NftController {
       },
     });
 
-    return this.nftService.mintClip({
+    const result = await this.nftService.mintClip({
       clipId: String(dto.clipId),
       collectionId,
       creatorWallet: dto.creatorWallet,
       metadataUri,
       royaltyBps: dto.royaltyBps ?? collection.royaltyBps ?? undefined,
     });
+    await this.nftMintService.recordSuccessfulMint(dto.creatorWallet);
+    return result;
   }
 
   @UseGuards(QueueRateLimitGuard)
@@ -648,7 +657,12 @@ export class NftController {
       'Too many active NFT mint jobs for this user. Retry after the number of seconds in the Retry-After header.',
   })
   async batchMint(@Body() dto: BatchMintDto): Promise<BatchMintResponseDto> {
-    return this.nftService.batchMintClips(dto);
+    await this.nftMintService.assertMintCooldown(dto.creatorWallet);
+    const result = await this.nftService.batchMintClips(dto);
+    if (result.mintedCount > 0) {
+      await this.nftMintService.recordSuccessfulMint(dto.creatorWallet);
+    }
+    return result;
   }
 
   @Auth()
@@ -741,13 +755,14 @@ export class NftController {
   })
   @ApiTooManyRequestsResponse({
     description:
-      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). ' +
-      'Per-user queue guard also applies: retry after the number of seconds in the Retry-After header.',
+      'Queue throttles and the wallet mint cooldown apply. Cooldown responses include retryAfterSeconds and retryAt.',
     schema: {
       example: {
         statusCode: 429,
-        message: 'ThrottlerException: Too Many Requests',
+        message: 'Wallet mint cooldown is active. Retry in 60 second(s).',
         error: 'Too Many Requests',
+        retryAfterSeconds: 60,
+        retryAt: '2026-10-19T12:01:00.000Z',
       },
     },
   })
@@ -815,7 +830,16 @@ export class NftController {
   })
   @ApiTooManyRequestsResponse({
     description:
-      'Too many active NFT mint jobs for this user. Retry after the number of seconds in the Retry-After header.',
+      'Too many active NFT mint jobs or wallet mint cooldown. Cooldown responses include retryAfterSeconds and retryAt.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'Wallet mint cooldown is active. Retry in 60 second(s).',
+        error: 'Too Many Requests',
+        retryAfterSeconds: 60,
+        retryAt: '2026-10-19T12:01:00.000Z',
+      },
+    },
   })
   async enqueueMint(
     @Body() dto: MintNftDto,
@@ -823,6 +847,7 @@ export class NftController {
   ): Promise<{ jobId: string; delayed: boolean; delayMs: number }> {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    await this.nftMintService.assertMintCooldown(dto.creatorWallet);
     return this.nftMintEnqueueService.enqueueMint({
       clipId: dto.clipId,
       walletAddress: dto.creatorWallet,
@@ -879,10 +904,26 @@ export class NftController {
     description: 'Unauthorized — Bearer JWT required',
   })
   @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description:
+      'Mint transaction is not confirmed on-chain, or the token owner differs from the wallet used to prepare the mint',
+  })
   async confirmMint(@Body() dto: ConfirmMintDto, @Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
-    return this.nftMintService.confirmMint(dto.clipId, dto.mintAddress);
+    const onChainOwnerAddress = await this.nftOwnershipService.getOwner(
+      String(dto.clipId),
+    );
+    if (!onChainOwnerAddress) {
+      throw new ConflictException(
+        `Mint for clip ${dto.clipId} is not confirmed on-chain`,
+      );
+    }
+    return this.nftMintService.confirmMint(
+      dto.clipId,
+      dto.mintAddress,
+      onChainOwnerAddress,
+    );
   }
 
   @Post('verify-ownership')
@@ -1620,6 +1661,30 @@ export class NftController {
     );
   }
 
+  @Auth()
+  @Delete('approvals')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Revoke all NFT approvals',
+    description:
+      'Prepares unsigned XDR for `revoke_all_approvals()`. The authenticated owner must sign and submit it; Soroban verifies owner authorization on-chain.',
+  })
+  @ApiBody({ type: RevokeNftApprovalDto })
+  @ApiOkResponse({
+    description: 'Unsigned global approval-revocation XDR',
+    type: RevokeAllNftApprovalsResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'Only the NFT owner may revoke approvals' })
+  @ApiNotFoundResponse({ description: 'No approvals or owner record found' })
+  @ApiConflictResponse({ description: 'Approval state changed before submission' })
+  async revokeAllApprovals(
+    @Body() dto: RevokeNftApprovalDto,
+  ): Promise<RevokeAllNftApprovalsResponseDto> {
+    return this.nftApprovalService.prepareRevokeAllApprovals(dto.ownerAddress);
+  }
+
   /**
    * GET /nfts/:id/approved — get_approved(token_id) (Issue #842).
    */
@@ -1636,6 +1701,40 @@ export class NftController {
     @Param('id', ParseIntPipe) id: number,
   ): Promise<GetApprovedResponseDto> {
     return this.nftApprovalService.getApproved(id);
+  }
+
+  @Auth()
+  @Delete(':tokenId/approval')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Revoke approval for one NFT',
+    description:
+      'Prepares unsigned XDR for `revoke_approval(token_id)`. The authenticated NFT owner must sign and submit it; Soroban verifies owner authorization on-chain.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'Numeric u32 token ID', example: 42 })
+  @ApiBody({ type: RevokeNftApprovalDto })
+  @ApiOkResponse({
+    description: 'Unsigned single-token approval-revocation XDR',
+    type: RevokeNftApprovalResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'Authenticated user does not own the NFT' })
+  @ApiNotFoundResponse({ description: 'Token or clip not found' })
+  @ApiConflictResponse({ description: 'Approval state changed before submission' })
+  async revokeApproval(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+    @Body() dto: RevokeNftApprovalDto,
+    @Req() req: Request,
+  ): Promise<RevokeNftApprovalResponseDto> {
+    const userId = Number(
+      (req as any).user?.id ?? (req as any).user?.userId ?? 0,
+    );
+    await this.nftMintService.validateClipOwner(tokenId, userId);
+    return this.nftApprovalService.prepareRevokeApproval(
+      tokenId,
+      dto.ownerAddress,
+    );
   }
 
   /** POST /nfts/:id/approve — SEP-0050 per-token approval. */
