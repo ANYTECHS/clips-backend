@@ -267,6 +267,9 @@ export class NftMintService {
     walletAddress: string,
     refundRoyalties = false,
   ) {
+    if (!Number.isSafeInteger(clipId) || clipId <= 0) {
+      throw new BadRequestException('Token ID must be a positive safe integer');
+    }
     const addrValidation = this.stellarService.validateAddress(walletAddress);
     if (!addrValidation.valid)
       throw new BadRequestException(addrValidation.message);

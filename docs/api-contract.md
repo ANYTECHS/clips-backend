@@ -715,6 +715,51 @@ Download a payout receipt PDF (only available for completed payouts).
 
 All mint endpoints require `Authorization: Bearer <token>`.
 
+#### `POST /nfts/:tokenId/burn`
+
+Prepare an unsigned burn transaction. The authenticated user must own the clip, and `walletAddress` must be the on-chain NFT owner and signer.
+
+```json
+{
+  "walletAddress": "GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF",
+  "refundRoyalties": true
+}
+```
+
+`refundRoyalties` defaults to `false`. When enabled, the response includes the configured royalty recipient and the current unclaimed balance as an exact decimal string in stroops. This is an estimate at preparation time; the contract must atomically re-read and refund the balance, clear it, emit `Refunded`, and prevent replay when the transaction executes.
+
+**Response `200`:** Unsigned transaction XDR, token ID, required signer, contract/network, refund option, recipient, and estimated refund amount.
+
+**Responses:** `400` invalid wallet or royalty data; `401` missing/invalid bearer JWT; `403` authenticated user or wallet is not the owner; `404` clip not found; `409` token is already burned or contract refund state conflicts.
+
+### NFT approvals (SEP-0050 draft interface)
+
+#### `POST /nfts/tokens/:tokenId/approve`
+
+Prepare an unsigned per-token approval transaction. `liveUntilLedger` is a required positive `u32` ledger number. Pass an empty or omitted `spenderAddress`, or the owner's own address, to revoke the approval.
+
+```json
+{
+  "ownerAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "spenderAddress": "GDESTINATION...",
+  "liveUntilLedger": 1234567
+}
+```
+
+#### `POST /nfts/approvals/operator`
+
+Prepare an unsigned collection-wide operator approval. Set `liveUntilLedger` to `0` to revoke; otherwise it is the expiry ledger.
+
+```json
+{
+  "ownerAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "operatorAddress": "GDESTINATION...",
+  "liveUntilLedger": 1234567
+}
+```
+
+Both endpoints return an unsigned transaction XDR for the wallet to sign. They use the SEP-0050 approval function shapes; the configured deployed contract must expose the matching methods. SEP-0050 is a draft and contract-level compatibility is not verified in this repository.
+
 ### NFT Freeze Administration
 
 Freeze administration endpoints require `x-admin-secret: <ADMIN_SECRET>`. The request body supplies the Stellar admin wallet that will sign the returned unsigned transaction; the NFT contract independently authorizes that wallet when the transaction is submitted.
