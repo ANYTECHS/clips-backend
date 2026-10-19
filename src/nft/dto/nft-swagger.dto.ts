@@ -352,6 +352,11 @@ export class NftMetadataResponseDto {
   @ApiProperty({
     type: NftRoyaltyInfoDto,
     description: 'Explicit royalty block for marketplaces / mint clients',
+    example: {
+      bps: 1000,
+      percent: 10,
+      recipient: 'GABC...X92K',
+    },
   })
   royalty: NftRoyaltyInfoDto;
 

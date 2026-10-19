@@ -29,7 +29,7 @@ export class UserResponseDto {
   })
   showOnLeaderboard?: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ example: '2026-07-26T12:00:00.000Z' })
   createdAt: Date;
 
   @Exclude()

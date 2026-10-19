@@ -19,6 +19,8 @@ import {
   ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
   ApiBody,
+  ApiExtraModels,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 
@@ -31,6 +33,7 @@ import {
 import { Auth } from '../auth/decorators/auth.decorator';
 
 @ApiTags('subscriptions', 'payments')
+@ApiExtraModels(StellarPaymentIntentDto)
 @ApiBearerAuth('access-token')
 @ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
@@ -51,12 +54,19 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 201,
     description: 'Payment intent created successfully (Success response)',
-    type: StellarPaymentIntentDto,
-  })
-  @ApiResponse({
-    status: 202,
-    description: 'Payment intent pending confirmation (Pending response)',
-    type: StellarPaymentIntentDto,
+    schema: {
+      allOf: [{ $ref: getSchemaPath(StellarPaymentIntentDto) }],
+      example: {
+        id: 'pi_01HXYZ',
+        amount: 10,
+        asset: 'xlm',
+        destination: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        memo: 'sub-pro-2026-07',
+        expiresAt: '2026-07-26T13:00:00.000Z',
+        status: 'pending',
+        assetIssuer: null,
+      },
+    },
   })
   @ApiBadRequestResponse({
     description: 'Invalid input or unsupported asset (Failure response)',
@@ -79,12 +89,19 @@ export class SubscriptionsController {
   @ApiResponse({
     status: 201,
     description: 'Payment intent created successfully (Success response)',
-    type: StellarPaymentIntentDto,
-  })
-  @ApiResponse({
-    status: 202,
-    description: 'Payment intent pending confirmation (Pending response)',
-    type: StellarPaymentIntentDto,
+    schema: {
+      allOf: [{ $ref: getSchemaPath(StellarPaymentIntentDto) }],
+      example: {
+        id: 'pi_01HXYZ',
+        amount: 10,
+        asset: 'xlm',
+        destination: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        memo: 'sub-pro-2026-07',
+        expiresAt: '2026-07-26T13:00:00.000Z',
+        status: 'pending',
+        assetIssuer: null,
+      },
+    },
   })
   @ApiBadRequestResponse({
     description: 'Invalid input or unsupported asset (Failure response)',
@@ -102,12 +119,28 @@ export class SubscriptionsController {
   @ApiOperation({
     summary: 'Get pending Stellar payment intents',
     description:
-      'Returns all pending payment intents for the authenticated user',
+      'Returns unexpired pending payment intents for the authenticated user. The status describes each payment intent, not the user\'s subscription.',
   })
   @ApiResponse({
     status: 200,
     description: 'List of pending payment intents (Pending response)',
-    type: [StellarPaymentIntentDto],
+    schema: {
+      type: 'array',
+      items: { $ref: getSchemaPath(StellarPaymentIntentDto) },
+      example: [
+        {
+          id: 'pi_01HXYZ',
+          amount: 10,
+          asset: 'xlm',
+          destination:
+            'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          memo: 'sub-pro-2026-07',
+          expiresAt: '2026-07-26T13:00:00.000Z',
+          status: 'pending',
+          assetIssuer: null,
+        },
+      ],
+    },
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiBadRequestResponse({ description: 'Invalid request (Failure response)' })
@@ -137,25 +170,13 @@ export class SubscriptionsController {
     description: 'Payment verification successful (Success response)',
     schema: {
       type: 'object',
+      example: { verified: true },
       properties: {
         verified: {
           type: 'boolean',
           description:
             'verified=true activates the subscription; verified=false leaves it inactive.',
           example: true,
-        },
-      },
-    },
-  })
-  @ApiResponse({
-    status: 202,
-    description: 'Payment verification pending (Pending response)',
-    schema: {
-      type: 'object',
-      properties: {
-        verified: {
-          type: 'boolean',
-          example: false,
         },
       },
     },
