@@ -8,6 +8,8 @@ describe('SorobanContractController', () => {
   };
   const adminContractService = {
     getContractVersion: jest.fn(),
+    getPauseInfo: jest.fn(),
+    getPauseReason: jest.fn(),
   };
   let controller: SorobanContractController;
 
@@ -38,5 +40,27 @@ describe('SorobanContractController', () => {
 
     await expect(controller.getContractVersion()).resolves.toEqual(version);
     expect(adminContractService.getContractVersion).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns pause status and reason from the on-chain contract service', async () => {
+    const pauseInfo = {
+      paused: true,
+      reason: 'Scheduled contract maintenance',
+    };
+    adminContractService.getPauseInfo.mockResolvedValue(pauseInfo);
+
+    await expect(controller.getPauseInfo()).resolves.toEqual(pauseInfo);
+    expect(adminContractService.getPauseInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the pause reason from the on-chain contract service', async () => {
+    adminContractService.getPauseReason.mockResolvedValue(
+      'Scheduled contract maintenance',
+    );
+
+    await expect(controller.getPauseReason()).resolves.toEqual({
+      reason: 'Scheduled contract maintenance',
+    });
+    expect(adminContractService.getPauseReason).toHaveBeenCalledTimes(1);
   });
 });

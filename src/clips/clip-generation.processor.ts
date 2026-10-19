@@ -47,6 +47,8 @@ export interface ClipGenerationJob {
   existingViralityScore?: number;
   /** Existing clip URL to replace/delete during regeneration */
   existingClipUrl?: string;
+  /** Creator royalty in BPS (0–1500). Defaults to 1000 when omitted. */
+  royaltyBps?: number;
 }
 
 export interface ClipProcessingResult {
@@ -745,7 +747,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
-      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      royaltyBps: data.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
       nftStatus: 'none',
       mintAddress: null,
       mintedAt: null,
@@ -786,7 +788,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
-      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      royaltyBps: data.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
       nftStatus: 'none',
       mintAddress: null,
       mintedAt: null,

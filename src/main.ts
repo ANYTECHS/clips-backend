@@ -1,19 +1,20 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import * as bodyParser from 'body-parser';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
+import { configureHelmet } from './common/security/helmet';
 import { RoyaltyConfigurationService } from './nft/royalty-configuration.service';
 import { PayoutsService } from './payouts/payouts.service';
 import { StellarWebhookService } from './subscriptions/stellar-webhook.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AppLoggerService } from './logger/logger.service';
+import { createGlobalValidationPipe } from './common/pipes/global-validation.pipe';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
@@ -96,42 +97,7 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
 
-  // Security headers with Helmet. Registered before any route/router (including
-  // Swagger UI below) so every response — docs included — gets these headers;
-  // Express only applies middleware to requests that reach it in registration order.
-  // Swagger UI's bundled HTML injects an inline <script> to boot SwaggerUIBundle, so
-  // scriptSrc needs 'unsafe-inline' whenever the docs UI is exposed; kept locked down
-  // otherwise.
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          scriptSrc: enableSwaggerUI ? [`'self'`, `'unsafe-inline'`] : [`'self'`],
-          imgSrc: [`'self'`, 'data:', 'https:'],
-          connectSrc: [`'self'`],
-          fontSrc: [`'self'`],
-          objectSrc: [`'none'`],
-          mediaSrc: [`'self'`],
-          frameSrc: [`'none'`],
-        },
-      },
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-      referrerPolicy: { policy: 'no-referrer' },
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
-      noSniff: true,
-      hidePoweredBy: true,
-      frameguard: {
-        action: 'deny',
-      },
-    }),
-  );
+  configureHelmet(app, enableSwaggerUI);
 
   if (process.env.TRUST_PROXY === 'true') {
     app.set('trust proxy', 1);
@@ -180,6 +146,11 @@ async function bootstrap() {
   }
 
   // Swagger setup - only available in non-production environments
+  // The Swagger UI itself is served at /api/docs and works seamlessly with Helmet.
+  // CSP exceptions are configured above to allow:
+  // - script-src 'unsafe-inline' for SwaggerUIBundle initialization
+  // - style-src 'unsafe-inline' for Swagger styles
+  // These exceptions only apply when ENABLE_SWAGGER_UI=true.
   const swaggerConfig = new DocumentBuilder()
     .setTitle('ClipCash API')
     .setDescription(
@@ -347,6 +318,22 @@ async function bootstrap() {
     .addTag('platforms', 'Social platform integrations')
     .addTag('admin', 'Admin-only endpoints for platform management')
     .addTag('queues', 'BullMQ queue management and monitoring')
+    .addTag('Authentication', 'Authentication and authorization')
+    .addTag('Users', 'User management')
+    .addTag('Videos', 'Video upload and management')
+    .addTag('Clips', 'Clip generation and management')
+    .addTag('Subscriptions', 'Subscription plans and lifecycle')
+    .addTag('Payments', 'Fiat and Stellar subscription payments')
+    .addTag('Webhooks', 'Webhook endpoints for external services')
+    .addTag('Wallets', 'Blockchain wallet management')
+    .addTag('Payouts', 'Revenue payouts and payout methods')
+    .addTag('earnings', 'Earnings tracking')
+    .addTag('NFTs', 'NFT minting and royalty management')
+    .addTag('stellar', 'Stellar network interactions')
+    .addTag('jobs', 'Background job management')
+    .addTag('platforms', 'Social platform integrations')
+    .addTag('Admin', 'Admin-only endpoints')
+    .addTag('queues', 'BullMQ queue management')
     .addTag('circuit-breaker', 'Circuit breaker monitoring and management')
     .addTag('metrics', 'Prometheus metrics endpoint for monitoring')
     .addTag('user-platforms', 'Social platform connections and OAuth integrations')
@@ -404,30 +391,7 @@ async function bootstrap() {
     next();
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      exceptionFactory: (errors) => {
-        const messages = errors.map((error) => {
-          const constraints = error.constraints
-            ? Object.values(error.constraints)
-            : [`${error.property} is invalid`];
-          return {
-            field: error.property,
-            errors: constraints,
-          };
-        });
-        return new (require('@nestjs/common').BadRequestException)({
-          statusCode: 400,
-          message: 'Validation failed',
-          error: 'Bad Request',
-          details: messages,
-        });
-      },
-    }),
-  );
+  app.useGlobalPipes(createGlobalValidationPipe());
 
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   // Enable Nest's shutdown hooks so providers can clean up on signals

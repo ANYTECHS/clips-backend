@@ -284,6 +284,19 @@ export class AdminContractService {
     return { paused: Boolean(StellarSdk.scValToNative(returnValue)) };
   }
 
+  async getPauseReason(): Promise<string> {
+    const reason = await this.callViewFunction('pause_reason');
+    return String(reason ?? '');
+  }
+
+  async getPauseInfo(): Promise<{ paused: boolean; reason: string }> {
+    const [status, reason] = await Promise.all([
+      this.getPauseStatus(),
+      this.getPauseReason(),
+    ]);
+    return { ...status, reason };
+  }
+
   /**
    * Query the on-chain `name()` and `symbol()` view functions (Issue #679).
    *

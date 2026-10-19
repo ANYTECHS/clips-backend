@@ -2,6 +2,7 @@ import { IsString, IsOptional, IsInt, IsArray } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsValidPlatforms } from '../../common/validators/decorators';
+import { TrimString } from '../../common/decorators/trim-string.decorator';
 import type { SupportedPlatform } from '../../common/validators/is-valid-platform.validator';
 
 export class UpdateVideoDto {
@@ -10,6 +11,7 @@ export class UpdateVideoDto {
     example: 'Updated title',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   title?: string;
 
@@ -18,6 +20,7 @@ export class UpdateVideoDto {
     example: 'Updated description',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   description?: string;
 
@@ -26,6 +29,7 @@ export class UpdateVideoDto {
     example: 'upload',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   sourceType?: string;
 
@@ -34,6 +38,7 @@ export class UpdateVideoDto {
     example: 'https://cdn.example.com/videos/abc.mp4',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   sourceUrl?: string;
 
@@ -42,6 +47,7 @@ export class UpdateVideoDto {
     example: 'https://cdn.example.com/thumbs/abc.jpg',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   thumbnail?: string;
 
@@ -59,6 +65,7 @@ export class UpdateVideoDto {
     enum: ['pending', 'processing', 'ready', 'failed'],
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   status?: string;
 

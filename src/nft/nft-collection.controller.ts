@@ -21,7 +21,7 @@ import {
   NftCollectionTokenResponseDto,
 } from './dto/nft-collection.dto';
 
-@ApiTags('nft-collections')
+@ApiTags('NFTs')
 @Controller()
 export class NftCollectionController {
   constructor(private readonly nftCollectionService: NftCollectionService) {}
@@ -56,7 +56,7 @@ export class NftCollectionController {
   }
 
   @Get('nfts')
-  @ApiTags('nfts')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'List minted NFTs, optionally filtered by collection',
     description:

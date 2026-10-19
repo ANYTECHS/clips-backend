@@ -850,15 +850,21 @@ export class ClipsService {
     return updated;
   }
 
-  async updateRoyalty(clipId: number, userId: number, royaltyBps: number) {
+  async updateRoyalty(clipId: number, userId: number, royaltyBps?: number) {
+    const bps = royaltyBps ?? ROYALTY_BPS_DEFAULT;
+    if (!Number.isInteger(bps) || bps < ROYALTY_BPS_MIN || bps > ROYALTY_BPS_MAX) {
+      throw new BadRequestException(
+        `royaltyBps must be an integer between ${ROYALTY_BPS_MIN} and ${ROYALTY_BPS_MAX} (received: ${bps})`,
+      );
+    }
     await this.validateClipOwnership(clipId, userId);
 
     await this.prisma.clip.update({
       where: { id: clipId },
-      data: { royaltyBps, updatedAt: new Date() },
+      data: { royaltyBps: bps, updatedAt: new Date() },
     });
 
-    this.logger.log(`Updated royalty for clip ${clipId} to ${royaltyBps} BPS`);
-    return { id: clipId, royaltyBps };
+    this.logger.log(`Updated royalty for clip ${clipId} to ${bps} BPS`);
+    return { id: clipId, royaltyBps: bps };
   }
 }
