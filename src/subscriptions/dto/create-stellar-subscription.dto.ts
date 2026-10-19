@@ -16,6 +16,7 @@ export class CreateStellarSubscriptionDto {
 
   @ApiProperty({
     enum: ['xlm', 'usdc', 'custom'],
+    example: 'xlm',
     description:
       'Payment asset. Use xlm for native XLM, usdc for USDC, or custom for other Stellar assets (provide assetCode + assetIssuer).',
   })
