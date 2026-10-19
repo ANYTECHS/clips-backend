@@ -116,22 +116,29 @@ export class NftMintService {
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
       collection: {
-        collectionId: collection.collectionId,
-        name: collection.name,
-        type: collection.type,
-        metadata: collection.metadata as Record<string, unknown>,
+        collectionId: clip.collection.collectionId,
+        name: clip.collection.name,
+        type: clip.collection.type,
+        metadata: clip.collection.metadata as Record<string, unknown>,
       },
     });
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
       metadata,
       clipId,
     );
-
-    // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
-    const metadataUri = await this.ipfsUploadService.uploadMetadata(
-      metadata,
-      clipId,
-    );
+    // Persist the CID to the Clip record so subsequent mint calls can
+    // skip the upload step.
+    await this.prisma.clip.update({
+      where: { id: clipId },
+      data: {
+        metadataUri,
+        collectionId,
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
+    });
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
 
     // Persist the CID to the Clip record so subsequent mint calls can
     // skip the upload step.
@@ -186,7 +193,7 @@ export class NftMintService {
       metadataUri = (await this.uploadMetadataToIPFS(clipId)).metadataUri;
     }
 
-    const royaltyBps = collection.royaltyBps ?? clip.royaltyBps ?? 1000;
+    const royaltyBps = clip.collection.royaltyBps ?? clip.royaltyBps ?? 1000;
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId) {
       throw new BadRequestException(
