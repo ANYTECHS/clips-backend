@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
   Optional,
@@ -43,6 +44,9 @@ export interface MintResult {
   txHash: string;
   collectionId: string;
   transaction: MintTransaction;
+  mintAddress?: string;
+  mintedAt?: Date;
+  nftStatus?: string;
 }
 
 @Injectable()
@@ -51,29 +55,98 @@ export class NftService {
   private readonly customTokenUris = new Map<string, string>();
   private readonly royaltyRecipients = new Map<string, string>();
   private readonly updatedMetadata = new Set<string>();
+  private platformRoyaltyBps?: number;
+  private readonly platformBpsMap = new Map<string, number>();
+  private readonly clipMintStatus = new Map<
+    string,
+    { mintAddress?: string; mintedAt?: Date; nftStatus: string }
+  >();
+
 
   constructor(
     private readonly config: NftConfig,
-    private readonly clipsService: ClipsService,
+    @Optional() private readonly clipsService?: ClipsService,
     @Optional() private readonly gasMetricsService?: GasMetricsService,
   ) {}
 
   /**
+   * Store platform royalty BPS.
+   * Can be configured globally or associated with a specific token ID.
+   */
+  storePlatformBps(bps: number, tokenId?: string): void {
+    if (!Number.isInteger(bps) || bps < 0 || bps > 10000) {
+      throw new BadRequestException(
+        `Invalid platform BPS: ${bps}. Must be an integer between 0 and 10000.`,
+      );
+    }
+    if (tokenId) {
+      this.platformBpsMap.set(tokenId, bps);
+    }
+    this.platformRoyaltyBps = bps;
+  }
+
+  /**
+   * Set platform royalty BPS globally.
+   */
+  setPlatformRoyaltyBps(bps: number): void {
+    this.storePlatformBps(bps);
+  }
+
+  /**
+   * Retrieve platform royalty BPS.
+   * Returns token-specific platform BPS if set, else stored platform BPS, or config default.
+   */
+  getPlatformRoyaltyBps(tokenId?: string): number {
+    if (tokenId && this.platformBpsMap.has(tokenId)) {
+      return this.platformBpsMap.get(tokenId)!;
+    }
+    return this.platformRoyaltyBps ?? this.config.platformRoyaltyBps;
+  }
+
+  /**
    * Build and submit a mint transaction with multiple royalty
-   * recipients: the clip creator and the ClipCash platform.
+   * recipients: the clip creator, ClipCash platform, and any additional recipients.
+   * Validates total BPS across all recipients.
    */
   async mintClip(dto: CreateMintDto): Promise<MintResult> {
     this.validateConfig();
 
-    const clipId = parseInt(dto.clipId, 10);
-    if (isNaN(clipId)) {
-      throw new BadRequestException(`Invalid clipId: ${dto.clipId}`);
+    const existing = this.clipMintStatus.get(dto.clipId);
+    if (existing?.nftStatus === 'minted' || existing?.mintAddress) {
+      throw new ConflictException(
+        `Clip ${dto.clipId} has already been minted (mintAddress: ${existing.mintAddress})`,
+      );
+    }
+    if (existing?.nftStatus === 'minting') {
+      throw new ConflictException(
+        `Clip ${dto.clipId} is currently being minted. Please wait.`,
+      );
     }
 
-    await this.clipsService.preventDoubleMint(clipId);
-    await this.clipsService.updateMintStatusToMinting(clipId);
+    this.clipMintStatus.set(dto.clipId, { nftStatus: 'minting' });
 
-    const royalties = this.buildRoyalties(dto.creatorWallet);
+    const numericClipId = !isNaN(Number(dto.clipId)) ? Number(dto.clipId) : null;
+    if (this.clipsService && numericClipId !== null) {
+      await this.clipsService.preventDoubleMint(numericClipId);
+      await this.clipsService.updateMintStatusToMinting(numericClipId);
+    }
+
+    if (dto.platformRoyaltyBps !== undefined && dto.platformRoyaltyBps !== null) {
+      this.storePlatformBps(dto.platformRoyaltyBps, dto.clipId);
+    } else {
+      this.storePlatformBps(this.getPlatformRoyaltyBps(), dto.clipId);
+    }
+
+    const creatorBps =
+      dto.royaltyBps !== undefined && dto.royaltyBps !== null
+        ? dto.royaltyBps
+        : this.config.creatorRoyaltyBps;
+
+    const royalties = this.buildRoyalties(
+      dto.creatorWallet,
+      creatorBps,
+      dto.recipients,
+    );
 
     const transaction: MintTransaction = {
       clipId: dto.clipId,
@@ -86,12 +159,24 @@ export class NftService {
     let txHash: string;
     try {
       txHash = await this.submitTransaction(transaction);
-      await this.clipsService.markMinted(clipId, txHash);
+      if (this.clipsService && numericClipId !== null) {
+        await this.clipsService.markMinted(numericClipId, txHash);
+      }
     } catch (err: unknown) {
+      this.clipMintStatus.set(dto.clipId, { nftStatus: 'failed' });
       const message = err instanceof Error ? err.message : String(err);
-      await this.clipsService.markMintFailed(clipId, message);
+      if (this.clipsService && numericClipId !== null) {
+        await this.clipsService.markMintFailed(numericClipId, message);
+      }
       throw err;
     }
+
+    const mintedAt = new Date();
+    this.clipMintStatus.set(dto.clipId, {
+      mintAddress: txHash,
+      mintedAt,
+      nftStatus: 'minted',
+    });
 
     this.logger.log(
       `Minted clip ${dto.clipId} | tx: ${txHash} | royalties: ${JSON.stringify(royalties)}`,
@@ -102,7 +187,23 @@ export class NftService {
       this.gasMetricsService.recordBenchmark('mint', 1250000, 45000, 15200);
     }
 
-    return { txHash, collectionId: transaction.collectionId, transaction };
+    return {
+      txHash,
+      collectionId: transaction.collectionId,
+      transaction,
+      mintAddress: txHash,
+      mintedAt,
+      nftStatus: 'minted',
+    };
+  }
+
+  /**
+   * Retrieve current NFT mint tracking fields for a clip.
+   */
+  getClipMintStatus(
+    clipId: string,
+  ): { mintAddress?: string; mintedAt?: Date; nftStatus: string } | null {
+    return this.clipMintStatus.get(clipId) ?? null;
   }
 
   /**
@@ -263,22 +364,64 @@ export class NftService {
   }
 
   /**
-   * Assemble the royalty recipient list.
-   * Order: creator first, platform second (matches most NFT standards).
+   * Validate that all royalty shares have non-negative integer basis points
+   * and that their sum does not exceed the protocol maximum (10000 BPS = 100%).
    */
-  buildRoyalties(creatorWallet: string): RoyaltyRecipient[] {
-    return [
+  validateRoyalties(royalties: RoyaltyRecipient[]): void {
+    if (!Array.isArray(royalties) || royalties.length === 0) {
+      throw new BadRequestException('Royalties must contain at least one recipient.');
+    }
+    let totalBps = 0;
+    for (const r of royalties) {
+      if (!Number.isInteger(r.bps) || r.bps < 0) {
+        throw new BadRequestException(
+          `Invalid royalty BPS for ${r.label ?? 'recipient'}: ${r.bps}. Must be a non-negative integer.`,
+        );
+      }
+      totalBps += r.bps;
+    }
+    if (totalBps > 10000) {
+      throw new BadRequestException(
+        `Total royalty BPS (${totalBps}) exceeds protocol maximum of 10000.`,
+      );
+    }
+  }
+
+  /**
+   * Assemble the royalty recipient list supporting multiple recipients.
+   * Order: creator first, platform second, followed by any additional recipients.
+   * Validates total BPS across all recipients.
+   */
+  buildRoyalties(
+    creatorWallet: string,
+    creatorRoyaltyBps?: number | null,
+    additionalRecipients?: RoyaltyRecipient[],
+  ): RoyaltyRecipient[] {
+    const creatorBps =
+      creatorRoyaltyBps !== undefined && creatorRoyaltyBps !== null
+        ? creatorRoyaltyBps
+        : this.config.creatorRoyaltyBps;
+    const platformBps = this.getPlatformRoyaltyBps();
+
+    const royalties: RoyaltyRecipient[] = [
       {
         wallet: creatorWallet,
-        bps: this.config.creatorRoyaltyBps,
+        bps: creatorBps,
         label: 'creator',
       },
       {
         wallet: this.config.platformWallet,
-        bps: this.config.platformRoyaltyBps,
+        bps: platformBps,
         label: 'platform',
       },
     ];
+
+    if (additionalRecipients && additionalRecipients.length > 0) {
+      royalties.push(...additionalRecipients);
+    }
+
+    this.validateRoyalties(royalties);
+    return royalties;
   }
 
   private validateConfig(): void {
@@ -287,11 +430,17 @@ export class NftService {
         'PLATFORM_WALLET_ADDRESS is not configured. Cannot mint NFT.',
       );
     }
+    const platformBps = this.getPlatformRoyaltyBps();
     if (
-      this.config.platformRoyaltyBps < 0 ||
+      platformBps < 0 ||
       this.config.creatorRoyaltyBps < 0
     ) {
       throw new BadRequestException('Royalty bps values must be non-negative.');
+    }
+    if (this.config.creatorRoyaltyBps + platformBps > 10000) {
+      throw new BadRequestException(
+        `Total royalty BPS (${this.config.creatorRoyaltyBps + platformBps}) exceeds protocol maximum of 10000.`,
+      );
     }
   }
 
