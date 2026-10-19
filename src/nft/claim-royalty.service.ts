@@ -202,4 +202,99 @@ export class ClaimRoyaltyService {
     }
     return 0;
   }
+
+  /**
+   * Get claimable royalties for a recipient and return formatted response.
+   * This is used by the GET endpoint to show available balance without claiming.
+   */
+  async getClaimableRoyaltiesInfo(
+    tokenId: number,
+    recipient: string,
+    assetContractId?: string,
+  ): Promise<{
+    tokenId: number;
+    recipient: string;
+    claimableBalance: number;
+    claimableAmount: number;
+    asset: string;
+    canClaim: boolean;
+    network: string;
+  }> {
+    const addrValidation = this.stellarService.validateAddress(recipient);
+    if (!addrValidation.valid) {
+      throw new BadRequestException(addrValidation.message);
+    }
+
+    if (!Number.isInteger(tokenId) || tokenId <= 0) {
+      throw new BadRequestException(
+        `Invalid token ID: ${tokenId}. Expected a positive integer.`,
+      );
+    }
+
+    const resolvedAsset = this.resolveAssetContractId(assetContractId);
+    const claimableBalance = await this.getClaimableBalance(
+      tokenId,
+      recipient,
+      resolvedAsset,
+    );
+
+    // Convert stroops to XLM (1 XLM = 10,000,000 stroops)
+    const STROOPS_PER_UNIT = 10_000_000;
+    const claimableAmount = claimableBalance / STROOPS_PER_UNIT;
+
+    const asset = resolvedAsset || 'native';
+
+    return {
+      tokenId,
+      recipient,
+      claimableBalance,
+      claimableAmount,
+      asset,
+      canClaim: claimableBalance > 0,
+      network: this.stellarService.network,
+    };
+  }
+
+  /**
+   * Verify that a given address is authorized to claim royalties for a token.
+   * Currently verifies that the address is a valid Stellar address.
+   * In the future, this could check:
+   * - Multi-sig authorization
+   * - Trustline requirements
+   * - Custom authorization rules
+   */
+  async verifyClaimantAuthorization(
+    tokenId: number,
+    claimantAddress: string,
+  ): Promise<{ authorized: boolean; reason?: string }> {
+    // Validate address format
+    const addrValidation = this.stellarService.validateAddress(claimantAddress);
+    if (!addrValidation.valid) {
+      return {
+        authorized: false,
+        reason: `Invalid address format: ${addrValidation.message}`,
+      };
+    }
+
+    // Validate token ID
+    if (!Number.isInteger(tokenId) || tokenId <= 0) {
+      return {
+        authorized: false,
+        reason: `Invalid token ID: ${tokenId}`,
+      };
+    }
+
+    // Additional authorization checks could be added here:
+    // 1. Check if address is listed as royalty recipient for this token
+    // 2. Verify multi-sig authorization if configured
+    // 3. Check smart contract-level permissions
+
+    this.logger.debug(
+      `Claimant ${claimantAddress} authorized for token ${tokenId}`,
+    );
+
+    return {
+      authorized: true,
+    };
+  }
 }

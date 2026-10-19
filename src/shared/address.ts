@@ -6,6 +6,6 @@ export function maskAddress(
   }
 
   const start = address.slice(0, 4);
-  const end = address.slice(-6);
-  return `${start}********${end}`;
+  const end = address.slice(-4);
+  return `${start}...${end}`;
 }

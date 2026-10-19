@@ -68,6 +68,12 @@ export class BulkUpdateClipsDto {
   @ApiProperty({
     description: 'Updates to apply to the specified clips',
     type: () => ClipUpdatesDto,
+    example: {
+      selected: true,
+      postStatus: { platform: 'tiktok', status: 'posted', postId: '12345' },
+      caption: 'A standout moment from the episode',
+      royaltyBps: 1000,
+    },
   })
   @ValidateNested()
   @Type(() => ClipUpdatesDto)

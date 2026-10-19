@@ -31,6 +31,7 @@ export interface RoyaltyRecipient {
  */
 export interface MintTransaction {
   clipId: string;
+  collectionId: string;
   metadataUri: string;
   royalties: RoyaltyRecipient[];
   /** ISO timestamp when the payload was constructed */
@@ -40,6 +41,7 @@ export interface MintTransaction {
 export interface MintResult {
   /** Simulated / real on-chain transaction hash */
   txHash: string;
+  collectionId: string;
   transaction: MintTransaction;
 }
 
@@ -75,6 +77,7 @@ export class NftService {
 
     const transaction: MintTransaction = {
       clipId: dto.clipId,
+      collectionId: dto.collectionId ?? 'viral-clips',
       metadataUri: dto.metadataUri ?? '',
       royalties,
       builtAt: new Date().toISOString(),
@@ -99,7 +102,7 @@ export class NftService {
       this.gasMetricsService.recordBenchmark('mint', 1250000, 45000, 15200);
     }
 
-    return { txHash, transaction };
+    return { txHash, collectionId: transaction.collectionId, transaction };
   }
 
   /**

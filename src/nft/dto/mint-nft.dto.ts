@@ -6,6 +6,7 @@ import {
   IsInt,
   Min,
   Max,
+  Matches,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -18,6 +19,18 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * Supports multiple royalty recipients via label/description fields.
  */
 export class MintNftDto {
+  @ApiPropertyOptional({
+    description: 'Slug of the NFT collection. Defaults to viral-clips.',
+    example: 'viral-clips',
+    pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$',
+  })
+  @IsOptional()
+  @IsString({ message: 'collectionId must be a string' })
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message: 'collectionId must be a lowercase slug',
+  })
+  collectionId?: string;
+
   @ApiProperty({
     description: 'Numeric ID of the clip being minted as an NFT',
     example: 42,

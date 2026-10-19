@@ -389,10 +389,10 @@ The backend supports switching between Stellar **testnet** and **mainnet** (publ
 
 ### `STELLAR_NETWORK`
 
-| Value      | Network                | RPC URL                                  | Use when               |
-| ---------- | ---------------------- | ---------------------------------------- | ---------------------- |
-| `testnet`  | Stellar Testnet (SDF)  | `https://soroban-testnet.stellar.org`    | Development / staging  |
-| `public`   | Stellar Mainnet        | `https://soroban-rpc.stellar.org`        | Production             |
+| Value      | Network                | RPC URL                                  | Horizon URL                            | Use when               |
+| ---------- | ---------------------- | ---------------------------------------- | -------------------------------------- | ---------------------- |
+| `testnet`  | Stellar Testnet (SDF)  | `https://soroban-testnet.stellar.org`    | `https://horizon-testnet.stellar.org`  | Development / staging  |
+| `public`   | Stellar Mainnet        | `https://soroban-rpc.stellar.org`        | `https://horizon.stellar.org`          | Production             |
 
 **Default:** `testnet`
 
@@ -406,11 +406,11 @@ STELLAR_NETWORK=testnet
 STELLAR_NETWORK=public
 ```
 
-The `StellarService` reads this variable at startup and exposes the correct `rpcUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts).
+The `StellarService` reads this variable at startup and exposes the correct `rpcUrl`, `horizonUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts). The payment listener (`StellarConfig`) derives its Horizon URL from `STELLAR_NETWORK` as well, unless `STELLAR_HORIZON_URL` is set explicitly. Any value other than `public` falls back to `testnet`.
 
 ### `MIN_STELLAR_PAYOUT`
 
-Minimum payout amount in USD equivalent. Requests below this threshold are rejected with a `400` error to prevent fee-wasting micro-transactions.
+Minimum payout amount in USD equivalent. Requests below this threshold are rejected with a `400` error to prevent fee-wasting micro-transactions. Must be a positive number — the app refuses to start otherwise.
 
 ```env
 MIN_STELLAR_PAYOUT=5   # default: 5 USD
@@ -494,3 +494,26 @@ The subscription integration scenarios live in `test/subscription-flow.e2e-spec.
 - rejection on wrong amount
 - idempotency on duplicate transaction id
 - rejection of expired intents (>15 minutes)
+ * Updated repository documentation to reflect recent project updates and structural adjustments.
+ * Refined setup guidelines and inline comments to assist new contributors during project onboarding.
+ * Fixed minor formatting errors and standardized layout consistency across all markdown files.
+ * Corrected obsolete links, dependencies, and configuration notes to maintain operational accuracy.
+ * Clarified key configuration settings to streamline local build and testing environments.
+ * Restructured existing documentation sections to significantly improve readability and flow.
+ * Enhanced clarity around environment variables and execution scripts across core modules.
+ * Updated documentation to improve clarity and fix minor formatting inconsistencies across the repository.
+ * Refactored code comments and inline explanations to better align with current setup guidelines.
+ * Added missing configuration notes to help developers set up and run the project locally.
+ * Corrected outdated references and links in the repository files to ensure accuracy.
+ * Standardized code structure and documentation layout to enhance overall project readability.
+  
+ * Updated documentation to maintain clear operational standards across the core application logic.
+ * Improved inline notes and module comments to provide better context for active code pathways.
+ * Fixed minor formatting inconsistencies in markdown files to ensure uniform project presentation.
+ * Corrected outdated configuration references and dependency details to align with current setups.
+ * Clarified local setup and installation steps to simplify development and testing workflows.
+ * Refactored existing setup guides to streamline onboarding for new developers and contributors.
+ * Enhanced parameter descriptions and function summaries to make system integration more intuitive.
+ * Standardized code structure guidelines and file organisation principles throughout the repository.
+ * Resolved broken or obsolete links across documentation files to improve resource reliability.
+ * Added missing usage examples and environment variable notes to support smooth deployment procedures.

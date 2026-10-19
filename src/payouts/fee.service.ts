@@ -1,10 +1,31 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+/**
+ * Fee breakdown returned by calculateFee / previewFee.
+ * `amount` is the gross requested payout; `fee` is the platform fee;
+ * `netAmount` is what the user receives (same as finalAmount).
+ */
 export interface FeeCalculation {
+  /** Gross payout amount before fees */
+  amount: number;
+  /** Alias for amount (Swagger / API docs) */
+  grossAmount: number;
+  /** Total fee charged */
+  fee: number;
+  /** Alias for fee (persisted column name) */
   feeAmount: number;
   feePercentage: number;
+  /** Net amount the user receives after fees */
+  netAmount: number;
+  /** Alias for netAmount (persisted column name) */
   finalAmount: number;
+  currency: string;
 }
 
 @Injectable()
@@ -14,38 +35,38 @@ export class FeeService {
   constructor(private prisma: PrismaService) {}
 
   /**
-   * Calculate fees before processing a payout
-   * Supports both fixed and percentage fee types
-   * Example: $100 payout with 2% platform fee ($2) + $1 network fee = $97 user receives
-   * @param amount The payout amount in cents/smallest unit
-   * @param method The payout method (e.g., 'stellar', 'stripe', 'ach')
-   * @returns Fee calculation with breakdowns
+   * Calculate fees before processing a payout.
+   * Supports fixed, percentage, or combined fee types per payout method.
+   *
+   * Example: $100 payout with 2% fee → { amount: 100, fee: 2, netAmount: 98 }
    */
-  async calculateFee(amount: number, method: string): Promise<FeeCalculation> {
+  async calculateFee(
+    amount: number,
+    method: string,
+    currency = 'USD',
+  ): Promise<FeeCalculation> {
+    if (amount == null || Number.isNaN(amount) || amount <= 0) {
+      throw new BadRequestException('Payout amount must be a positive number');
+    }
+
     const feeConfig = await this.prisma.payoutFeeConfig.findUnique({
       where: { method },
     });
 
     if (!feeConfig || !feeConfig.isActive) {
       this.logger.warn(`No active fee config found for method: ${method}`);
-      return {
-        feeAmount: 0,
-        feePercentage: 0,
-        finalAmount: amount,
-      };
+      return this.buildResult(amount, 0, 0, currency);
     }
 
     let totalFee = 0;
     const feeType = feeConfig.feeType || 'fixed';
 
     if (feeType === 'percentage') {
-      // Calculate percentage fee
       totalFee = (amount * feeConfig.feePercentage) / 100;
     } else if (feeType === 'fixed') {
-      // Use fixed fee
       totalFee = feeConfig.fixedFee;
     } else {
-      // Default: combine both fixed and percentage (legacy behavior)
+      // Legacy: combine fixed + percentage
       const percentageFee = (amount * feeConfig.feePercentage) / 100;
       totalFee = percentageFee + feeConfig.fixedFee;
     }
@@ -56,13 +77,39 @@ export class FeeService {
       feeConfig.maxFee,
     );
 
-    const finalAmount = amount - feeAmount;
+    if (feeAmount >= amount) {
+      throw new BadRequestException(
+        `Fee (${feeAmount}) would leave a non-positive net payout for amount ${amount}. ` +
+          `Choose a larger amount or a different payout method.`,
+      );
+    }
 
-    return {
-      feeAmount,
-      feePercentage: feeConfig.feePercentage,
-      finalAmount,
-    };
+    const netAmount = this.roundMoney(amount - feeAmount);
+    if (netAmount <= 0) {
+      throw new BadRequestException(
+        'Net payout must be greater than zero after fees',
+      );
+    }
+
+    return this.buildResult(
+      amount,
+      this.roundMoney(feeAmount),
+      feeConfig.feePercentage,
+      currency,
+      netAmount,
+    );
+  }
+
+  /**
+   * Preview fee for a given amount/method without creating a payout.
+   * Used so users can see the fee before confirmation.
+   */
+  async previewFee(
+    amount: number,
+    method: string,
+    currency = 'USD',
+  ): Promise<FeeCalculation> {
+    return this.calculateFee(amount, method, currency);
   }
 
   async getFeeConfig(method: string) {
@@ -124,6 +171,26 @@ export class FeeService {
     });
   }
 
+  private buildResult(
+    amount: number,
+    feeAmount: number,
+    feePercentage: number,
+    currency: string,
+    netAmount?: number,
+  ): FeeCalculation {
+    const net = netAmount ?? this.roundMoney(amount - feeAmount);
+    return {
+      amount,
+      grossAmount: amount,
+      fee: feeAmount,
+      feeAmount,
+      feePercentage,
+      netAmount: net,
+      finalAmount: net,
+      currency,
+    };
+  }
+
   private applyFeeBounds(fee: number, minFee: number, maxFee?: number): number {
     if (fee < minFee) {
       return minFee;
@@ -134,5 +201,9 @@ export class FeeService {
     }
 
     return fee;
+  }
+
+  private roundMoney(value: number): number {
+    return Math.round(value * 100) / 100;
   }
 }

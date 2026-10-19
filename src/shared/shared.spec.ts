@@ -6,7 +6,7 @@ import { chainDisplayName, validateAddressForChain } from './validation';
 describe('shared utilities', () => {
   it('masks wallet addresses with the existing public format', () => {
     expect(maskAddress('GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3')).toBe(
-      'GC6X********UHTZF3',
+      'GC6X...TZF3',
     );
     expect(maskAddress('GABC12')).toBe('GABC12');
     expect(maskAddress('')).toBe('');

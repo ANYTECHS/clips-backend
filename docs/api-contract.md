@@ -715,6 +715,40 @@ Download a payout receipt PDF (only available for completed payouts).
 
 All mint endpoints require `Authorization: Bearer <token>`.
 
+### NFT Freeze Administration
+
+Freeze administration endpoints require `x-admin-secret: <ADMIN_SECRET>`. The request body supplies the Stellar admin wallet that will sign the returned unsigned transaction; the NFT contract independently authorizes that wallet when the transaction is submitted.
+
+#### `POST /admin/nfts/:tokenId/freeze`
+
+Prepare an unsigned `freeze(token_id)` Soroban transaction for an existing NFT.
+
+#### `POST /admin/nfts/:tokenId/unfreeze`
+
+Prepare an unsigned `unfreeze(token_id)` Soroban transaction for a frozen NFT.
+
+Both POST requests use this body:
+
+```json
+{
+  "adminAddress": "GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
+}
+```
+
+**Response `200`:** Unsigned transaction XDR, action, token ID, contract ID, and network. The admin wallet must sign and submit the XDR before the on-chain state changes.
+
+**Response `403`:** Missing or invalid `x-admin-secret`. The Soroban contract also enforces contract-admin authorization when the signing wallet submits the transaction.
+
+**Response `404`:** Token ID is not minted.
+
+**Response `409`:** Freeze requested for an already-frozen NFT, or unfreeze requested for an unfrozen NFT.
+
+The Soroban contract source and WASM are maintained outside this repository. Deploy a contract version that stores the per-token freeze state, emits freeze/unfreeze events, exposes `is_frozen(token_id)`, and rejects transfers of frozen tokens before enabling these endpoints.
+
+#### `GET /nfts/:tokenId/freeze-status`
+
+Read the token's current on-chain freeze status. Returns `{ "tokenId": 42, "frozen": false }`; returns `404` when the token does not exist.
+
 #### `POST /nft/prepare-mint`
 
 Prepare a Soroban mint transaction XDR for client-side signing. The clip must:

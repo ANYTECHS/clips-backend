@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PayoutsController } from './payouts.controller';
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
+import { FeeService } from './fee.service';
+import { PayoutExportService } from './payout-export.service';
 
 describe('PayoutsController', () => {
   let controller: PayoutsController;
@@ -22,6 +24,14 @@ describe('PayoutsController', () => {
       providers: [
         { provide: PayoutsService, useValue: payoutsService },
         { provide: BalanceService, useValue: balanceService },
+        {
+          provide: FeeService,
+          useValue: { previewFee: jest.fn(), calculateFee: jest.fn() },
+        },
+        {
+          provide: PayoutExportService,
+          useValue: { exportPayouts: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -33,24 +43,54 @@ describe('PayoutsController', () => {
   });
 
   describe('listPayouts', () => {
-    it('calls payoutsService.getPayouts with userId and status', async () => {
-      const mockPayouts = [{ id: 1, amount: 100, status: 'completed' }];
-      payoutsService.getPayouts.mockResolvedValue(mockPayouts);
+    it('calls payoutsService.getPayouts with userId, status, and pagination', async () => {
+      const mockPage = {
+        items: [{ id: 1, amount: 100, status: 'completed' }],
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+        hasNextPage: false,
+        hasPrevPage: false,
+      };
+      payoutsService.getPayouts.mockResolvedValue(mockPage);
 
       const req = { user: { userId: 5 } } as any;
-      const result = await controller.listPayouts(req, 'completed');
+      const result = await controller.listPayouts(req, {
+        status: 'completed',
+        page: 1,
+        limit: 20,
+      });
 
-      expect(payoutsService.getPayouts).toHaveBeenCalledWith(5, 'completed');
-      expect(result).toEqual(mockPayouts);
+      expect(payoutsService.getPayouts).toHaveBeenCalledWith(
+        5,
+        'completed',
+        1,
+        20,
+      );
+      expect(result).toEqual(mockPage);
     });
 
-    it('calls payoutsService.getPayouts with undefined status if not provided', async () => {
-      payoutsService.getPayouts.mockResolvedValue([]);
+    it('calls payoutsService.getPayouts with defaults when query is empty', async () => {
+      payoutsService.getPayouts.mockResolvedValue({
+        items: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+        totalPages: 0,
+        hasNextPage: false,
+        hasPrevPage: false,
+      });
 
       const req = { user: { userId: 5 } } as any;
-      await controller.listPayouts(req, undefined);
+      await controller.listPayouts(req, {});
 
-      expect(payoutsService.getPayouts).toHaveBeenCalledWith(5, undefined);
+      expect(payoutsService.getPayouts).toHaveBeenCalledWith(
+        5,
+        undefined,
+        1,
+        20,
+      );
     });
   });
 

@@ -18,7 +18,7 @@
       "@clipcash/shared": ["src/shared/index.ts"],
       "@clipcash/shared/*": ["src/shared/*"]
     },
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,

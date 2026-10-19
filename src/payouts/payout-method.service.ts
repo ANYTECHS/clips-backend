@@ -159,14 +159,47 @@ export class PayoutMethodService {
       });
     }
 
+    const updateData: any = {
+      bankName: dto.bankName ?? existing.bankName,
+      accountHolderName: dto.accountHolderName ?? existing.accountHolderName,
+      country: dto.country ?? existing.country,
+      isDefault: dto.isDefault ?? existing.isDefault,
+    };
+
+    // Allow rotation of sensitive encrypted fields. Never log raw values.
+    if (dto.accountNumber !== undefined) {
+      updateData.encryptedAccountNumber = dto.accountNumber
+        ? this.encryptionService.encrypt(dto.accountNumber)
+        : null;
+      updateData.lastFourDigits = this.extractLastFourDigits(
+        dto.accountNumber || dto.iban || existing.lastFourDigits || '',
+      );
+    }
+    if (dto.routingNumber !== undefined) {
+      updateData.encryptedRoutingNumber = dto.routingNumber
+        ? this.encryptionService.encrypt(dto.routingNumber)
+        : null;
+    }
+    if (dto.swiftCode !== undefined) {
+      updateData.encryptedSwiftCode = dto.swiftCode
+        ? this.encryptionService.encrypt(dto.swiftCode)
+        : null;
+    }
+    if (dto.iban !== undefined) {
+      updateData.encryptedIban = dto.iban
+        ? this.encryptionService.encrypt(dto.iban)
+        : null;
+      // Prefer accountNumber for display, fall back to IBAN
+      if (dto.accountNumber === undefined) {
+        updateData.lastFourDigits = this.extractLastFourDigits(
+          dto.iban || existing.lastFourDigits || '',
+        );
+      }
+    }
+
     const updated = await this.prisma.payoutMethod.update({
       where: { id },
-      data: {
-        bankName: dto.bankName ?? existing.bankName,
-        accountHolderName: dto.accountHolderName ?? existing.accountHolderName,
-        country: dto.country ?? existing.country,
-        isDefault: dto.isDefault ?? existing.isDefault,
-      },
+      data: updateData,
     });
 
     this.logger.log(`Updated payout method ${id} for user ${userId}`);

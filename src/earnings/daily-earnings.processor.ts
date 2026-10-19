@@ -2,6 +2,7 @@ import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { DailyEarningsAggregationService } from './daily-earnings-aggregation.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import {
   DAILY_EARNINGS_CRON,
   DAILY_EARNINGS_JOB,
@@ -12,7 +13,7 @@ import {
 
 /**
  * Repeatable BullMQ job that rolls the previous UTC day's earnings up into
- * `DailyEarning` and refreshes each affected user's summary (Issue #767).
+ * `DailyEarning` and refreshes each affected user's summary (Issue #767 / #979).
  *
  * Concurrency is pinned to 1: two overlapping runs would upsert the same
  * `(userId, date, currency)` rows and race on the summary recomputation.
@@ -27,11 +28,15 @@ export class DailyEarningsProcessor
   constructor(
     @InjectQueue(DAILY_EARNINGS_QUEUE) private readonly queue: Queue,
     private readonly aggregationService: DailyEarningsAggregationService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
   }
 
   async onModuleInit(): Promise<void> {
+    this.shutdownService.register(this.worker);
+    this.shutdownService.registerQueue(this.queue);
+
     // A fixed jobId keeps the schedule idempotent across restarts and across
     // multiple API instances — re-registering replaces the entry instead of
     // stacking up duplicate nightly runs.

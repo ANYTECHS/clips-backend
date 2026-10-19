@@ -10,6 +10,14 @@ import {
 export type MintClipDto = CreateMintDto;
 
 export class CreateMintDto {
+  @ApiPropertyOptional({
+    description: 'Slug of the NFT collection. Defaults to viral-clips.',
+    example: 'viral-clips',
+  })
+  @IsOptional()
+  @IsString()
+  collectionId?: string;
+
   @ApiProperty({
     description: 'ID of the clip being minted',
     example: '42',

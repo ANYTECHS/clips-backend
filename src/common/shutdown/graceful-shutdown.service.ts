@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnApplicationShutdown } from '@nestjs/common';
-import { Worker } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 
 /**
  * GracefulShutdownService
@@ -20,30 +20,49 @@ import { Worker } from 'bullmq';
  *
  * What this service does instead:
  *   1. Workers are registered via `register()` as soon as they are created.
- *   2. On `onApplicationShutdown()` (triggered by NestJS after SIGTERM):
- *      a. Each worker's `close()` method is called with `force: false`, which
+ *   2. Queues may be registered via `registerQueue()` so their Redis
+ *      connections are closed after workers drain.
+ *   3. On `onApplicationShutdown()` (triggered by NestJS after SIGTERM):
+ *      a. Mark shuttingDown so health endpoints report draining state.
+ *      b. Each worker's `close()` method is called with `force: false`, which
  *         tells BullMQ to stop picking up new jobs but wait for any currently
  *         active job to finish.
- *      b. A configurable timeout (default: `GRACEFUL_SHUTDOWN_TIMEOUT_MS`)
+ *      c. A configurable timeout (default: `GRACEFUL_SHUTDOWN_TIMEOUT_MS`)
  *         is enforced with a race — if a job takes longer the worker is
  *         force-closed and the job is left in `active` state so the stall
  *         checker can recover it cleanly on the next instance.
+ *      d. Registered queues are closed so Redis connections are released.
  *
- * Usage — in each processor constructor:
- *   constructor(private readonly shutdownService: GracefulShutdownService) {
- *     super();
- *     shutdownService.register(this.worker);   // `this.worker` is from WorkerHost
- *   }
+ * Usage — in each processor onModuleInit:
+ *   this.shutdownService.register(this.worker);
  */
 @Injectable()
 export class GracefulShutdownService implements OnApplicationShutdown {
   private readonly logger = new Logger(GracefulShutdownService.name);
   private readonly workers = new Set<Worker>();
+  private readonly queues = new Set<Queue>();
+  private shuttingDown = false;
+
+  /** Whether the process is currently draining workers. */
+  isShuttingDown(): boolean {
+    return this.shuttingDown;
+  }
+
+  /** Number of workers currently registered (useful for health / tests). */
+  getRegisteredWorkerCount(): number {
+    return this.workers.size;
+  }
 
   /** Register a BullMQ Worker so it participates in graceful drain. */
   register(worker: Worker): void {
+    if (!worker) {
+      this.logger.warn('Attempted to register a null/undefined worker — skipped');
+      return;
+    }
     this.workers.add(worker);
-    this.logger.debug(`Registered worker for queue "${worker.name}" (total: ${this.workers.size})`);
+    this.logger.debug(
+      `Registered worker for queue "${worker.name}" (total: ${this.workers.size})`,
+    );
   }
 
   /** Unregister a worker (called from onModuleDestroy if needed). */
@@ -52,18 +71,38 @@ export class GracefulShutdownService implements OnApplicationShutdown {
   }
 
   /**
+   * Register a BullMQ Queue so its Redis connection is closed after workers
+   * finish draining.
+   */
+  registerQueue(queue: Queue): void {
+    if (!queue) return;
+    this.queues.add(queue);
+    this.logger.debug(
+      `Registered queue "${queue.name}" for shutdown close (total: ${this.queues.size})`,
+    );
+  }
+
+  /**
    * Called by NestJS when the application begins shutdown.
-   * Gracefully drains every registered worker within the configured timeout.
+   * Gracefully drains every registered worker within the configured timeout,
+   * then closes queue Redis connections.
    */
   async onApplicationShutdown(signal?: string): Promise<void> {
-    if (this.workers.size === 0) return;
+    this.shuttingDown = true;
+
+    if (this.workers.size === 0 && this.queues.size === 0) {
+      this.logger.log(
+        `[shutdown] Signal=${signal ?? 'unknown'} — no workers/queues registered`,
+      );
+      return;
+    }
 
     const timeoutMs =
       parseInt(process.env.GRACEFUL_SHUTDOWN_TIMEOUT_MS ?? '30000', 10);
 
     this.logger.log(
       `[shutdown] Signal=${signal ?? 'unknown'} — draining ${this.workers.size} worker(s) ` +
-        `(timeout=${timeoutMs}ms)...`,
+        `and closing ${this.queues.size} queue(s) (timeout=${timeoutMs}ms)...`,
     );
 
     await Promise.all(
@@ -72,7 +111,13 @@ export class GracefulShutdownService implements OnApplicationShutdown {
       ),
     );
 
-    this.logger.log('[shutdown] All workers drained.');
+    this.logger.log('[shutdown] All workers drained. Closing queue connections...');
+
+    await Promise.all(
+      Array.from(this.queues).map((queue) => this.closeQueue(queue)),
+    );
+
+    this.logger.log('[shutdown] Graceful shutdown complete.');
   }
 
   private async drainWorker(worker: Worker, timeoutMs: number): Promise<void> {
@@ -88,6 +133,8 @@ export class GracefulShutdownService implements OnApplicationShutdown {
           `[shutdown] Worker "${name}" did not drain within ${timeoutMs}ms — force-closing. ` +
             `Active jobs will be recovered by the stall checker on the next instance.`,
         );
+        // Best-effort force close; ignore errors if already closed.
+        void worker.close(true).catch(() => undefined);
         resolve();
       }, timeoutMs),
     );
@@ -97,6 +144,17 @@ export class GracefulShutdownService implements OnApplicationShutdown {
     } catch (err) {
       this.logger.error(
         `[shutdown] Error draining worker "${name}": ${(err as Error).message}`,
+      );
+    }
+  }
+
+  private async closeQueue(queue: Queue): Promise<void> {
+    try {
+      await queue.close();
+      this.logger.log(`[shutdown] Queue "${queue.name}" Redis connection closed.`);
+    } catch (err) {
+      this.logger.warn(
+        `[shutdown] Error closing queue "${queue.name}": ${(err as Error).message}`,
       );
     }
   }

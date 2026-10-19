@@ -93,6 +93,7 @@ export class MintStatusResponseDto {
     type: String,
     format: 'date-time',
     description: 'ISO 8601 timestamp when this record was created.',
+    example: '2026-01-01T00:00:00.000Z',
   })
   createdAt: Date;
 
@@ -100,6 +101,7 @@ export class MintStatusResponseDto {
     type: String,
     format: 'date-time',
     description: 'ISO 8601 timestamp of the last update.',
+    example: '2026-01-01T00:05:00.000Z',
   })
   updatedAt: Date;
 }

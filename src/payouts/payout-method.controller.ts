@@ -17,10 +17,12 @@ import {
   ApiBody,
   ApiParam,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
   ApiNotFoundResponse,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutMethodService } from './payout-method.service';
 import { CreatePayoutMethodDto } from './dto/create-payout-method.dto';
@@ -32,9 +34,10 @@ interface RequestWithUser extends Request {
   user: { userId: number };
 }
 
-@ApiTags('payout-methods')
+@ApiTags('Payouts')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiUnauthorizedResponse({ description: 'Unauthorized - missing or invalid token' })
+@ApiForbiddenResponse({ description: 'Forbidden - can only access own payout methods' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('payout-methods')
 @Auth()

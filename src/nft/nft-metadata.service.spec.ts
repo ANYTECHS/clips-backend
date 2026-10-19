@@ -51,6 +51,30 @@ describe('NftMetadataService', () => {
     expect(platformAttr!.value).toBe('ClipCash');
   });
 
+  it('embeds collection-specific metadata in token metadata', () => {
+    const result = service.build({
+      ...baseClip,
+      collection: {
+        collectionId: 'podcast-highlights',
+        name: 'Podcast Highlights',
+        type: 'podcast',
+        metadata: { category: 'podcast', schemaVersion: 1 },
+      },
+    });
+
+    expect(result.collection).toEqual({
+      name: 'Podcast Highlights',
+      family: 'ClipCash',
+      collectionId: 'podcast-highlights',
+      type: 'podcast',
+      metadata: { category: 'podcast', schemaVersion: 1 },
+    });
+    expect(result.attributes).toContainEqual({
+      trait_type: 'Collection',
+      value: 'Podcast Highlights',
+    });
+  });
+
   it('falls back to default name and description when title/caption are null', () => {
     const clip = { ...baseClip, title: null, caption: null };
     const result = service.build(clip);

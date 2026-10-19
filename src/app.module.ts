@@ -60,11 +60,17 @@ import { BlockchainModule } from './blockchain/blockchain.module';
         // Global tier: 100 requests per minute per tracker (IP or user ID).
         // Every tier is env-overridable so staging/load tests can raise
         // limits without code changes; production keeps the secure defaults.
+        // Canonical: RATE_LIMIT_LIMIT (count) + RATE_LIMIT_TTL (seconds).
+        // Legacy aliases THROTTLE_DEFAULT_LIMIT/THROTTLE_DEFAULT_TTL (ms) kept.
         const num = (key: string, fallback: number): number => {
           const raw = Number(config.get(key, fallback));
           return Number.isSafeInteger(raw) && raw > 0 ? raw : fallback;
         };
-        const defaultTtl = num('THROTTLE_DEFAULT_TTL', 60000);
+        const configuredTtlSeconds = config.get<string>('RATE_LIMIT_TTL');
+        const defaultTtl =
+          configuredTtlSeconds === undefined
+            ? num('THROTTLE_DEFAULT_TTL', 60000)
+            : Number(configuredTtlSeconds) * 1000;
         const defaultLimit = num(
           'RATE_LIMIT_LIMIT',
           num('THROTTLE_DEFAULT_LIMIT', 100),

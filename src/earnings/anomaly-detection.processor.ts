@@ -1,22 +1,28 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { ANOMALY_DETECTION_QUEUE } from './anomaly-detection.queue';
 import { AnomalyDetectionService } from './anomaly-detection.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '../config/config.service';
 import { AnomalySeverity } from './earning-anomaly.entity';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 @Processor(ANOMALY_DETECTION_QUEUE)
-export class AnomalyDetectionProcessor extends WorkerHost {
+export class AnomalyDetectionProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(AnomalyDetectionProcessor.name);
 
   constructor(
     private readonly anomalyService: AnomalyDetectionService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
+  }
+
+  onModuleInit(): void {
+    this.shutdownService.register(this.worker);
   }
 
   async process(job: Job): Promise<void> {

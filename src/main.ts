@@ -1,19 +1,20 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
-import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import * as bodyParser from 'body-parser';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AppModule } from './app.module';
+import { configureHelmet } from './common/security/helmet';
 import { RoyaltyConfigurationService } from './nft/royalty-configuration.service';
 import { PayoutsService } from './payouts/payouts.service';
 import { StellarWebhookService } from './subscriptions/stellar-webhook.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AppLoggerService } from './logger/logger.service';
+import { createGlobalValidationPipe } from './common/pipes/global-validation.pipe';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
@@ -96,50 +97,11 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
 
-  // Security headers with Helmet. Registered before any route/router (including
-  // Swagger UI below) so every response — docs included — gets these headers;
-  // Express only applies middleware to requests that reach it in registration order.
-  // Swagger UI's bundled HTML injects an inline <script> to boot SwaggerUIBundle, so
-  // scriptSrc needs 'unsafe-inline' whenever the docs UI is exposed; kept locked down
-  // otherwise.
-  app.use(
-    helmet({
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: [`'self'`],
-          styleSrc: [`'self'`, `'unsafe-inline'`],
-          scriptSrc: enableSwaggerUI ? [`'self'`, `'unsafe-inline'`] : [`'self'`],
-          imgSrc: [`'self'`, 'data:', 'https:'],
-          connectSrc: [`'self'`],
-          fontSrc: [`'self'`],
-          objectSrc: [`'none'`],
-          mediaSrc: [`'self'`],
-          frameSrc: [`'none'`],
-        },
-      },
-      crossOriginEmbedderPolicy: false,
-      crossOriginResourcePolicy: { policy: 'cross-origin' },
-      referrerPolicy: { policy: 'no-referrer' },
-      hsts: {
-        maxAge: 31536000,
-        includeSubDomains: true,
-        preload: true,
-      },
-      noSniff: true,
-      hidePoweredBy: true,
-      frameguard: {
-        action: 'deny',
-      },
-      // Disable powerful browser features the API never uses.
-      permissionsPolicy: {
-        camera: [],
-        microphone: [],
-        geolocation: [],
-        payment: [],
-        usb: [],
-      },
-    }),
-  );
+  // Security headers with Helmet (see src/common/security/helmet.ts).
+  // Registered before any route/router (including Swagger UI below) so every
+  // response — docs included — gets these headers. Includes Permissions-Policy
+  // lockdown plus hidePoweredBy/frameguard/noSniff/HSTS.
+  configureHelmet(app, enableSwaggerUI);
 
   // Strip framework/server fingerprinting headers on every response without
   // breaking Swagger UI (which stays accessible at /api/docs).
@@ -310,6 +272,23 @@ async function bootstrap() {
       '```\n\n' +
       'Internal stack traces are **never** returned in API or Swagger responses. ' +
       'Use the `requestId` when contacting support or searching structured application logs.\n\n' +
+      '## Stellar Network\n\n' +
+      'The Stellar network is selected with the `STELLAR_NETWORK` environment variable:\n\n' +
+      '| Value | Network | Horizon | Soroban RPC |\n' +
+      '|-------|---------|---------|-------------|\n' +
+      '| `testnet` (default) | Stellar Testnet | `https://horizon-testnet.stellar.org` | `https://soroban-testnet.stellar.org` |\n' +
+      '| `public` | Stellar Mainnet | `https://horizon.stellar.org` | `https://soroban-rpc.stellar.org` |\n\n' +
+      'Wallet balances, NFT minting, payouts and payment listening all target the configured network. ' +
+      'Addresses and transaction hashes from one network are not valid on the other.\n\n' +
+      '## Minimum Payout\n\n' +
+      'Payout requests below `MIN_STELLAR_PAYOUT` (USD equivalent, default `5`) are rejected with `400 Bad Request`:\n' +
+      '```json\n' +
+      '{\n' +
+      '  "statusCode": 400,\n' +
+      '  "message": "Minimum payout amount is 5 USD equivalent. Requested: 3 USD.",\n' +
+      '  "error": "Bad Request"\n' +
+      '}\n' +
+      '```\n\n' +
       '## API Versioning\n\n' +
       'This OpenAPI document reflects the current public API surface (SemVer; see `CHANGELOG.md` and `docs/versioning.md`). ' +
       'Breaking API changes bump the major version and are reflected in this Swagger/OpenAPI spec.',
@@ -324,22 +303,21 @@ async function bootstrap() {
       },
       'access-token',
     )
-    .addTag('auth', 'Authentication and authorization')
-    .addTag('users', 'User management')
-    .addTag('videos', 'Video upload and management')
-    .addTag('clips', 'Clip generation and management')
-    .addTag('subscriptions', 'Subscription and payment management')
-    .addTag('webhooks', 'Webhook endpoints for external services')
-    .addTag('wallets', 'Blockchain wallet management')
-    .addTag('payouts', 'Revenue payouts')
+    .addTag('Authentication', 'Authentication and authorization')
+    .addTag('Users', 'User management')
+    .addTag('Videos', 'Video upload and management')
+    .addTag('Clips', 'Clip generation and management')
+    .addTag('Subscriptions', 'Subscription plans and lifecycle')
+    .addTag('Payments', 'Fiat and Stellar subscription payments')
+    .addTag('Webhooks', 'Webhook endpoints for external services')
+    .addTag('Wallets', 'Blockchain wallet management')
+    .addTag('Payouts', 'Revenue payouts and payout methods')
     .addTag('earnings', 'Earnings tracking')
-    .addTag('nfts', 'NFT minting and royalty queries')
-    .addTag('nft', 'NFT minting and royalty management')
-    .addTag('payout', 'Payout requests and processing')
+    .addTag('NFTs', 'NFT minting and royalty management')
     .addTag('stellar', 'Stellar network interactions')
     .addTag('jobs', 'Background job management')
     .addTag('platforms', 'Social platform integrations')
-    .addTag('admin', 'Admin-only endpoints')
+    .addTag('Admin', 'Admin-only endpoints')
     .addTag('queues', 'BullMQ queue management')
     .addTag('circuit-breaker', 'Circuit breaker monitoring and management')
     .addTag('metrics', 'Prometheus metrics endpoint')
@@ -398,30 +376,7 @@ async function bootstrap() {
     next();
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      exceptionFactory: (errors) => {
-        const messages = errors.map((error) => {
-          const constraints = error.constraints
-            ? Object.values(error.constraints)
-            : [`${error.property} is invalid`];
-          return {
-            field: error.property,
-            errors: constraints,
-          };
-        });
-        return new (require('@nestjs/common').BadRequestException)({
-          statusCode: 400,
-          message: 'Validation failed',
-          error: 'Bad Request',
-          details: messages,
-        });
-      },
-    }),
-  );
+  app.useGlobalPipes(createGlobalValidationPipe());
 
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   // Enable Nest's shutdown hooks so providers can clean up on signals

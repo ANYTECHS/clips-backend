@@ -1,11 +1,12 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { PayoutsService } from './payouts.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 
 interface PayoutRetryJob {
   payoutId: number;
@@ -14,14 +15,19 @@ interface PayoutRetryJob {
 @Processor(PAYOUT_RETRY_QUEUE, {
   concurrency: getBullMQWorkerConfig(new ConfigService()).payoutRetryConcurrency,
 })
-export class PayoutRetryProcessor extends WorkerHost {
+export class PayoutRetryProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(PayoutRetryProcessor.name);
 
   constructor(
     private payoutsService: PayoutsService,
     private metricsService: MetricsService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
+  }
+
+  onModuleInit(): void {
+    this.shutdownService.register(this.worker);
   }
 
   async process(job: Job<PayoutRetryJob>): Promise<void> {

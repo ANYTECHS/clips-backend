@@ -41,6 +41,7 @@ function makeClip(overrides: Record<string, unknown> = {}) {
     royaltyBps: 1000,
     postStatus: null,
     nftStatus: null,
+    collectionId: 'viral-clips',
     ...overrides,
   };
 }
@@ -64,6 +65,17 @@ function buildService(
     clip: {
       findUnique: jest.fn().mockResolvedValue(clip),
       update:     jest.fn().mockResolvedValue(clip),
+      count:      jest.fn().mockResolvedValue(0),
+    },
+    nftCollection: {
+      findUnique: jest.fn().mockResolvedValue({
+        collectionId: 'viral-clips',
+        name: 'Viral Clips',
+        type: 'viral',
+        metadata: { category: 'viral' },
+        royaltyBps: null,
+        maxSupply: null,
+      }),
     },
   };
 
@@ -206,6 +218,7 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
       network:       'testnet',
       contractId:    CONTRACT_ID,
       clipId:        1,
+      collectionId:  'viral-clips',
       walletAddress: VALID_WALLET,
       metadataUri:   METADATA_URI,
       royaltyBps:    1000,
@@ -227,6 +240,7 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
       args: {
         to:          VALID_WALLET,
         token_id:    '1',
+        collection_id: 'viral-clips',
         metadata:    METADATA_URI,
         royalty_bps: 1000,
       },
@@ -262,6 +276,57 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
         data:  expect.objectContaining({ nftStatus: 'minting' }),
       }),
     );
+  });
+
+  it('assigns another supported collection in the mint XDR and clip record', async () => {
+    const { service, prisma } = buildService({ collectionId: 'podcast-highlights' });
+    prisma.nftCollection.findUnique.mockResolvedValue({
+      collectionId: 'podcast-highlights',
+      name: 'Podcast Highlights',
+      type: 'podcast',
+      metadata: { category: 'podcast' },
+      royaltyBps: 800,
+      maxSupply: null,
+    });
+
+    const result = await service.prepareMintTx(1, VALID_WALLET, 'podcast-highlights');
+    const decoded = JSON.parse(Buffer.from(result.xdr, 'base64').toString('utf8'));
+
+    expect(decoded.args.collection_id).toBe('podcast-highlights');
+    expect(decoded.args.royalty_bps).toBe(800);
+    expect(result.collectionId).toBe('podcast-highlights');
+    expect(prisma.clip.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          collectionId: 'podcast-highlights',
+          royaltyBps: 800,
+          nftStatus: 'minting',
+        }),
+      }),
+    );
+  });
+
+  it('rejects an unsupported collection ID before preparing the mint', async () => {
+    const { service } = buildService();
+
+    await expect(service.prepareMintTx(1, VALID_WALLET, 'not-a-collection'))
+      .rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects minting when the selected collection is at its supply limit', async () => {
+    const { service, prisma } = buildService();
+    prisma.nftCollection.findUnique.mockResolvedValue({
+      collectionId: 'viral-clips',
+      name: 'Viral Clips',
+      type: 'viral',
+      metadata: {},
+      royaltyBps: null,
+      maxSupply: 1,
+    });
+    prisma.clip.count.mockResolvedValue(1);
+
+    await expect(service.prepareMintTx(1, VALID_WALLET))
+      .rejects.toBeInstanceOf(BadRequestException);
   });
 
   // ── royalty BPS default ───────────────────────────────────────────────────

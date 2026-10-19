@@ -1,13 +1,18 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Queue } from 'bullmq';
+import { Job, Queue } from 'bullmq';
 import { RedisService } from '../redis/redis.service';
+import { QueueMetricsService } from '../metrics/queue-metrics.service';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import { EMAIL_DELIVERY_QUEUE } from '../auth/email-delivery.queue';
+import { CLIP_POSTING_QUEUE } from '../clips/clip-posting.queue';
+import { NFT_MINT_QUEUE } from '../clips/nft-mint.queue';
+import { ANOMALY_DETECTION_QUEUE } from '../earnings/anomaly-detection.queue';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const CLEAN_BATCH_LIMIT = 1000;
 const DEFAULT_RETENTION_DAYS = 30;
+const FAILED_JOB_RETENTION_DAYS = 90;
 
 /** How many consecutive Redis-down skips to log before going quiet. */
 const MAX_SKIP_LOGS = 3;
@@ -15,18 +20,23 @@ const MAX_SKIP_LOGS = 3;
 @Injectable()
 export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QueueCleanupService.name);
-  private readonly clipQueue: Queue;
-  private readonly emailQueue: Queue;
+  private readonly queues: Queue[];
   private cleanupTimer?: NodeJS.Timeout;
   private consecutiveSkips = 0;
 
   constructor(
     private readonly config: ConfigService,
     private readonly redisService: RedisService,
+    private readonly queueMetricsService: QueueMetricsService,
   ) {
     const connection = this.getRedisConnection();
-    this.clipQueue = new Queue(CLIP_GENERATION_QUEUE, { connection });
-    this.emailQueue = new Queue(EMAIL_DELIVERY_QUEUE, { connection });
+    this.queues = [
+      new Queue(CLIP_GENERATION_QUEUE, { connection }),
+      new Queue(EMAIL_DELIVERY_QUEUE, { connection }),
+      new Queue(CLIP_POSTING_QUEUE, { connection }),
+      new Queue(NFT_MINT_QUEUE, { connection }),
+      new Queue(ANOMALY_DETECTION_QUEUE, { connection }),
+    ];
   }
 
   onModuleInit(): void {
@@ -38,8 +48,9 @@ export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
       clearTimeout(this.cleanupTimer);
     }
 
-    void this.clipQueue.close();
-    void this.emailQueue.close();
+    for (const queue of this.queues) {
+      void queue.close();
+    }
   }
 
   async runCleanup(): Promise<void> {
@@ -56,17 +67,28 @@ export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
 
     this.consecutiveSkips = 0;
     const retentionMs = this.getRetentionMilliseconds();
-    const queues = [this.clipQueue, this.emailQueue];
+    const failedRetentionMs = FAILED_JOB_RETENTION_DAYS * ONE_DAY_MS;
 
-    for (const queue of queues) {
+    for (const queue of this.queues) {
       try {
-        const removed = await this.cleanCompletedJobs(queue, retentionMs);
+        const completedRemoved = await this.cleanCompletedJobs(queue, retentionMs);
         this.logger.log(
-          `Removed ${removed} completed jobs older than ${retentionMs / ONE_DAY_MS} days from queue '${queue.name}'`,
+          `Removed ${completedRemoved} completed jobs older than ${retentionMs / ONE_DAY_MS} days from queue '${queue.name}'`,
         );
+        if (completedRemoved > 0) {
+          this.queueMetricsService.recordJobsCleaned(queue.name, 'completed', completedRemoved);
+        }
+
+        const failedRemoved = await this.cleanFailedJobs(queue, failedRetentionMs);
+        this.logger.log(
+          `Removed ${failedRemoved} failed jobs older than ${FAILED_JOB_RETENTION_DAYS} days from queue '${queue.name}'`,
+        );
+        if (failedRemoved > 0) {
+          this.queueMetricsService.recordJobsCleaned(queue.name, 'failed', failedRemoved);
+        }
       } catch (error) {
         this.logger.error(
-          `Failed to clean completed jobs from queue '${queue.name}': ${(error as Error).message}`,
+          `Failed to clean jobs from queue '${queue.name}': ${(error as Error).message}`,
           (error as Error).stack,
         );
       }
@@ -105,6 +127,68 @@ export class QueueCleanupService implements OnModuleInit, OnModuleDestroy {
     }
 
     return totalRemoved;
+  }
+
+  private async cleanFailedJobs(queue: Queue, retentionMs: number): Promise<number> {
+    let totalRemoved = 0;
+    let skippedCount = 0;
+
+    while (true) {
+      const failedJobs = await queue.getFailed(0, CLEAN_BATCH_LIMIT);
+      if (failedJobs.length === 0) {
+        break;
+      }
+
+      const jobsToRemove: string[] = [];
+      const now = Date.now();
+
+      for (const job of failedJobs) {
+        if (this.shouldPreserveFailedJob(job, now, retentionMs)) {
+          skippedCount++;
+          continue;
+        }
+        jobsToRemove.push(job.id!);
+      }
+
+      if (jobsToRemove.length > 0) {
+        for (const jobId of jobsToRemove) {
+          await queue.remove(jobId);
+          totalRemoved++;
+        }
+      }
+
+      if (failedJobs.length < CLEAN_BATCH_LIMIT) {
+        break;
+      }
+    }
+
+    if (skippedCount > 0) {
+      this.logger.log(
+        `Preserved ${skippedCount} required failed jobs in queue '${queue.name}'`,
+      );
+    }
+
+    return totalRemoved;
+  }
+
+  private shouldPreserveFailedJob(job: Job, now: number, retentionMs: number): boolean {
+    const jobFinishedOn = job.finishedOn ?? 0;
+    const ageMs = now - jobFinishedOn;
+
+    if (ageMs < retentionMs) {
+      return true;
+    }
+
+    const jobData = job.data as Record<string, unknown>;
+    if (jobData.preserve === true) {
+      return true;
+    }
+
+    if (jobData.requiresManualIntervention === true) {
+      return true;
+    }
+
+    return false;
   }
 
   private getRetentionMilliseconds(): number {

@@ -21,6 +21,13 @@ export interface ClipData {
   originalVideoDuration?: number;
   /** Username / handle of the clip creator */
   creatorHandle?: string;
+  /** Collection branding and metadata associated with this NFT */
+  collection?: {
+    collectionId: string;
+    name: string;
+    type: string;
+    metadata: Record<string, unknown>;
+  };
 }
 
 /** Result of building metadata plus uploading it to IPFS */
@@ -101,12 +108,28 @@ export class NftMetadataService {
       });
     }
 
+    if (clip.collection) {
+      attributes.push({ trait_type: 'Collection', value: clip.collection.name });
+      attributes.push({ trait_type: 'Collection Type', value: clip.collection.type });
+    }
+
     return {
       name: clip.title?.trim() || `Clip #${clip.id}`,
       description: clip.caption?.trim() || `ClipCash generated clip ${clip.id}`,
       image: clip.thumbnail ?? clip.clipUrl,
       animation_url: clip.clipUrl,
       attributes,
+      ...(clip.collection
+        ? {
+            collection: {
+              name: clip.collection.name,
+              family: 'ClipCash',
+              collectionId: clip.collection.collectionId,
+              type: clip.collection.type,
+              metadata: clip.collection.metadata,
+            },
+          }
+        : {}),
       seller_fee_basis_points: royaltyBps,
       ...(royaltyRecipient ? { fee_recipient: royaltyRecipient } : {}),
       royalty: {
@@ -116,9 +139,11 @@ export class NftMetadataService {
         asset: asset.code,
         ...(asset.contractId ? { assetContractId: asset.contractId } : {}),
       },
+      duration: clip.duration,
       viralityScore: clip.viralityScore ?? 0,
       originalDuration: clip.duration,
       createdAt: clip.createdAt.toISOString(),
+      platforms: clip.platforms ?? [],
     };
   }
 

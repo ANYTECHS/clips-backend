@@ -30,6 +30,11 @@ import { NftTransferHistoryService } from './nft-transfer-history.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
+import { SorobanContractController } from './soroban-contract.controller';
+import { AdminNftController } from './admin-nft.controller';
+import { NftFreezeAdminGuard } from './guards/nft-freeze-admin.guard';
+import { NftCollectionService } from './nft-collection.service';
+import { NftCollectionController } from './nft-collection.controller';
 
 @Module({
   imports: [
@@ -53,6 +58,7 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     BatchRoyaltyService,
     ClipRoyaltyService,
     NftMintGuard,
+    NftFreezeAdminGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
     AdminContractService,
@@ -63,12 +69,16 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftCollectionService,
   ],
   controllers: [
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,
     ClipRoyaltyController,
+    SorobanContractController,
+    AdminNftController,
+    NftCollectionController,
   ],
   exports: [
     NftService,
@@ -90,6 +100,7 @@ import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftCollectionService,
   ],
 })
 export class NftModule {}

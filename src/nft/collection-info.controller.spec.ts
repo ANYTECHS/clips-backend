@@ -23,6 +23,7 @@ describe('NftController – GET /nfts/collection (Issue #679)', () => {
 
   const mockAdminContractService = {
     getCollectionInfo: jest.fn(),
+    getTotalSupply: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -71,5 +72,17 @@ describe('NftController – GET /nfts/collection (Issue #679)', () => {
       symbol: 'CLIP',
       contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
     });
+  });
+
+  it('returns total supply including configured contract and network', async () => {
+    const supply = {
+      totalSupply: 1250,
+      contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+      network: 'testnet',
+    };
+    mockAdminContractService.getTotalSupply.mockResolvedValue(supply);
+
+    await expect(controller.getTotalSupply()).resolves.toEqual(supply);
+    expect(mockAdminContractService.getTotalSupply).toHaveBeenCalledTimes(1);
   });
 });
