@@ -18,7 +18,7 @@ import { StellarWebhookService } from './stellar-webhook.service';
 import { StellarWebhookPayloadDto } from './dto/stellar-webhook-payload.dto';
 import { RawBody } from './decorators/raw-body.decorator';
 
-@ApiTags('webhooks')
+@ApiTags('Webhooks')
 @Controller('webhooks/stellar')
 export class StellarWebhookController {
   constructor(private readonly stellarWebhookService: StellarWebhookService) {}

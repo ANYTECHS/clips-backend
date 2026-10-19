@@ -17,7 +17,7 @@ export class UserResponseDto {
   @ApiPropertyOptional({ example: '2026-07-26T12:00:00.000Z' })
   emailVerified?: Date | null;
 
-  @ApiPropertyOptional({ example: 'GABC...X92K' })
+  @ApiPropertyOptional({ example: 'GABF...KJ93XD' })
   stellarPublicKey?: string | null;
 
   @ApiPropertyOptional({ example: 'custodial' })
@@ -29,7 +29,7 @@ export class UserResponseDto {
   })
   showOnLeaderboard?: boolean;
 
-  @ApiProperty()
+  @ApiProperty({ example: '2026-07-26T12:00:00.000Z' })
   createdAt: Date;
 
   @Exclude()

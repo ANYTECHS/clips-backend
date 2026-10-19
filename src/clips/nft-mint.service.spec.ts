@@ -553,6 +553,7 @@ describe('NftMintService.confirmMint', () => {
       clipId: 5,
       mintAddress: 'MY_TOKEN',
       mintedAt: expect.any(Date),
+      nftStatus: 'minted',
     });
   });
 });
@@ -581,6 +582,15 @@ describe('NftMintService.prepareBurnTx', () => {
     await expect(service.prepareBurnTx(5, 'INVALID')).rejects.toThrow(
       BadRequestException,
     );
+  });
+
+  it('rejects non-positive and unsafe token IDs', async () => {
+    await expect(service.prepareBurnTx(0, VALID_WALLET)).rejects.toThrow(
+      BadRequestException,
+    );
+    await expect(
+      service.prepareBurnTx(Number.MAX_SAFE_INTEGER + 1, VALID_WALLET),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('returns xdr, tokenId, owner, contractId and network on success', async () => {

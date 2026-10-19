@@ -24,7 +24,7 @@ import { WebhooksService } from './webhooks.service';
 import { Public } from '../auth/decorators/public.decorator';
 import { ProcessWebhookDto } from './dto/process-webhook.dto';
 
-@ApiTags('webhooks')
+@ApiTags('Webhooks')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('webhooks')
 export class WebhooksController {

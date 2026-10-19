@@ -32,7 +32,7 @@ import {
   SchedulePauseDto,
 } from './dto/contract-pause.dto';
 
-@ApiTags('blockchain', 'soroban', 'nfts')
+@ApiTags('blockchain', 'soroban', 'NFTs')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller()
 export class BlockchainController {

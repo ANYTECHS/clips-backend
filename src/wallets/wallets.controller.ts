@@ -44,7 +44,7 @@ interface AuthRequest extends Request {
   user: { userId: number; email: string | null };
 }
 
-@ApiTags('wallets')
+@ApiTags('Wallets')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
 @ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })
@@ -75,7 +75,7 @@ export class WalletsController {
         type: 'object',
         properties: {
           id: { type: 'number' },
-          address: { type: 'string', example: 'GABC...X92K' },
+          address: { type: 'string', example: 'GABF...KJ93XD' },
           chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
           type: { type: 'string', example: 'freighter' },
           connectedAt: { type: 'string', format: 'date-time' },
@@ -105,7 +105,7 @@ export class WalletsController {
       type: 'object',
       properties: {
         id: { type: 'number' },
-        address: { type: 'string', example: 'GABC...X92K' },
+        address: { type: 'string', example: 'GABF...KJ93XD' },
         chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
         type: { type: 'string', example: 'freighter' },
         connectedAt: { type: 'string', format: 'date-time' },

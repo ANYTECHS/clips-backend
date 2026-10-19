@@ -1,12 +1,9 @@
 /**
  * Soroban Contract Standards Compatibility Tests — Issue #1064
  *
- * Verifies ClipCash NFT contract implementation against:
- *  - SEP-0039 NFT metadata structure (name, description, image, animation_url, attributes)
- *  - ERC-2981-style royalty standard (BPS-based, recipient, calculation)
- *  - SEP-0040 token interface function shapes (transfer, approve, owner_of, token_uri)
- *  - CAP-54 contract lifecycle concerns (address validation, contract ID format)
- *  - Soroban parameter serialization for standard function calls
+ * Offline SDK smoke tests for metadata conventions, royalty arithmetic, and
+ * Soroban XDR construction. These do not verify a deployed contract ABI.
+ * SEP-0050 interface shapes are also covered where contract calls are built.
  *
  * All tests are offline — no RPC/network access.
  */
@@ -105,10 +102,10 @@ function checkedRoyaltyAmount(salePrice: bigint, royaltyBps: number): bigint {
 
 describe('Soroban Contract Standards (#1064)', () => {
 
-  // ── SEP-0039 Metadata Standard ───────────────────────────────────────────
+  // ── Off-chain NFT metadata profile ──────────────────────────────────────
 
-  describe('SEP-0039 — NFT Metadata structure', () => {
-    it('contains all four required SEP-0039 fields', () => {
+  describe('ClipCash NFT metadata profile', () => {
+    it('contains the expected display metadata fields', () => {
       const metadata = buildSampleMetadata();
 
       expect(metadata).toHaveProperty('name');
@@ -242,9 +239,9 @@ describe('Soroban Contract Standards (#1064)', () => {
     });
   });
 
-  // ── SEP-0040 Token Interface ─────────────────────────────────────────────
+  // ── SEP-0050 Non-Fungible Token Interface ────────────────────────────────
 
-  describe('SEP-0040 — Token Interface Function Shapes', () => {
+  describe('SEP-0050 — Non-Fungible Token Interface Function Shapes', () => {
     it('can build a token transfer transaction for the contract', () => {
       const contract = new Contract(CONTRACT_ID);
       const kp = Keypair.random();
@@ -273,7 +270,7 @@ describe('Soroban Contract Standards (#1064)', () => {
       expect(args.args()).toHaveLength(3);
     });
 
-    it('can build an approve transaction', () => {
+    it('can build a SEP-0050 approve transaction with an expiry ledger', () => {
       const contract = new Contract(CONTRACT_ID);
       const kp = Keypair.random();
 
@@ -285,9 +282,9 @@ describe('Soroban Contract Standards (#1064)', () => {
           contract.call(
             'approve',
             nativeToScVal(CREATOR_ADDRESS, { type: 'address' }),  // caller
-            nativeToScVal(BUYER_ADDRESS, { type: 'address' }),    // operator
+            nativeToScVal(BUYER_ADDRESS, { type: 'address' }),    // approved
             nativeToScVal(42, { type: 'u64' }),                   // tokenId
-            nativeToScVal(100, { type: 'u32' }),                  // expiry ledger
+            nativeToScVal(100, { type: 'u32' }),                  // live_until_ledger
           ),
         )
         .setTimeout(30)
@@ -297,6 +294,52 @@ describe('Soroban Contract Standards (#1064)', () => {
       const args = op.func.invokeContract();
       expect(args.functionName().toString()).toBe('approve');
       expect(args.args()).toHaveLength(4);
+    });
+
+    it('can build SEP-0050 approve_for_all with expiry-ledger revocation', () => {
+      const contract = new Contract(CONTRACT_ID);
+      const kp = Keypair.random();
+
+      const tx = new TransactionBuilder(new Account(kp.publicKey(), '0'), {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(
+          contract.call(
+            'approve_for_all',
+            nativeToScVal(CREATOR_ADDRESS, { type: 'address' }),
+            nativeToScVal(BUYER_ADDRESS, { type: 'address' }),
+            nativeToScVal(0, { type: 'u32' }),
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      const args = (tx.operations[0] as any).func.invokeContract();
+      expect(args.functionName().toString()).toBe('approve_for_all');
+      expect(args.args()).toHaveLength(3);
+    });
+
+    it('can build a collection balance query', () => {
+      const contract = new Contract(CONTRACT_ID);
+      const kp = Keypair.random();
+
+      const tx = new TransactionBuilder(new Account(kp.publicKey(), '0'), {
+        fee: '100',
+        networkPassphrase: Networks.TESTNET,
+      })
+        .addOperation(
+          contract.call(
+            'balance',
+            nativeToScVal(CREATOR_ADDRESS, { type: 'address' }),
+          ),
+        )
+        .setTimeout(30)
+        .build();
+
+      const args = (tx.operations[0] as any).func.invokeContract();
+      expect(args.functionName().toString()).toBe('balance');
+      expect(args.args()).toHaveLength(1);
     });
 
     it('can build a token_uri query transaction', () => {

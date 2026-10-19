@@ -94,8 +94,32 @@ export class NftOwnershipService {
   }
 
   /**
+   * Verify ownership directly from Soroban and return standard { owner, message } response.
+   */
+  async verifyOwnership(
+    tokenId: string,
+    walletAddress: string,
+    contractId?: string,
+  ): Promise<{ owner: boolean; message: string }> {
+    const result = await this.verifyNFTOwnership(tokenId, walletAddress, contractId);
+    if (result.isOwner) {
+      return {
+        owner: true,
+        message: 'Wallet owns NFT',
+      };
+    }
+    return {
+      owner: false,
+      message: result.ownerAddress
+        ? 'Wallet does not own NFT'
+        : (result.error ?? 'Wallet does not own NFT'),
+    };
+  }
+
+  /**
    * Get the current owner of an NFT.
    */
+
   async getOwner(
     tokenId: string,
     contractId?: string,

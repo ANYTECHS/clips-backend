@@ -47,13 +47,20 @@ export class ClaimRoyaltyService {
 
   /**
    * Query on-chain claimable royalties for `(token_id, recipient [, asset])`.
-   * Returns balance in stroops (integer).
+   * Returns the exact balance in stroops as a bigint.
    */
-  async getClaimableBalance(
+  async getClaimableBalanceExact(
     tokenId: number,
     recipient: string,
     assetContractId?: string,
-  ): Promise<number> {
+  ): Promise<bigint> {
+    if (!Number.isSafeInteger(tokenId) || tokenId <= 0) {
+      throw new BadRequestException('tokenId must be a positive safe integer');
+    }
+    if (!StellarSdk.StrKey.isValidEd25519PublicKey(recipient)) {
+      throw new BadRequestException('Invalid royalty recipient Stellar address');
+    }
+
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
 
@@ -106,12 +113,34 @@ export class ClaimRoyaltyService {
 
     const results = (simulation as { results?: Array<{ xdr: string }> }).results;
     if (!results?.[0]?.xdr) {
-      return 0;
+      return 0n;
     }
 
     const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
     const native = StellarSdk.scValToNative(returnValue);
-    return this.toStroopNumber(native);
+    return this.toStroopBigInt(native);
+  }
+
+  /**
+   * Number-compatible balance for existing API responses. Refuse values that
+   * JavaScript cannot represent exactly instead of silently rounding them.
+   */
+  async getClaimableBalance(
+    tokenId: number,
+    recipient: string,
+    assetContractId?: string,
+  ): Promise<number> {
+    const balance = await this.getClaimableBalanceExact(
+      tokenId,
+      recipient,
+      assetContractId,
+    );
+    if (balance > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new BadRequestException(
+        'Claimable royalty balance exceeds the safe integer range and cannot be represented as a number',
+      );
+    }
+    return Number(balance);
   }
 
   /**
@@ -192,15 +221,18 @@ export class ClaimRoyaltyService {
     return this.royaltyConfigurationService.getRoyaltyAsset().contractId;
   }
 
-  private toStroopNumber(value: unknown): number {
-    if (value == null) return 0;
-    if (typeof value === 'bigint') return Number(value);
-    if (typeof value === 'number') return value;
-    if (typeof value === 'string') {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : 0;
+  private toStroopBigInt(value: unknown): bigint {
+    if (value == null) return 0n;
+    if (typeof value === 'bigint' && value >= 0n) return value;
+    if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+      return BigInt(value);
     }
-    return 0;
+    if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value)) {
+      return BigInt(value);
+    }
+    throw new InternalServerErrorException(
+      'Contract returned an invalid claimable royalty balance',
+    );
   }
 
   /**
