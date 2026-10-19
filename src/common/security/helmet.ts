@@ -33,6 +33,14 @@ export function configureHelmet(
       frameguard: {
         action: 'deny',
       },
+      // Disable powerful browser features the API never uses.
+      permissionsPolicy: {
+        camera: [],
+        microphone: [],
+        geolocation: [],
+        payment: [],
+        usb: [],
+      },
     }),
   );
 }

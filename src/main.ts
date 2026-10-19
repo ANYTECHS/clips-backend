@@ -97,7 +97,19 @@ async function bootstrap() {
   const isProduction = process.env.NODE_ENV === 'production';
   const enableSwaggerUI = !isProduction || process.env.ENABLE_SWAGGER_UI === 'true';
 
+  // Security headers with Helmet (see src/common/security/helmet.ts).
+  // Registered before any route/router (including Swagger UI below) so every
+  // response — docs included — gets these headers. Includes Permissions-Policy
+  // lockdown plus hidePoweredBy/frameguard/noSniff/HSTS.
   configureHelmet(app, enableSwaggerUI);
+
+  // Strip framework/server fingerprinting headers on every response without
+  // breaking Swagger UI (which stays accessible at /api/docs).
+  app.use((req, res, next) => {
+    res.removeHeader('X-Powered-By');
+    res.removeHeader('Server');
+    next();
+  });
 
   if (process.env.TRUST_PROXY === 'true') {
     app.set('trust proxy', 1);

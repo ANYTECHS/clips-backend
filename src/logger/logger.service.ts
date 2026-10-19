@@ -11,7 +11,8 @@ export interface LogContext {
  * - JSON output in production (NODE_ENV=production)
  * - Pretty-printed in development
  * - Log level controlled by LOG_LEVEL env var (default: info)
- * - Sensitive fields (password, token, privateKey, secret) are redacted
+ * - Sensitive fields (password, token, secrets, OTP, cookies, auth headers)
+ *   are redacted in BOTH production and development output.
  */
 @Injectable({ scope: Scope.DEFAULT })
 export class AppLoggerService implements LoggerService {
@@ -19,13 +20,27 @@ export class AppLoggerService implements LoggerService {
   private readonly isProduction: boolean;
   private readonly SENSITIVE_KEYS = new Set([
     'password',
+    'newpassword',
     'token',
     'accesstoken',
     'refreshtoken',
+    'refresh_token',
+    'privatetoken',
     'privatekey',
     'secret',
     'mfasecret',
     'authorization',
+    'cookie',
+    'cookies',
+    'csrf',
+    'csrf-token',
+    'x-csrf-token',
+    'x-api-key',
+    'apikey',
+    'otp',
+    'totp',
+    'totpcode',
+    'set-cookie',
   ]);
 
   private readonly LEVELS: Record<string, number> = {
@@ -79,12 +94,15 @@ export class AppLoggerService implements LoggerService {
       const ctx = entry.context as string;
       const rid = extra?.requestId ? ` [${extra.requestId}]` : '';
       const prefix = `[${ts}] [${level.toUpperCase()}] [${ctx}]${rid}`;
+      // Never log raw `extra` in development: use the redacted entry so
+      // passwords, tokens, and secrets cannot leak via console output.
+      const safeExtra = entry as Record<string, unknown>;
       if (level === 'error') {
-        console.error(prefix, message, extra ?? '');
+        console.error(prefix, message, safeExtra ?? '');
       } else if (level === 'warn') {
-        console.warn(prefix, message, extra ?? '');
+        console.warn(prefix, message, safeExtra ?? '');
       } else {
-        console.log(prefix, message, extra ?? '');
+        console.log(prefix, message, safeExtra ?? '');
       }
     }
   }
