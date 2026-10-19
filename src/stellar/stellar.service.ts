@@ -5,7 +5,7 @@ import {
   NotFoundException,
   BadGatewayException,
 } from '@nestjs/common';
-import { StrKey, Horizon } from '@stellar/stellar-sdk';
+import { Account, StrKey, Horizon, rpc } from '@stellar/stellar-sdk';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
 
 export const LOW_BALANCE_THRESHOLD_XLM = 2.0;
@@ -33,9 +33,24 @@ export class StellarService {
     samplingDuration: 60000,
   };
 
+  private readonly sorobanCircuitBreakerConfig: CircuitBreakerConfig = {
+    name: 'stellar-rpc',
+    failureThreshold: 5,
+    recoveryTimeout: 30000,
+    samplingDuration: 60000,
+  };
+
   constructor(private readonly circuitBreakerService: CircuitBreakerService) {
-    const raw = (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase();
-    this.network = raw === 'public' ? 'public' : 'testnet';
+    const raw = (process.env.STELLAR_NETWORK ?? '').trim().toLowerCase();
+    const network = raw === '' ? 'testnet' : raw;
+
+    if (network !== 'testnet' && network !== 'public') {
+      throw new Error(
+        `Invalid STELLAR_NETWORK="${process.env.STELLAR_NETWORK}" — expected "testnet" or "public".`,
+      );
+    }
+
+    this.network = network;
 
     if (this.network === 'public') {
       this.rpcUrl = 'https://soroban-rpc.stellar.org';
@@ -119,6 +134,23 @@ export class StellarService {
       );
       return 0;
     });
+  }
+
+  /**
+   * Loads a Stellar account from the Soroban RPC endpoint so callers can build
+   * transactions with the account's current sequence number.
+   *
+   * Used when preparing unsigned transactions for client-side signing
+   * (e.g. NFT minting, admin contract calls).
+   */
+  async getAccount(address: string): Promise<Account> {
+    return this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => {
+        const server = new rpc.Server(this.rpcUrl);
+        return server.getAccount(address);
+      },
+    );
   }
 
   /**

@@ -18,12 +18,50 @@
 
 import { NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { NftMintService } from './nft-mint.service';
+import {
+  Account,
+  StrKey,
+  Transaction,
+  TransactionBuilder,
+  scValToNative,
+} from '@stellar/stellar-sdk';
 
 // ─── minimal stubs ──────────────────────────────────────────────────────────
 
 const VALID_WALLET = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
-const CONTRACT_ID  = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+const CONTRACT_ID  = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
 const METADATA_URI = 'ipfs://QmTestCid';
+const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
+
+/** Decodes a prepared mint XDR into the Soroban `mint` call it carries. */
+function decodeMintXdr(xdrString: string) {
+  const tx = TransactionBuilder.fromXDR(xdrString, NETWORK_PASSPHRASE);
+  if (!(tx instanceof Transaction)) {
+    throw new Error('Expected a regular transaction, not a fee-bump');
+  }
+  const op = tx.operations[0];
+  expect(op.type).toBe('invokeHostFunction');
+  if (op.type !== 'invokeHostFunction') {
+    throw new Error(
+      `Expected invokeHostFunction operation, got ${String(op.type)}`,
+    );
+  }
+  const ic = op.func.invokeContract();
+  const args = ic.args();
+  return {
+    contractId: StrKey.encodeContract(ic.contractAddress().contractId()),
+    functionName: ic.functionName().toString('utf8'),
+    to: scValToNative(args[0]) as string,
+    tokenId: scValToNative(args[1]) as string,
+    collectionId: scValToNative(args[2]) as string,
+    metadata: scValToNative(args[3]) as string,
+    royaltyBps: scValToNative(args[4]) as number,
+    royaltyExtension: scValToNative(args[5]) as {
+      recipients: Array<{ wallet: string; bps: number; label: string }>;
+    },
+    source: tx.source,
+  };
+}
 
 /** Builds a minimal Clip-like object. */
 function makeClip(overrides: Record<string, unknown> = {}) {
@@ -84,6 +122,9 @@ function buildService(
       addressValid ? { valid: true } : { valid: false, message: 'Bad address' },
     ),
     network: 'testnet',
+    networkPassphrase: NETWORK_PASSPHRASE,
+    rpcUrl: 'https://soroban-testnet.stellar.org',
+    getAccount: jest.fn().mockResolvedValue(new Account(VALID_WALLET, '0')),
   };
 
   const ipfsUploadService = {
@@ -104,7 +145,7 @@ function buildService(
 
   const nftConfig = {
     creatorRoyaltyBps: 800,
-    platformWallet:    'GPLATFORM000000000000000000000000000000000000000000000',
+    platformWallet:    'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3',
     platformRoyaltyBps: 200,
   };
 
@@ -225,7 +266,7 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
     });
   });
 
-  it('XDR is a non-empty base64 string that decodes to valid JSON', async () => {
+  it('XDR is a valid base64 Soroban transaction that invokes mint', async () => {
     const { service } = buildService();
 
     const { xdr } = await service.prepareMintTx(1, VALID_WALLET);
@@ -233,35 +274,54 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
     expect(typeof xdr).toBe('string');
     expect(xdr.length).toBeGreaterThan(0);
 
-    const decoded = JSON.parse(Buffer.from(xdr, 'base64').toString('utf8'));
-    expect(decoded).toMatchObject({
-      contract:  CONTRACT_ID,
-      function:  'mint',
-      args: {
-        to:          VALID_WALLET,
-        token_id:    '1',
-        collection_id: 'viral-clips',
-        metadata:    METADATA_URI,
-        royalty_bps: 1000,
-      },
-      network: 'testnet',
-    });
+    const decoded = decodeMintXdr(xdr);
+    expect(decoded.functionName).toBe('mint');
+    expect(decoded.contractId).toBe(CONTRACT_ID);
+    expect(decoded.source).toBe(VALID_WALLET);
+    expect(decoded.to).toBe(VALID_WALLET);
+    expect(decoded.tokenId).toBe('1');
+    expect(decoded.collectionId).toBe('viral-clips');
+    expect(decoded.metadata).toBe(METADATA_URI);
+    expect(decoded.royaltyBps).toBe(1000);
   });
 
   it('includes both creator and platform recipients in royalty_extension', async () => {
     const { service } = buildService();
 
     const { xdr } = await service.prepareMintTx(1, VALID_WALLET);
-    const decoded = JSON.parse(Buffer.from(xdr, 'base64').toString('utf8'));
+    const decoded = decodeMintXdr(xdr);
 
-    expect(decoded.royalty_extension.recipients).toHaveLength(2);
+    const { recipients } = decoded.royaltyExtension;
+    expect(recipients).toHaveLength(2);
 
-    const labels = decoded.royalty_extension.recipients.map(
-      (r: { label: string }) => r.label,
+    expect(recipients.find((r) => r.label === 'creator')).toMatchObject({
+      wallet: VALID_WALLET,
+      bps: 800,
+      label: 'creator',
+    });
+    expect(recipients.find((r) => r.label === 'platform')).toMatchObject({
+      wallet: 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3',
+      bps: 200,
+      label: 'platform',
+    });
+    const creatorRecipient = decoded.royalty_extension.recipients.find(
+      (r: { label: string }) => r.label === 'creator',
     );
-    expect(labels).toContain('creator');
-    expect(labels).toContain('platform');
+    const platformRecipient = decoded.royalty_extension.recipients.find(
+      (r: { label: string }) => r.label === 'platform',
+    );
+    expect(creatorRecipient.bps).toBe(1000);
+    expect(platformRecipient.bps).toBe(200);
   });
+
+  it('rejects mint preparation when combined creator and platform royalty exceeds 10000 bps', async () => {
+    const { service } = buildService({ royaltyBps: 9900 });
+
+    await expect(service.prepareMintTx(1, VALID_WALLET)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
 
   // ── database side-effect ──────────────────────────────────────────────────
 
@@ -289,11 +349,15 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
       maxSupply: null,
     });
 
-    const result = await service.prepareMintTx(1, VALID_WALLET, 'podcast-highlights');
-    const decoded = JSON.parse(Buffer.from(result.xdr, 'base64').toString('utf8'));
+    const result = await service.prepareMintTx(
+      1,
+      VALID_WALLET,
+      'podcast-highlights',
+    );
+    const decoded = decodeMintXdr(result.xdr);
 
-    expect(decoded.args.collection_id).toBe('podcast-highlights');
-    expect(decoded.args.royalty_bps).toBe(800);
+    expect(decoded.collectionId).toBe('podcast-highlights');
+    expect(decoded.royaltyBps).toBe(800);
     expect(result.collectionId).toBe('podcast-highlights');
     expect(prisma.clip.update).toHaveBeenCalledWith(
       expect.objectContaining({

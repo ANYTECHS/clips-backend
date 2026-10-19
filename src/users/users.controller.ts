@@ -59,7 +59,7 @@ export class UsersController {
     description: 'Wallet created, returns a masked stellarPublicKey',
     schema: {
       example: {
-        stellarPublicKey: 'GABC...X92K',
+        stellarPublicKey: 'GABF...KJ93XD',
         walletType: 'custodial',
       },
     },

@@ -258,13 +258,21 @@ describe('StellarService', () => {
   describe('network configuration via env', () => {
     let originalEnv: string | undefined;
 
+    const restoreEnv = () => {
+      if (originalEnv === undefined) {
+        delete process.env.STELLAR_NETWORK;
+      } else {
+        process.env.STELLAR_NETWORK = originalEnv;
+      }
+    };
+
     beforeAll(() => {
       originalEnv = process.env.STELLAR_NETWORK;
     });
 
-    afterAll(() => {
-      process.env.STELLAR_NETWORK = originalEnv;
-    });
+    afterEach(restoreEnv);
+
+    afterAll(restoreEnv);
 
     it('should configure public mainnet when STELLAR_NETWORK is public', () => {
       process.env.STELLAR_NETWORK = 'public';
@@ -287,6 +295,30 @@ describe('StellarService', () => {
       expect(testService.isMainnet()).toBe(false);
       expect(testService.isTestnet()).toBe(true);
     });
+
+    it('should accept STELLAR_NETWORK case-insensitively', () => {
+      process.env.STELLAR_NETWORK = '  PUBLIC ';
+      const testService = new StellarService(circuitBreakerService);
+      expect(testService.network).toBe('public');
+    });
+
+    it('should default to testnet when STELLAR_NETWORK is unset or empty', () => {
+      delete process.env.STELLAR_NETWORK;
+      expect(new StellarService(circuitBreakerService).network).toBe('testnet');
+
+      process.env.STELLAR_NETWORK = '   ';
+      expect(new StellarService(circuitBreakerService).network).toBe('testnet');
+    });
+
+    it.each(['mainnet', 'goerli', 'testnet2', 'staging'])(
+      'should fail fast when STELLAR_NETWORK is %s',
+      (value) => {
+        process.env.STELLAR_NETWORK = value;
+        expect(() => new StellarService(circuitBreakerService)).toThrow(
+          `Invalid STELLAR_NETWORK="${value}" — expected "testnet" or "public".`,
+        );
+      },
+    );
   });
 });
 

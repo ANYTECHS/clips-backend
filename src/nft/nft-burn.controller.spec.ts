@@ -1,7 +1,4 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
 import { NftController } from './nft.controller';
 import { NftMintService } from '../clips/nft-mint.service';
 
@@ -26,7 +23,7 @@ function makeController() {
       getRoyaltyInfo: jest.fn().mockResolvedValue({ recipient: WALLET, royaltyBps: 500 }),
     },
     claimRoyaltyService: {
-      getClaimableBalance: jest.fn().mockResolvedValue(12500000),
+      getClaimableBalanceExact: jest.fn().mockResolvedValue(12500000n),
     },
   };
   const controller = Object.assign(Object.create(NftController.prototype), dependencies);
@@ -60,7 +57,7 @@ describe('POST /nfts/:tokenId/burn', () => {
     );
 
     expect(nftMintService.prepareBurnTx).toHaveBeenCalledWith(42, WALLET, true);
-    expect(claimRoyaltyService.getClaimableBalance).toHaveBeenCalledWith(42, WALLET);
+    expect(claimRoyaltyService.getClaimableBalanceExact).toHaveBeenCalledWith(42, WALLET);
     expect(result).toMatchObject({
       refundRoyalties: true,
       refundRecipient: WALLET,
@@ -70,7 +67,7 @@ describe('POST /nfts/:tokenId/burn', () => {
 
   it('allows a refund-enabled burn when the royalty balance is zero', async () => {
     const { controller, nftMintService, claimRoyaltyService } = makeController();
-    claimRoyaltyService.getClaimableBalance.mockResolvedValue(0);
+    claimRoyaltyService.getClaimableBalanceExact.mockResolvedValue(0n);
 
     const result = await controller.burn(
       42,
@@ -82,13 +79,17 @@ describe('POST /nfts/:tokenId/burn', () => {
     expect(result.refundAmount).toBe('0');
   });
 
-  it('rejects an unsafe royalty balance', async () => {
+  it('preserves royalty balances beyond the safe JavaScript integer range', async () => {
     const { controller, claimRoyaltyService } = makeController();
-    claimRoyaltyService.getClaimableBalance.mockResolvedValue(Number.MAX_SAFE_INTEGER + 1);
+    const exactAmount = 900719925474099312345n;
+    claimRoyaltyService.getClaimableBalanceExact.mockResolvedValue(exactAmount);
 
-    await expect(
-      controller.burn(42, { walletAddress: WALLET, refundRoyalties: true }, request),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    const result = await controller.burn(
+      42,
+      { walletAddress: WALLET, refundRoyalties: true },
+      request,
+    );
+    expect(result.refundAmount).toBe(exactAmount.toString());
   });
 
   it('rejects a wallet that is not the on-chain NFT owner', async () => {

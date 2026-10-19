@@ -406,7 +406,7 @@ STELLAR_NETWORK=testnet
 STELLAR_NETWORK=public
 ```
 
-The `StellarService` reads this variable at startup and exposes the correct `rpcUrl`, `horizonUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts). The payment listener (`StellarConfig`) derives its Horizon URL from `STELLAR_NETWORK` as well, unless `STELLAR_HORIZON_URL` is set explicitly. Any value other than `public` falls back to `testnet`.
+The `StellarService` reads this variable at startup and exposes the correct `rpcUrl`, `horizonUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts). The payment listener (`StellarConfig`) derives its Horizon URL from `STELLAR_NETWORK` as well, unless `STELLAR_HORIZON_URL` is set explicitly. Only `testnet` and `public` are accepted (case-insensitive); any other value causes the application to fail fast at startup with a clear error instead of silently falling back to testnet. When the variable is unset or empty, it defaults to `testnet`.
 
 ### `MIN_STELLAR_PAYOUT`
 
