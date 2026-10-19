@@ -51,6 +51,13 @@ export class BatchMintDto {
   @ApiProperty({
     description: 'Array of clips to mint in batch (max 50 clips per call)',
     type: [BatchMintClipItemDto],
+    example: [
+      {
+        clipId: '101',
+        metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        isSoulbound: false,
+      },
+    ],
   })
   @IsArray()
   @ValidateNested({ each: true })
@@ -106,6 +113,7 @@ export class BatchMintResponseDto {
   @ApiPropertyOptional({
     description: 'List of clips that failed during batch execution (partial failure response)',
     type: [BatchMintPartialFailureDto],
+    example: [{ clipId: '102', reason: 'Posted clips cannot be minted' }],
   })
   partialFailures?: BatchMintPartialFailureDto[];
 }

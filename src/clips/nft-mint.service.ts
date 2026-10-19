@@ -93,6 +93,7 @@ export class NftMintService {
   async uploadMetadataToIPFS(
     clipId: number,
     collectionId = DEFAULT_NFT_COLLECTION_ID,
+    collectionId: string = DEFAULT_NFT_COLLECTION_ID,
   ): Promise<UploadMetadataResult> {
     const collection = await this.requireCollection(collectionId);
     const clip = await this.prisma.clip.findUnique({
@@ -133,20 +134,32 @@ export class NftMintService {
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
       collection: {
-        collectionId: collection.collectionId,
-        name: collection.name,
-        type: collection.type,
-        metadata: collection.metadata as Record<string, unknown>,
+        collectionId: clip.collection.collectionId,
+        name: clip.collection.name,
+        type: clip.collection.type,
+        metadata: clip.collection.metadata as Record<string, unknown>,
       },
     });
     // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
+
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
       metadata,
       clipId,
     );
-
     // Persist the CID to the Clip record so subsequent mint calls can
     // skip the upload step.
+    await this.prisma.clip.update({
+      where: { id: clipId },
+      data: {
+        metadataUri,
+        collectionId,
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
+    });
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
+
     await this.prisma.clip.update({
       where: { id: clipId },
       data: {
@@ -183,8 +196,12 @@ export class NftMintService {
 
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress)
+    if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new ConflictException(`Clip ${clipId} is already minted`);
+    if (clip.nftStatus === 'minting')
+      throw new ConflictException(
+        `Clip ${clipId} is currently being minted. Please wait.`,
+      );
     if (this.isPosted(clip.postStatus)) {
       throw new BadRequestException(
         `Posted clips cannot be minted. Clip ${clipId} has already been posted.`,
@@ -223,6 +240,16 @@ export class NftMintService {
     }
 
     const royaltyBps = collection.royaltyBps ?? clip.royaltyBps ?? 1000;
+    const creatorRoyaltyBps = royaltyBps;
+    const platformRoyaltyBps = this.nftConfig.platformRoyaltyBps;
+    const totalBps = creatorRoyaltyBps + platformRoyaltyBps;
+    if (totalBps > 10000) {
+      throw new BadRequestException(
+        `Combined royalty (${totalBps} bps = ${creatorRoyaltyBps} creator + ${platformRoyaltyBps} platform) exceeds maximum of 10000 bps`,
+      );
+    }
+
+    const royaltyBps = clip.collection.royaltyBps ?? clip.royaltyBps ?? 1000;
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId) {
       throw new BadRequestException(
@@ -248,9 +275,9 @@ export class NftMintService {
       contractId,
       metadataUri,
       royaltyBps,
-      creatorRoyaltyBps: this.nftConfig.creatorRoyaltyBps,
+      creatorRoyaltyBps,
       platformWallet: this.nftConfig.platformWallet,
-      platformRoyaltyBps: this.nftConfig.platformRoyaltyBps,
+      platformRoyaltyBps,
       network: this.stellarService.network,
     });
 
@@ -270,6 +297,7 @@ export class NftMintService {
     };
   }
 
+
   async validateClipOwner(clipId: number, userId: number): Promise<void> {
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
@@ -283,10 +311,10 @@ export class NftMintService {
   async confirmMint(
     clipId: number,
     mintAddress: string,
-  ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date }> {
+  ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress)
+    if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new BadRequestException(`Clip ${clipId} already minted`);
     const mintedAt = new Date();
     await this.prisma.clip.update({
@@ -296,14 +324,18 @@ export class NftMintService {
     this.logger.log(
       `Clip ${clipId} confirmed as minted — token: ${mintAddress}`,
     );
-    return { clipId, mintAddress, mintedAt };
+    return { clipId, mintAddress, mintedAt, nftStatus: 'minted' };
   }
+
 
   async prepareBurnTx(
     clipId: number,
     walletAddress: string,
     refundRoyalties = false,
   ) {
+    if (!Number.isSafeInteger(clipId) || clipId <= 0) {
+      throw new BadRequestException('Token ID must be a positive safe integer');
+    }
     const addrValidation = this.stellarService.validateAddress(walletAddress);
     if (!addrValidation.valid)
       throw new BadRequestException(addrValidation.message);
@@ -427,6 +459,7 @@ export class NftMintService {
   }
 
   private async buildMintXdr(params: {
+  private buildMintXdr(params: {
     clipId: number;
     collectionId: string;
     walletAddress: string;
@@ -488,5 +521,36 @@ export class NftMintService {
       .build();
 
     return tx.toXDR();
+  }): string {
+    return Buffer.from(
+      JSON.stringify({
+        contract: params.contractId,
+        function: 'mint',
+        args: {
+          to: params.walletAddress,
+          token_id: String(params.clipId),
+          collection_id: params.collectionId,
+          metadata: params.metadataUri,
+          royalty_bps: params.royaltyBps,
+        },
+        royalty_extension: {
+          recipients: [
+            {
+              wallet: params.walletAddress,
+              bps: params.creatorRoyaltyBps,
+              label: 'creator',
+            },
+            {
+              wallet: params.platformWallet,
+              bps: params.platformRoyaltyBps,
+              label: 'platform',
+            },
+          ],
+        },
+        network: params.network,
+        built_at: new Date().toISOString(),
+      }),
+    ).toString('base64');
   }
 }
+

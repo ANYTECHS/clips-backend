@@ -18,6 +18,7 @@ jest.mock('@stellar/stellar-sdk', () => {
         simulateTransaction: mockSimulateTransaction,
       })),
     },
+        if (scVal.__xdr === '') return '';
     Contract: jest.fn().mockImplementation(() => ({
       call: jest.fn((fnName: string) => ({ fnName })),
     })),
@@ -92,6 +93,23 @@ describe('AdminContractService.getCollectionInfo (Issue #679)', () => {
     await expect(service.getCollectionInfo()).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
+  });
+
+  it('reads the on-chain pause reason', async () => {
+    mockSimulateTransaction.mockResolvedValue({
+      results: [{ xdr: 'Scheduled contract maintenance' }],
+    });
+
+    await expect(service.getPauseReason()).resolves.toBe(
+      'Scheduled contract maintenance',
+    );
+    expect(mockSimulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an empty pause reason when the contract reason is unset', async () => {
+    mockSimulateTransaction.mockResolvedValue({ results: [{ xdr: '' }] });
+
+    await expect(service.getPauseReason()).resolves.toBe('');
   });
 });
 

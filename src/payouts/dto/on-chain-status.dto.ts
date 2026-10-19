@@ -53,6 +53,15 @@ export class OnChainStatusResponseDto {
   })
   confirmedAt?: Date | string | null;
 
-  @ApiProperty({ type: OnChainDetailsDto })
+  @ApiProperty({
+    type: OnChainDetailsDto,
+    example: {
+      found: true,
+      successful: true,
+      confirmedAt: '2026-07-26T12:05:00.000Z',
+      destination: 'GABCDEF...',
+      transferredAmount: 100.5,
+    },
+  })
   onChain: OnChainDetailsDto;
 }

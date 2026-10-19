@@ -304,7 +304,24 @@ describe('NftMintService.prepareMintTx (Issue #749)', () => {
       bps: 200,
       label: 'platform',
     });
+    const creatorRecipient = decoded.royalty_extension.recipients.find(
+      (r: { label: string }) => r.label === 'creator',
+    );
+    const platformRecipient = decoded.royalty_extension.recipients.find(
+      (r: { label: string }) => r.label === 'platform',
+    );
+    expect(creatorRecipient.bps).toBe(1000);
+    expect(platformRecipient.bps).toBe(200);
   });
+
+  it('rejects mint preparation when combined creator and platform royalty exceeds 10000 bps', async () => {
+    const { service } = buildService({ royaltyBps: 9900 });
+
+    await expect(service.prepareMintTx(1, VALID_WALLET)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
 
   // ── database side-effect ──────────────────────────────────────────────────
 
