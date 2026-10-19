@@ -171,7 +171,7 @@ import {
   isSupportedNftCollectionId,
 } from './nft-collections.constants';
 
-@ApiTags('nfts')
+@ApiTags('NFTs')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
 export class NftController {
@@ -2381,7 +2381,7 @@ export class NftController {
   @Get(':id/metadata-preview')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
-  @ApiTags('NFT Metadata')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'Preview NFT metadata without uploading to IPFS',
     description:
@@ -2457,7 +2457,7 @@ export class NftController {
   @Get(':id/mint-status')
   @UseGuards(LoginGuard)
   @ApiBearerAuth('access-token')
-  @ApiTags('NFT Mint Status')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'Get NFT mint lifecycle status',
     description:
@@ -2506,7 +2506,7 @@ export class NftController {
   @UseGuards(LoginGuard)
   @ApiBearerAuth('access-token')
   @HttpCode(HttpStatus.OK)
-  @ApiTags('NFT Metadata Validation')
+  @ApiTags('NFTs')
   @ApiOperation({
     summary: 'Validate NFT metadata before minting',
     description:

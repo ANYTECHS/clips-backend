@@ -30,7 +30,7 @@ import {
 } from './dto/create-stellar-subscription.dto';
 import { Auth } from '../auth/decorators/auth.decorator';
 
-@ApiTags('subscriptions', 'payments')
+@ApiTags('Subscriptions', 'Payments')
 @ApiBearerAuth('access-token')
 @ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized' })
