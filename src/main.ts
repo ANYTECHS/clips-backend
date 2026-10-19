@@ -130,8 +130,24 @@ async function bootstrap() {
       frameguard: {
         action: 'deny',
       },
+      // Disable powerful browser features the API never uses.
+      permissionsPolicy: {
+        camera: [],
+        microphone: [],
+        geolocation: [],
+        payment: [],
+        usb: [],
+      },
     }),
   );
+
+  // Strip framework/server fingerprinting headers on every response without
+  // breaking Swagger UI (which stays accessible at /api/docs).
+  app.use((req, res, next) => {
+    res.removeHeader('X-Powered-By');
+    res.removeHeader('Server');
+    next();
+  });
 
   if (process.env.TRUST_PROXY === 'true') {
     app.set('trust proxy', 1);

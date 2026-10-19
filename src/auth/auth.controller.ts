@@ -251,6 +251,8 @@ export class AuthController {
   @ApiResponse({ status: 302, description: 'Redirects to Google OAuth consent screen' })
   @ApiResponse({ status: 400, description: 'Bad Request - OAuth initialization failed' })
   @ApiResponse({ status: 500, description: 'Internal Server Error - Google OAuth configuration error' })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   @UseGuards(AuthGuard('google'))
   googleAuth() {
     return;
@@ -278,6 +280,8 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Google authentication failed or was denied' })
   @ApiResponse({ status: 409, description: 'Conflict - OAuth account linking conflict' })
   @ApiResponse({ status: 500, description: 'Internal Server Error - Failed to process Google OAuth callback' })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   @UseGuards(AuthGuard('google'))
   async googleCallback(
     @Req() req: any,
@@ -328,6 +332,8 @@ export class AuthController {
       },
     },
   })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async requestMagicLink(
     @Body(new ValidationPipe({ transform: true })) dto: MagicLinkRequestDto,
   ) {
@@ -366,6 +372,8 @@ export class AuthController {
     required: false,
     description: 'Return tokens in cookies instead of body',
   })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async verifyMagicLink(
     @Query('token') token: string,
     @Req() req: any,
@@ -430,6 +438,8 @@ export class AuthController {
       },
     },
   })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async verifyEmail(
     @Body(new ValidationPipe({ transform: true }))
     dto: VerifyEmailDto,
@@ -702,9 +712,13 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({ status: 429, description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
-  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
+  @Throttle({
+    sensitive: { limit: 3, ttl: 900000 },
+    authStrict: { limit: 5, ttl: 60000 },
+  })
   async resetPassword(
     @Body(new ValidationPipe({ transform: true })) dto: ResetPasswordDto,
   ) {
@@ -724,7 +738,9 @@ export class AuthController {
     type: MfaSetupResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async setupMfa(@Req() req: any) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
     return this.authService.setupMfa(userId);
@@ -744,9 +760,13 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: 'Invalid verification code' })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
-  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @ApiResponse({ status: 429, description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
-  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
+  @Throttle({
+    sensitive: { limit: 3, ttl: 900000 },
+    authStrict: { limit: 5, ttl: 60000 },
+  })
   async enableMfa(@Req() req: any, @Body('code') code: string) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
     await this.authService.enableMfa(userId, code);
@@ -765,7 +785,9 @@ export class AuthController {
     type: MfaStatusResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   async disableMfa(@Req() req: any) {
     const userId = Number(req.user?.id ?? req.headers['x-user-id']);
     await this.authService.disableMfa(userId);
