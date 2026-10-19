@@ -155,6 +155,79 @@ async function bootstrap() {
     .setTitle('ClipCash API')
     .setDescription(
       'ClipCash backend API documentation\n\n' +
+      '## Authentication\n\n' +
+      'The API supports multiple authentication methods:\n\n' +
+      '### Bearer Token (JWT)\n\n' +
+      'Most endpoints use JWT Bearer tokens in the `Authorization` header:\n\n' +
+      '```http\n' +
+      'GET /clips HTTP/1.1\n' +
+      'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\n' +
+      '```\n\n' +
+      '**Obtaining a Token:**\n\n' +
+      '1. Call `POST /auth/login` with email and password\n' +
+      '2. Response includes `accessToken` (JWT) and optional `refreshToken`\n' +
+      '3. Include `accessToken` in `Authorization: Bearer <token>` header for authenticated requests\n' +
+      '4. Access tokens expire after `JWT_EXPIRES` seconds (default 3600s)\n' +
+      '5. Use `refreshToken` with `POST /auth/refresh` to get a new access token\n\n' +
+      '**Token Claims:**\n\n' +
+      '- `sub`: User ID (numeric)\n' +
+      '- `email`: User email address\n' +
+      '- `emailVerified`: Boolean (false tokens are rejected by protected endpoints)\n' +
+      '- `iat`: Token issued-at timestamp\n' +
+      '- `exp`: Token expiration timestamp\n\n' +
+      '### Cookie Authentication\n\n' +
+      'Alternatively, tokens can be sent via secure httpOnly cookies:\n\n' +
+      '```http\n' +
+      'GET /clips HTTP/1.1\n' +
+      'Cookie: access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\n' +
+      'X-CSRF-Token: abc123def456\n' +
+      '```\n\n' +
+      '**Cookie Attributes:**\n\n' +
+      '- `httpOnly: true` — JavaScript cannot access via `document.cookie` (XSS protection)\n' +
+      '- `secure: true` — Only sent over HTTPS connections\n' +
+      '- `sameSite: strict` — Only sent with same-site requests (CSRF protection)\n' +
+      '- `path: /` — Sent to all API paths\n\n' +
+      '**CSRF Protection:**\n\n' +
+      'When using cookie authentication, state-changing requests (POST, PUT, PATCH, DELETE) must include:\n\n' +
+      '```http\n' +
+      'POST /wallets/connect HTTP/1.1\n' +
+      'Cookie: access_token=...; _csrf=abc123...\n' +
+      'X-CSRF-Token: abc123\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "walletAddress": "GABC..." }\n' +
+      '```\n\n' +
+      'The `X-CSRF-Token` header value must match the `_csrf` cookie value.\n\n' +
+      '### Logout\n\n' +
+      'Call `POST /auth/logout` to invalidate the current session:\n\n' +
+      '```http\n' +
+      'POST /auth/logout HTTP/1.1\n' +
+      'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }\n' +
+      '```\n\n' +
+      '**Response (200 OK):**\n\n' +
+      '```json\n' +
+      '{ "message": "Logged out successfully" }\n' +
+      '```\n\n' +
+      '**Errors:**\n\n' +
+      '- `401 Unauthorized` — Invalid or missing access token\n' +
+      '- `400 Bad Request` — Invalid refresh token (if provided for revocation)\n\n' +
+      '### Token Refresh\n\n' +
+      'To obtain a new access token using a refresh token:\n\n' +
+      '```http\n' +
+      'POST /auth/refresh HTTP/1.1\n' +
+      'Content-Type: application/json\n\n' +
+      '{ "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }\n' +
+      '```\n\n' +
+      '**Response (200 OK):**\n\n' +
+      '```json\n' +
+      '{\n' +
+      '  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",\n' +
+      '  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."\n' +
+      '}\n' +
+      '```\n\n' +
+      '**Errors:**\n\n' +
+      '- `401 Unauthorized` — Refresh token invalid, expired, or revoked\n\n' +
       '## API Security Contract\n\n' +
       'All protected endpoints must require server-side authentication and authorization. ' +
       'JWT bearer auth is required for authenticated API traffic, `401 Unauthorized` is returned ' +
@@ -162,6 +235,17 @@ async function bootstrap() {
       'and `429 Too Many Requests` is returned when a throttle limit is exceeded.\n\n' +
       'Sensitive endpoints should also advertise their security contract in Swagger via `@ApiBearerAuth`, ' +
       '`@ApiUnauthorizedResponse`, `@ApiForbiddenResponse`, and `@ApiTooManyRequestsResponse` decorators.\n\n' +
+      '## Encrypted Fields\n\n' +
+      '**IMPORTANT:** The following sensitive fields are encrypted in the database and are **NEVER** returned in API responses:\n\n' +
+      '- `accessToken` (social platform integration tokens)\n' +
+      '- `refreshToken` (social platform integration refresh tokens)\n' +
+      '- `platformPassword` (third-party platform credentials)\n' +
+      '- `apiSecret` (internal API secrets)\n' +
+      '- `webhookSecret` (webhook signing secrets)\n' +
+      '- `stripeToken` (payment processor tokens)\n' +
+      '- `privateKey` (blockchain private keys if stored)\n\n' +
+      'If you ever encounter these fields in an API response body, it is a **security vulnerability** that must be reported immediately.\n\n' +
+      'Instead, response DTOs mask sensitive identifiers (e.g., `GABC...X92K` for wallet addresses) or omit them entirely.\n\n' +
       '## Rate Limits\n\n' +
       'All API endpoints are protected by rate limiting to ensure fair usage and system stability.\n\n' +
       '### Rate Limit Tiers\n\n' +
@@ -248,6 +332,10 @@ async function bootstrap() {
       'Configure additional development or staging origins with the `ALLOWED_ORIGINS` environment variable, ' +
       'e.g. `ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173`. Allowed methods and headers can ' +
       'similarly be overridden via `ALLOWED_METHODS` and `ALLOWED_HEADERS`.\n\n' +
+      '### Swagger UI Accessibility\n\n' +
+      'Swagger UI remains fully accessible even with CORS restrictions in place. ' +
+      'The Swagger UI is served from the same origin as the API (`/api/docs` in non-production or when `ENABLE_SWAGGER_UI=true`), ' +
+      'so it is not affected by CORS policy restrictions and remains accessible regardless of the `ALLOWED_ORIGINS` configuration.\n\n' +
       '## Correlation / Request IDs\n\n' +
       'Every request is assigned a correlation ID for end-to-end tracing:\n\n' +
       '| Header | Direction | Description |\n' +
@@ -296,6 +384,56 @@ async function bootstrap() {
       },
       'access-token',
     )
+    .addCookieAuth(
+      'access_token',
+      {
+        type: 'apiKey',
+        in: 'cookie',
+        name: 'access_token',
+        description: 'JWT access token sent via secure httpOnly cookie. ' +
+          'Cookie attributes: httpOnly=true, secure=true, sameSite=strict, path=/. ' +
+          'Must be paired with X-CSRF-Token header for state-changing requests.',
+      },
+    )
+    .addCookieAuth(
+      '_csrf',
+      {
+        type: 'apiKey',
+        in: 'cookie',
+        name: '_csrf',
+        description: 'CSRF protection token cookie. Value must match X-CSRF-Token header.',
+      },
+    )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-CSRF-Token',
+        description: 'CSRF token for cookie-authenticated state-changing requests (POST, PUT, PATCH, DELETE). ' +
+          'Must match the _csrf cookie value. Not needed with Bearer authentication.',
+      },
+      'csrf-token',
+    )
+    .addTag('auth', 'Authentication and authorization — login, logout, token refresh, signup. All responses contain JWT tokens for Bearer authentication.')
+    .addTag('users', 'User management')
+    .addTag('auth', 'Authentication, login, registration, email verification, and two-factor authentication (2FA)')
+    .addTag('users', 'User profile management and wallet creation')
+    .addTag('videos', 'Video upload and management')
+    .addTag('clips', 'Clip generation and management')
+    .addTag('subscriptions', 'Subscription plans and lifecycle')
+    .addTag('payments', 'Fiat and Stellar subscription payments')
+    .addTag('webhooks', 'Webhook endpoints for external services')
+    .addTag('wallets', 'Blockchain wallet management and Stellar wallet connections')
+    .addTag('payouts', 'Revenue payouts and payout requests')
+    .addTag('earnings', 'Earnings tracking, history, and exports')
+    .addTag('nfts', 'NFT minting, royalty queries, and metadata')
+    .addTag('nft', 'NFT minting and royalty management')
+    .addTag('payout', 'Payout requests and processing')
+    .addTag('stellar', 'Stellar network interactions and blockchain operations')
+    .addTag('jobs', 'Background job management and processing')
+    .addTag('platforms', 'Social platform integrations')
+    .addTag('admin', 'Admin-only endpoints for platform management')
+    .addTag('queues', 'BullMQ queue management and monitoring')
     .addTag('Authentication', 'Authentication and authorization')
     .addTag('Users', 'User management')
     .addTag('Videos', 'Video upload and management')
@@ -310,16 +448,17 @@ async function bootstrap() {
     .addTag('stellar', 'Stellar network interactions')
     .addTag('jobs', 'Background job management')
     .addTag('platforms', 'Social platform integrations')
+    .addTag('admin', 'Admin-only endpoints — restricted to users with admin role. Returns 403 Forbidden if called without admin authorization. Requires Bearer JWT with admin role claim.')
     .addTag('Admin', 'Admin-only endpoints')
     .addTag('queues', 'BullMQ queue management')
     .addTag('circuit-breaker', 'Circuit breaker monitoring and management')
-    .addTag('metrics', 'Prometheus metrics endpoint')
-    .addTag('user-platforms', 'Social platform connections')
-    .addTag('platform', 'Platform revenue queries')
-    .addTag('health', 'System health checks')
-    .addTag('blockchain', 'Indexed Soroban contract events')
-    .addTag('transactions', 'Blockchain transactions')
-    .addTag('payout-methods', 'Payout method management')
+    .addTag('metrics', 'Prometheus metrics endpoint for monitoring')
+    .addTag('user-platforms', 'Social platform connections and OAuth integrations')
+    .addTag('platform', 'Platform revenue queries and analytics')
+    .addTag('health', 'System health checks and readiness probes')
+    .addTag('blockchain', 'Indexed Soroban contract events and blockchain indexing')
+    .addTag('transactions', 'Blockchain transactions and transaction history')
+    .addTag('payout-methods', 'Payout method management (Stellar, bank transfer, etc.)')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

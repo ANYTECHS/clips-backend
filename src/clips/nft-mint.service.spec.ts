@@ -19,6 +19,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { NftMintService } from './nft-mint.service';
+import {
+  Account,
+  StrKey,
+  Transaction,
+  TransactionBuilder,
+  scValToNative,
+} from '@stellar/stellar-sdk';
+
+const VALID_WALLET = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
+const CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4';
+const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +37,17 @@ const prismaMock = {
   clip: {
     findUnique: jest.fn(),
     update: jest.fn(),
+    count: jest.fn().mockResolvedValue(0),
+  },
+  nftCollection: {
+    findUnique: jest.fn().mockResolvedValue({
+      collectionId: 'viral-clips',
+      name: 'Viral Clips',
+      type: 'viral',
+      metadata: {},
+      royaltyBps: null,
+      maxSupply: null,
+    }),
   },
   nftWalletMintCooldown: {
     findUnique: jest.fn().mockResolvedValue(null),
@@ -63,8 +85,9 @@ const ipfsUploadServiceMock = {
 const stellarServiceMock = {
   validateAddress: jest.fn().mockReturnValue({ valid: true }),
   network: 'testnet',
-  networkPassphrase: 'Test SDF Network ; September 2015',
+  networkPassphrase: NETWORK_PASSPHRASE,
   rpcUrl: 'https://soroban-testnet.stellar.org',
+  getAccount: jest.fn().mockResolvedValue(new Account(VALID_WALLET, '0')),
 };
 
 const nftConfigMock = {
@@ -72,12 +95,40 @@ const nftConfigMock = {
   platformRoyaltyBps: 100,
   platformWallet: 'GPLATFORMWALLET000000000000000000000000000000000000000000',
   nftMintWalletCooldownSeconds: 60,
+  platformWallet: 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3',
 };
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-const VALID_WALLET = 'GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGMQ6NX4XUQN7Q6XHPVMUF';
-const CONTRACT_ID = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+/** Decodes a prepared mint XDR into the Soroban `mint` call it carries. */
+function decodeMintXdr(xdrString: string) {
+  const tx = TransactionBuilder.fromXDR(xdrString, NETWORK_PASSPHRASE);
+  if (!(tx instanceof Transaction)) {
+    throw new Error('Expected a regular transaction, not a fee-bump');
+  }
+  const op = tx.operations[0];
+  expect(op.type).toBe('invokeHostFunction');
+  if (op.type !== 'invokeHostFunction') {
+    throw new Error(
+      `Expected invokeHostFunction operation, got ${String(op.type)}`,
+    );
+  }
+  const ic = op.func.invokeContract();
+  const args = ic.args();
+  return {
+    contractId: StrKey.encodeContract(ic.contractAddress().contractId()),
+    functionName: ic.functionName().toString('utf8'),
+    to: scValToNative(args[0]) as string,
+    tokenId: scValToNative(args[1]) as string,
+    collectionId: scValToNative(args[2]) as string,
+    metadata: scValToNative(args[3]) as string,
+    royaltyBps: scValToNative(args[4]) as number,
+    royaltyExtension: scValToNative(args[5]) as {
+      recipients: Array<{ wallet: string; bps: number; label: string }>;
+    },
+    source: tx.source,
+  };
+}
 
 function makeService(): NftMintService {
   return new NftMintService(
@@ -174,10 +225,12 @@ describe('NftMintService.uploadMetadataToIPFS', () => {
     const result = await service.uploadMetadataToIPFS(5);
 
     expect(ipfsUploadServiceMock.uploadMetadata).toHaveBeenCalledTimes(1);
-    expect(prismaMock.clip.update).toHaveBeenCalledWith({
-      where: { id: 5 },
-      data: { metadataUri: 'ipfs://bafyNewCid123' },
-    });
+    expect(prismaMock.clip.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 5 },
+        data: expect.objectContaining({ metadataUri: 'ipfs://bafyNewCid123' }),
+      }),
+    );
     expect(result).toEqual({
       clipId: 5,
       cid: 'bafyNewCid123',
@@ -363,13 +416,15 @@ describe('NftMintService.prepareMintTx', () => {
 
     await service.prepareMintTx(5, VALID_WALLET);
 
-    expect(prismaMock.clip.update).toHaveBeenCalledWith({
-      where: { id: 5 },
-      data: { nftStatus: 'minting' },
-    });
+    expect(prismaMock.clip.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 5 },
+        data: expect.objectContaining({ nftStatus: 'minting' }),
+      }),
+    );
   });
 
-  it('xdr is a valid base64-encoded JSON containing mint function and metadata', async () => {
+  it('xdr is a valid Soroban transaction invoking mint with metadata and royalties', async () => {
     prismaMock.clip.findUnique.mockResolvedValue({
       ...baseClip,
       metadataUri: 'ipfs://mintMeta',
@@ -379,13 +434,16 @@ describe('NftMintService.prepareMintTx', () => {
 
     const result = await service.prepareMintTx(5, VALID_WALLET);
 
-    const decoded = JSON.parse(Buffer.from(result.xdr, 'base64').toString());
-    expect(decoded.function).toBe('mint');
-    expect(decoded.contract).toBe(CONTRACT_ID);
-    expect(decoded.args.metadata).toBe('ipfs://mintMeta');
-    expect(decoded.args.to).toBe(VALID_WALLET);
-    expect(decoded.args.royalty_bps).toBe(750);
-    expect(decoded.network).toBe('testnet');
+    const decoded = decodeMintXdr(result.xdr);
+    expect(decoded.functionName).toBe('mint');
+    expect(decoded.contractId).toBe(CONTRACT_ID);
+    expect(decoded.source).toBe(VALID_WALLET);
+    expect(decoded.to).toBe(VALID_WALLET);
+    expect(decoded.tokenId).toBe('5');
+    expect(decoded.collectionId).toBe('viral-clips');
+    expect(decoded.metadata).toBe('ipfs://mintMeta');
+    expect(decoded.royaltyBps).toBe(750);
+    expect(result.network).toBe('testnet');
   });
 
   it('propagates error from buildMintXdr / Stellar build failure', async () => {
