@@ -139,6 +139,7 @@ import { CollectionInfoResponseDto } from './dto/collection-info.dto';
 import { TotalSupplyResponseDto } from './dto/total-supply.dto';
 import { GasStatsResponseDto } from './dto/gas-stats.dto';
 import { GasMetricsService } from './gas-metrics.service';
+import { NftMintEnqueueService } from '../clips/nft-mint-enqueue.service';
 import {
   UpdateMetadataDto,
   UpdateMetadataResponseDto,
@@ -195,6 +196,7 @@ export class NftController {
     private readonly nftMetadataRefreshService: NftMetadataRefreshService,
     private readonly claimRoyaltyService: ClaimRoyaltyService,
     private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
+    private readonly nftMintEnqueueService: NftMintEnqueueService,
   ) {}
 
   @Auth()
@@ -756,6 +758,89 @@ export class NftController {
       dto.walletAddress,
       dto.collectionId,
     );
+  }
+
+  @Auth()
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
+  @Post('enqueue-mint')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Enqueue an NFT mint job on the dedicated nft-mint queue',
+    description:
+      'Moves Soroban mint processing off the request path into the dedicated nft-mint BullMQ queue ' +
+      '(own worker, concurrency and retry policy), so video processing never blocks minting. ' +
+      'Returns the BullMQ jobId immediately; use GET /nfts/mint-status/:jobId to track transaction states. ' +
+      'Duplicate active jobs for the same clip return 409.',
+  })
+  @ApiBody({ type: MintNftDto })
+  @ApiResponse({
+    status: 202,
+    description: 'Mint job enqueued; returns jobId for status tracking',
+    schema: {
+      example: { jobId: 'nft-mint-clip-42', delayed: false, delayMs: 0 },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid mint payload' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description: 'A mint job for this clip is already queued or running (duplicate prevented)',
+    type: NftMintConflictDto,
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Too many active NFT mint jobs for this user. Retry after the number of seconds in the Retry-After header.',
+  })
+  async enqueueMint(
+    @Body() dto: MintNftDto,
+    @Req() req: Request,
+  ): Promise<{ jobId: string; delayed: boolean; delayMs: number }> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    return this.nftMintEnqueueService.enqueueMint({
+      clipId: dto.clipId,
+      walletAddress: dto.creatorWallet,
+      userId,
+    });
+  }
+
+  @Auth()
+  @Get('mint-status/:jobId')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get NFT mint job transaction status',
+    description:
+      'Tracks a BullMQ mint job (returned by enqueue-mint) through pending → confirmed/failed states. ' +
+      'pending covers waiting/active/delayed; confirmed means the mint transaction completed; ' +
+      'failed includes the failure reason.',
+  })
+  @ApiParam({ name: 'jobId', description: 'BullMQ job ID returned by enqueue-mint', example: 'nft-mint-clip-42' })
+  @ApiResponse({
+    status: 200,
+    description: 'Mint job status with transaction state',
+    schema: {
+      example: {
+        jobId: 'nft-mint-clip-42',
+        state: 'completed',
+        txState: 'confirmed',
+        attemptsMade: 1,
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiNotFoundResponse({ description: 'Mint job not found' })
+  async mintJobStatus(@Param('jobId') jobId: string) {
+    return this.nftMintEnqueueService.getMintStatus(jobId);
   }
 
   @Auth()
