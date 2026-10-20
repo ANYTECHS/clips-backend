@@ -143,7 +143,7 @@ import { LoginGuard } from '../auth/guards/login.guard';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
-import { maskAddress } from '../wallets/wallet.utils';
+import { maskAddress } from '@clipcash/shared';
 import {
   UpdateRoyaltyRecipientDto,
   UpdateRoyaltyRecipientResponseDto,

@@ -12,7 +12,7 @@
  */
 import { ClipResponseDto } from '../clips/dto/clip-response.dto';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
-import { maskAddress } from '../wallets/wallet.utils';
+import { maskAddress } from '@clipcash/shared';
 
 describe('API response snapshots (#1024)', () => {
   describe('Clips list', () => {
