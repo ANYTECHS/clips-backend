@@ -119,22 +119,10 @@ export class PayoutValidationService {
 
   async ensureNoOpenPayout(userId: number): Promise<void> {
     const existingPending = await this.prisma.payout.findFirst({
-      where: {
-        userId,
-        status: {
-          in: [
-            'pending',
-            'under_review',
-            'pending_review',
-            'pending_approval',
-            'approved',
-            'processing',
-          ],
-        },
-      },
-      select: { id: true },
       where: { userId, status: { in: [...OPEN_PAYOUT_STATUSES] } },
+      select: { id: true },
     });
+
 
     if (existingPending) {
       throw new ConflictException(
@@ -305,4 +293,83 @@ export class PayoutValidationService {
       );
     }
   }
+
+  resolvePayoutDestinations(
+    totalAmount: number,
+    method?: 'fiat' | 'stellar',
+    destinations?: Array<{
+      method: 'fiat' | 'stellar';
+      percentage?: number;
+      amount?: number;
+    }>,
+  ): Array<{ method: 'fiat' | 'stellar'; amount: number }> {
+    if (!destinations || destinations.length === 0) {
+      if (!method) {
+        throw new BadRequestException(
+          'Either method or destinations is required',
+        );
+      }
+      return [{ method, amount: totalAmount }];
+    }
+
+    const methods = new Set(destinations.map((d) => d.method));
+    if (methods.size !== destinations.length) {
+      throw new BadRequestException(
+        'Duplicate destination methods are not allowed in a split payout',
+      );
+    }
+
+    const usingPercentage = destinations.every(
+      (d) => d.percentage !== undefined && d.percentage !== null,
+    );
+    const usingAmount = destinations.every(
+      (d) => d.amount !== undefined && d.amount !== null,
+    );
+
+    if (!usingPercentage && !usingAmount) {
+      throw new BadRequestException(
+        'Each destination must specify either percentage or amount consistently',
+      );
+    }
+
+    if (usingPercentage) {
+      const percentSum = destinations.reduce(
+        (sum, d) => sum + (d.percentage ?? 0),
+        0,
+      );
+      if (Math.abs(percentSum - 100) > 0.01) {
+        throw new BadRequestException(
+          `Destination percentages must sum to 100. Received: ${percentSum}`,
+        );
+      }
+
+      const splits = destinations.map((d, index) => {
+        const raw = (totalAmount * (d.percentage ?? 0)) / 100;
+        const amount =
+          index === destinations.length - 1
+            ? 0
+            : Math.round(raw * 100) / 100;
+        return { method: d.method, amount };
+      });
+      const allocated = splits
+        .slice(0, -1)
+        .reduce((sum, s) => sum + s.amount, 0);
+      splits[splits.length - 1].amount =
+        Math.round((totalAmount - allocated) * 100) / 100;
+      return splits;
+    }
+
+    const amountSum = destinations.reduce((sum, d) => sum + (d.amount ?? 0), 0);
+    if (Math.abs(amountSum - totalAmount) > 0.01) {
+      throw new BadRequestException(
+        `Destination amounts must sum to ${totalAmount}. Received: ${amountSum}`,
+      );
+    }
+
+    return destinations.map((d) => ({
+      method: d.method,
+      amount: d.amount as number,
+    }));
+  }
 }
+

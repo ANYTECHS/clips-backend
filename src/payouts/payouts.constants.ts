@@ -103,6 +103,8 @@ export const UNCONFIRMED_STELLAR_PAYOUT_STATUSES = [
 export const PAYOUT_STATUS_DESCRIPTIONS: Record<PayoutStatusValue, string> = {
   pending:
     'Created, or an unsigned Stellar XDR has been prepared and is awaiting signature/submission.',
+  under_review:
+    'Amount is under review and waiting for an admin approval.',
   pending_review:
     'Amount is at or above PAYOUT_APPROVAL_THRESHOLD and is waiting for an admin review.',
   pending_approval: 'Waiting for an admin approval (legacy review state).',
@@ -115,7 +117,9 @@ export const PAYOUT_STATUS_DESCRIPTIONS: Record<PayoutStatusValue, string> = {
     'Submission or on-chain verification failed. Failed attempts are retried with exponential backoff until MAX_PAYOUT_RETRIES is reached.',
   rejected: 'Rejected by an admin; rejectionReason is set.',
   canceled: 'Canceled by the user before approval.',
+  cancelled: 'Canceled by the user before approval (alias of canceled).',
 };
+
 
 export const PAYOUT_STATUS_SWAGGER_DESCRIPTION =
   'Payout lifecycle status. Stellar transaction states:\n' +
