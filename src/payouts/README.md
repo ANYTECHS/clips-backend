@@ -53,8 +53,16 @@ User-facing payout endpoints.
 
 **Endpoints:**
 - `POST /payouts/request` - Request payout
+- `POST /payouts/initiate-stellar` - Prepare and save an unsigned Stellar payout transaction
 - `GET /payouts` - Get payout history
 - `POST /payouts/:id/process` - Process payout
+
+`POST /payouts/initiate-stellar` accepts a payout ID and its exact amount. The
+payout must belong to the authenticated user, use the Stellar method, be in an
+initiable status, meet the configured minimum, and have a valid destination
+wallet. The response includes the unsigned transaction XDR and internal
+transaction ID. The payout remains pending; on-chain transaction fields are
+not set until the transaction has been submitted.
 
 #### `PayoutMethodController`
 User-facing payout method management.

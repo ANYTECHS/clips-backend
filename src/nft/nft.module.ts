@@ -35,6 +35,10 @@ import { AdminNftController } from './admin-nft.controller';
 import { NftFreezeAdminGuard } from './guards/nft-freeze-admin.guard';
 import { NftCollectionService } from './nft-collection.service';
 import { NftCollectionController } from './nft-collection.controller';
+import { NftMintStatusService } from './nft-mint-status.service';
+import { NftStandardQueriesService } from './nft-standard-queries.service';
+import { NftStandardQueriesController } from './nft-standard-queries.controller';
+import { ClipsModule } from '../clips/clips.module';
 
 @Module({
   imports: [
@@ -69,7 +73,9 @@ import { NftCollectionController } from './nft-collection.controller';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftMintStatusService,
     NftCollectionService,
+    NftStandardQueriesService,
   ],
   controllers: [
     NftController,
@@ -79,6 +85,7 @@ import { NftCollectionController } from './nft-collection.controller';
     SorobanContractController,
     AdminNftController,
     NftCollectionController,
+    NftStandardQueriesController,
   ],
   exports: [
     NftService,
@@ -100,7 +107,9 @@ import { NftCollectionController } from './nft-collection.controller';
     NftApprovalService,
     ClaimRoyaltyService,
     RoyaltyClaimHistoryService,
+    NftMintStatusService,
     NftCollectionService,
+    NftStandardQueriesService,
   ],
 })
 export class NftModule {}

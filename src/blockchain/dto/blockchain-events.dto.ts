@@ -79,7 +79,10 @@ export class BlockchainEventItemDto {
   @ApiProperty({ example: 1234567 })
   ledger: number;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: { tokenId: 42, operation: 'mint' },
+  })
   payload: Record<string, unknown> | null;
 
   @ApiProperty({ example: '2026-08-29T05:00:00.000Z' })
@@ -101,9 +104,30 @@ export class BlockchainEventsMetaDto {
 }
 
 export class BlockchainEventsResponseDto {
-  @ApiProperty({ type: [BlockchainEventItemDto] })
+  @ApiProperty({
+    type: [BlockchainEventItemDto],
+    example: [
+      {
+        id: 'clxyz123',
+        eventType: 'Mint',
+        tokenId: 42,
+        fromAddress: null,
+        toAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        amount: null,
+        asset: 'native',
+        txHash: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
+        eventIndex: 0,
+        ledger: 1234567,
+        payload: { tokenId: 42, operation: 'mint' },
+        createdAt: '2026-08-29T05:00:00.000Z',
+      },
+    ],
+  })
   data: BlockchainEventItemDto[];
 
-  @ApiProperty({ type: BlockchainEventsMetaDto })
+  @ApiProperty({
+    type: BlockchainEventsMetaDto,
+    example: { total: 100, page: 1, limit: 20, totalPages: 5 },
+  })
   meta: BlockchainEventsMetaDto;
 }

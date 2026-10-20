@@ -21,7 +21,7 @@ class BatchRoyaltyQueryDto {
   tokenIds: (string | number)[];
 }
 
-@ApiTags('nft')
+@ApiTags('NFTs')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nft')
 @Auth()

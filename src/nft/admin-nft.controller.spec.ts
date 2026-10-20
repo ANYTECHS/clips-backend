@@ -26,4 +26,4 @@ describe('AdminGuard for NFT freeze operations', () => {
 
     expect(() => guard.canActivate(context(secret))).toThrow(ForbiddenException);
   });
-
+});

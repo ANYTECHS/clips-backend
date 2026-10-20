@@ -13,6 +13,7 @@ import {
   ApiOkResponse,
   ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { RedisMemoryService, RedisMemoryStats } from './redis-memory.service';
 import { RedisHealthService, RedisHealthResult } from './redis-health.service';
 import { RedisService } from '../redis/redis.service';
@@ -40,6 +41,7 @@ interface RedisHealthResponse {
 
 @ApiTags('health')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@SkipThrottle()
 @Controller('health')
 export class HealthController {
   private readonly logger = new Logger(HealthController.name);

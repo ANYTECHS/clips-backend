@@ -89,6 +89,7 @@ model Clip {
   metadataUri   String?
   mintAddress   String?    @unique
   mintedAt      DateTime?
+  mintWalletAddress String?
   nftStatus     String     @default("none")
   status        String     @default("pending")
   localFilePath String?
@@ -149,6 +150,12 @@ model NftMintStatus {
   @@index([clipId])
   @@index([stage])
   @@index([permanentFailure])
+}
+
+/// Last successfully confirmed NFT mint for each Stellar wallet.
+model NftWalletMintCooldown {
+  walletAddress String   @id
+  lastMintAt    DateTime
 }
 
 model ClipRoyalty {

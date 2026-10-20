@@ -1,21 +1,24 @@
 import { Controller, Get } from '@nestjs/common';
 import {
+  ApiInternalServerErrorResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { StellarService } from '../stellar/stellar.service';
 import { AdminContractService } from './admin-contract.service';
+import { SorobanPauseInfoDto, SorobanPauseReasonDto } from './dto/soroban-pause.dto';
 
 @ApiTags('soroban')
-@Controller('soroban/contract')
+@ApiInternalServerErrorResponse({ description: 'Soroban RPC request failed' })
+@Controller('soroban')
 export class SorobanContractController {
   constructor(
     private readonly stellarService: StellarService,
     private readonly adminContractService: AdminContractService,
   ) {}
 
-  @Get('info')
+  @Get('contract/info')
   @ApiOperation({
     summary: 'Get configured Soroban NFT contract information',
     description:
@@ -56,7 +59,7 @@ export class SorobanContractController {
     };
   }
 
-  @Get('version')
+  @Get('contract/version')
   @ApiOperation({
     summary: 'Get the deployed Soroban NFT contract version',
     description:
@@ -73,5 +76,33 @@ export class SorobanContractController {
   })
   getContractVersion(): Promise<{ contractId: string; version: string }> {
     return this.adminContractService.getContractVersion();
+  }
+
+  @Get('pause')
+  @ApiOperation({
+    summary: 'Get Soroban contract pause status and reason',
+    description:
+      'Reads is_paused() and pause_reason() from the configured NFT contract. The reason is an empty string when none is set.',
+  })
+  @ApiOkResponse({
+    description: 'Current on-chain pause status and reason',
+    type: SorobanPauseInfoDto,
+  })
+  getPauseInfo(): Promise<SorobanPauseInfoDto> {
+    return this.adminContractService.getPauseInfo();
+  }
+
+  @Get('pause/reason')
+  @ApiOperation({
+    summary: 'Get the Soroban contract pause reason',
+    description:
+      'Reads pause_reason() from the configured NFT contract. Returns an empty string when no reason is set.',
+  })
+  @ApiOkResponse({
+    description: 'Current on-chain pause reason',
+    type: SorobanPauseReasonDto,
+  })
+  async getPauseReason(): Promise<SorobanPauseReasonDto> {
+    return { reason: await this.adminContractService.getPauseReason() };
   }
 }

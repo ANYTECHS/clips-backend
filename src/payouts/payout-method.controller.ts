@@ -34,7 +34,7 @@ interface RequestWithUser extends Request {
   user: { userId: number };
 }
 
-@ApiTags('payout-methods')
+@ApiTags('Payouts')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - missing or invalid token' })
 @ApiForbiddenResponse({ description: 'Forbidden - can only access own payout methods' })

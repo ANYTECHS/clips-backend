@@ -1,8 +1,10 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -19,6 +21,7 @@ import { StellarPayoutVerificationService } from './stellar-payout-verification.
 
 import {
   PAYOUT_STATUSES,
+  STELLAR_INITIABLE_PAYOUT_STATUSES,
   UNCONFIRMED_STELLAR_PAYOUT_STATUSES,
 } from './payouts.constants';
 
@@ -53,7 +56,7 @@ export class PayoutProcessingService {
     stellarXdr: string;
   }> {
     const payout = await this.prisma.payout.findFirst({
-      where: { id: payoutId, userId },
+      where: { id: payoutId, userId, deletedAt: null },
       include: { wallet: { select: { address: true } } },
     });
 
@@ -61,57 +64,7 @@ export class PayoutProcessingService {
       throw new NotFoundException('Payout record not found');
     }
 
-    if (
-      payout.status !== 'approved' &&
-      payout.status !== 'pending' &&
-      payout.status !== 'under_review' &&
-      payout.status !== 'pending_review'
-    ) {
-      throw new BadRequestException(
-        `Payout must be approved or pending before Stellar initiation (current status: ${payout.status})`,
-      );
-    }
-
-    if (payout.method !== 'stellar') {
-      throw new BadRequestException('Only Stellar payouts can be initiated here');
-    }
-
-    if (payout.amount !== amount) {
-      throw new BadRequestException('Requested amount does not match payout amount');
-    }
-
-    await this.payoutValidationService.assertMinimumPayout(amount, payout.currency);
-
-    const existingPending = await this.prisma.payout.findFirst({
-      where: {
-        id: payoutId,
-        userId,
-        status: 'pending',
-        transactionId: { not: null },
-      },
-    });
-
-    if (existingPending) {
-      throw new BadRequestException('A Stellar payout transaction is already pending for this payout');
-    }
-
-    const platformAddress =
-      process.env.STELLAR_WALLET_ADDRESS || process.env.PLATFORM_WALLET_ADDRESS || '';
-    if (!platformAddress) {
-      throw new BadRequestException('Platform Stellar wallet address is not configured');
-    }
-
-    const platformAddressCheck = this.stellarService.validateAddress(platformAddress);
-    if (!platformAddressCheck.valid) {
-      throw new BadRequestException('Invalid platform Stellar wallet address');
-    }
-
-    const payoutWalletAddress = payout.wallet?.address;
-    if (!payoutWalletAddress) {
-      throw new BadRequestException('No wallet associated with this payout');
-    }
     await this.payoutValidationService.assertStellarInitiable(payout, amount);
-
     const platformAddress = this.payoutValidationService.getPlatformWalletAddress();
     const payoutWalletAddress = this.payoutValidationService.assertValidDestination(
       payout.wallet?.address,
@@ -132,22 +85,33 @@ export class PayoutProcessingService {
     const transactionId = transaction.hash().toString('hex');
     const stellarXdr = transaction.toXDR();
 
-    const updated = await this.prisma.payout.update({
-      where: { id: payoutId },
+    const prepared = await this.prisma.payout.updateMany({
+      where: {
+        id: payoutId,
+        userId,
+        deletedAt: null,
+        status: { in: [...STELLAR_INITIABLE_PAYOUT_STATUSES] },
+        transactionId: null,
+        stellarXdr: null,
+      },
       data: {
         status: PAYOUT_STATUSES.PENDING,
         transactionId,
         stellarXdr,
-        externalTransactionId: transactionId,
-        onChainTxHash: transactionId,
         lastAttemptAt: new Date(),
       },
     });
 
+    if (prepared.count !== 1) {
+      throw new ConflictException(
+        'A Stellar payout transaction is already pending for this payout',
+      );
+    }
+
     return {
-      id: updated.id,
-      status: updated.status,
-      amount: updated.amount,
+      id: payout.id,
+      status: PAYOUT_STATUSES.PENDING,
+      amount: payout.amount,
       transactionId,
       stellarXdr,
     };
