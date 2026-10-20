@@ -18,7 +18,19 @@ export class PlatformEarningDto {
 }
 
 export class EarningsByPlatformResponseDto {
-  @ApiProperty({ type: [PlatformEarningDto], description: 'Chart-ready per-platform breakdown' })
+  @ApiProperty({
+    type: [PlatformEarningDto],
+    description: 'Chart-ready per-platform breakdown',
+    example: [
+      {
+        platform: 'tiktok',
+        amount: 125.5,
+        currency: 'USD',
+        totalEarnings: 125.5,
+        count: 12,
+      },
+    ],
+  })
   data: PlatformEarningDto[];
 
   @ApiProperty({ example: 250.75, description: 'Sum across platforms in the target currency' })

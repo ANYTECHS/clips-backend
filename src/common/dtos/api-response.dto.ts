@@ -24,6 +24,7 @@ export class ApiResponseDto<T = any> {
 
   @ApiPropertyOptional({
     description: 'Response payload. Omitted on error responses.',
+    example: { id: 42, status: 'completed' },
   })
   data?: T;
 
@@ -96,7 +97,11 @@ export class ApiResponseDto<T = any> {
  * as the `data` field.
  */
 export class PaginatedResponseDto<T> {
-  @ApiProperty({ description: 'Array of items on the current page', isArray: true })
+  @ApiProperty({
+    description: 'Array of items on the current page',
+    isArray: true,
+    example: [{ id: 42, status: 'completed' }],
+  })
   items: T[];
 
   @ApiProperty({ description: 'Total number of items across all pages', example: 120 })

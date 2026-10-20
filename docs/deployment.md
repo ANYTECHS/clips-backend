@@ -291,6 +291,48 @@ STELLAR_NETWORK=public
 SOROBAN_NFT_CONTRACT_ID=your-mainnet-contract-id
 ```
 
+### Deploying the Soroban NFT Contract
+
+Deployment is repeatable and environment-driven via the scripts in `scripts/` (Issue #1166):
+
+```bash
+# Testnet
+SOROBAN_NFT_WASM=./nft_contract.wasm \
+STELLAR_SOURCE=SD...your-secret \
+  ./scripts/deploy-testnet.sh
+
+# Mainnet (requires an approved testnet run first)
+SOROBAN_NFT_WASM=./nft_contract.wasm \
+STELLAR_SOURCE=SD...your-secret \
+ALLOW_MAINNET_DEPLOY=true \
+  ./scripts/deploy-mainnet.sh
+```
+
+Both wrappers set `STELLAR_NETWORK` and delegate to `scripts/deploy.sh`, which validates the environment, deploys the WASM, writes a deployment record to `deployments/deployment-<network>.json`, and **prints the contract ID**. Export it as `SOROBAN_NFT_CONTRACT_ID` to point the backend at the new deployment.
+
+### Contract Info Endpoint
+
+The backend exposes the deployed contract details at:
+
+```
+GET /soroban/contract/info
+```
+
+Example response:
+
+```json
+{
+  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4",
+  "network": "testnet",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4"
+}
+```
+
+Use this endpoint after every deployment to confirm the backend is configured with the expected contract ID and network. `GET /soroban/contract/version` additionally reports the on-chain contract version.
+
+
 ### Platform Payout Wallet
 
 The backend uses `STELLAR_PLATFORM_SECRET` (a Stellar keypair secret) to sign payout transactions. This must be set securely in production — **never commit this value**:

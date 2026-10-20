@@ -22,7 +22,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
 import { UserResponseDto } from './dto/user-responses.dto';
 
-@ApiTags('users')
+@ApiTags('Users')
 @ApiBearerAuth('access-token')
 @ApiBadRequestResponse({ description: 'Invalid request parameters' })
 @ApiUnauthorizedResponse({ description: 'JWT token required' })
@@ -59,7 +59,7 @@ export class UsersController {
     description: 'Wallet created, returns a masked stellarPublicKey',
     schema: {
       example: {
-        stellarPublicKey: 'GABC...X92K',
+        stellarPublicKey: 'GABF...KJ93XD',
         walletType: 'custodial',
       },
     },

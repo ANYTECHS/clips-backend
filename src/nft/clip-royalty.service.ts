@@ -51,6 +51,11 @@ export class ClipRoyaltyService {
           `Invalid platform fee BPS: ${platformFeeBps}. Must be a non-negative integer.`,
         );
       }
+      if (basisPoints + platformFeeBps > 10000) {
+        throw new BadRequestException(
+          `Combined royalty BPS (${basisPoints + platformFeeBps}) exceeds 10000.`,
+        );
+      }
     }
 
     // Validate Stellar address
@@ -202,6 +207,11 @@ export class ClipRoyaltyService {
       if (!Number.isInteger(platformFeeBps) || platformFeeBps < 0) {
         throw new BadRequestException(
           `Invalid platform fee BPS: ${platformFeeBps}. Must be a non-negative integer.`,
+        );
+      }
+      if (basisPoints + platformFeeBps > 10000) {
+        throw new BadRequestException(
+          `Combined royalty BPS (${basisPoints + platformFeeBps}) exceeds 10000.`,
         );
       }
     }

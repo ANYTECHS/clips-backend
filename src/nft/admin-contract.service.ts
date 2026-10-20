@@ -76,6 +76,64 @@ export class AdminContractService {
     };
   }
 
+  /**
+   * Prepare `set_name(value)` / `set_symbol(value)` admin transactions
+   * (Issue #1188).
+   *
+   * Lets the collection be renamed or re-symbolled without redeploying the
+   * contract. Returns unsigned XDR — only the contract admin wallet can
+   * sign and submit it.
+   */
+  async prepareSetNameOrSymbolTx(
+    adminAddress: string,
+    field: 'name' | 'symbol',
+    value: string,
+  ) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new BadRequestException(`${field} must not be empty`);
+    }
+    if (trimmed.length > 64) {
+      throw new BadRequestException(`${field} must be 64 characters or fewer`);
+    }
+
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const action = field === 'name' ? 'set_name' : 'set_symbol';
+    const op = contract.call(
+      action,
+      StellarSdk.nativeToScVal(trimmed, { type: 'string' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action,
+      value: trimmed,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
   async prepareTokenFreezeTx(
     tokenId: number,
     adminAddress: string,
@@ -124,7 +182,9 @@ export class AdminContractService {
     };
   }
 
-  async getFreezeStatus(tokenId: number): Promise<{ tokenId: number; frozen: boolean }> {
+  async getFreezeStatus(
+    tokenId: number,
+  ): Promise<{ tokenId: number; frozen: boolean }> {
     this.validateTokenId(tokenId);
     const token = await this.getClipId(tokenId);
     if (token.clipId === null) {
@@ -193,7 +253,9 @@ export class AdminContractService {
    *
    * Returns `null` when the token does not exist on-chain.
    */
-  async getClipId(tokenId: number): Promise<{ tokenId: number; clipId: string | null }> {
+  async getClipId(
+    tokenId: number,
+  ): Promise<{ tokenId: number; clipId: string | null }> {
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
     const op = contract.call(
@@ -222,13 +284,16 @@ export class AdminContractService {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Failed to query get_clip_id for token ${tokenId}: ${msg}`);
+      this.logger.error(
+        `Failed to query get_clip_id for token ${tokenId}: ${msg}`,
+      );
       throw new InternalServerErrorException(
         `Failed to query clip ID for token ${tokenId}: ${msg}`,
       );
     }
 
-    const results = (simulation as { results?: Array<{ xdr: string }> }).results;
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
     if (!results?.[0]?.xdr) {
       return { tokenId, clipId: null };
     }
@@ -273,7 +338,8 @@ export class AdminContractService {
       );
     }
 
-    const results = (simulation as { results?: Array<{ xdr: string }> }).results;
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
     if (!results?.[0]?.xdr) {
       throw new InternalServerErrorException(
         'No return value from is_paused contract call',
@@ -284,6 +350,19 @@ export class AdminContractService {
     return { paused: Boolean(StellarSdk.scValToNative(returnValue)) };
   }
 
+  async getPauseReason(): Promise<string> {
+    const reason = await this.callViewFunction('pause_reason');
+    return String(reason ?? '');
+  }
+
+  async getPauseInfo(): Promise<{ paused: boolean; reason: string }> {
+    const [status, reason] = await Promise.all([
+      this.getPauseStatus(),
+      this.getPauseReason(),
+    ]);
+    return { ...status, reason };
+  }
+
   /**
    * Query the on-chain `name()` and `symbol()` view functions (Issue #679).
    *
@@ -291,7 +370,11 @@ export class AdminContractService {
    * contract, so this always reflects the current collection branding
    * rather than a hardcoded value.
    */
-  async getCollectionInfo(): Promise<{ name: string; symbol: string; contractId: string }> {
+  async getCollectionInfo(): Promise<{
+    name: string;
+    symbol: string;
+    contractId: string;
+  }> {
     const [name, symbol] = await Promise.all([
       this.callViewFunction('name'),
       this.callViewFunction('symbol'),

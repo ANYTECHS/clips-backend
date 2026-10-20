@@ -73,10 +73,6 @@ export class CreatePayoutDto {
       'per-currency via MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON). ' +
       'Amounts outside the range are rejected with a 400 validation error.',
     example: 100.0,
-      'Amount to withdraw. Must meet the minimum payout threshold ' +
-      '(default 5 USD equivalent, configurable via MIN_STELLAR_PAYOUT); ' +
-      'amounts below the threshold are rejected with a 400 validation error.',
-    example: 50,
     minimum: 0.01,
   })
   @Type(() => Number)

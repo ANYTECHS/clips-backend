@@ -54,4 +54,23 @@ export class CreateMintDto {
   @Type(() => Number)
   @IsValidRoyaltyBps({ max: CLIP_ROYALTY_BPS_MAX })
   royaltyBps?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Platform royalty share in basis points (BPS). Defaults to platform configured value.',
+    example: 100,
+    minimum: 0,
+    maximum: 10000,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsValidRoyaltyBps()
+  platformRoyaltyBps?: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional additional royalty recipients.',
+  })
+  @IsOptional()
+  recipients?: Array<{ wallet: string; bps: number; label: string }>;
 }
+

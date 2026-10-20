@@ -159,6 +159,12 @@ export class ConfigService {
    */
   readonly maxRoyaltyBps = 1500;
 
+  /** Minimum seconds between successful NFT mints from one Stellar wallet. */
+  readonly nftMintWalletCooldownSeconds = Math.max(
+    0,
+    parseInt(process.env.NFT_MINT_WALLET_COOLDOWN_SECONDS ?? '60', 10) || 0,
+  );
+
   /**
    * Default royalty in bps applied when a creator does not specify one
    * (mirrors the DTO default for consistency).

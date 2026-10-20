@@ -11,6 +11,7 @@ import {
   getSchemaPath,
 } from '@nestjs/swagger';
 import { ErrorResponseDto } from '../dtos/error-response.dto';
+import { ValidationErrorResponseDto } from '../dtos/validation-error-response.dto';
 
 const errorSchema = (statusCode: number, message: string, error: string) => ({
   allOf: [{ $ref: getSchemaPath(ErrorResponseDto) }],
@@ -20,7 +21,20 @@ const errorSchema = (statusCode: number, message: string, error: string) => ({
 export const STANDARD_ERRORS = {
   400: ApiBadRequestResponse({
     description: 'Bad Request — invalid input or failed validation',
-    schema: errorSchema(400, 'Invalid request', 'Bad Request'),
+    schema: {
+      allOf: [{ $ref: getSchemaPath(ValidationErrorResponseDto) }],
+      example: {
+        statusCode: 400,
+        message: 'Validation failed',
+        error: 'Bad Request',
+        details: [
+          {
+            field: 'email',
+            errors: ['email must be a valid email address'],
+          },
+        ],
+      },
+    },
   }),
   401: ApiUnauthorizedResponse({
     description: 'Unauthorized — missing or invalid JWT',
@@ -67,7 +81,7 @@ export function ApiStandardErrors(...statuses: StandardErrorStatus[]) {
     ? statuses
     : [400, 401, 403, 429, 500];
   return applyDecorators(
-    ApiExtraModels(ErrorResponseDto),
+    ApiExtraModels(ErrorResponseDto, ValidationErrorResponseDto),
     ...selected.map((s) => STANDARD_ERRORS[s]),
   );
 }

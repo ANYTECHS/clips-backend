@@ -18,7 +18,10 @@ export class InitiateStellarPayoutDto {
     minimum: 0.01,
   })
   @Type(() => Number)
-  @IsNumber()
+  @IsNumber(
+    { maxDecimalPlaces: 7 },
+    { message: 'amount must be a valid number with at most 7 decimal places' },
+  )
   @Min(0.01)
   amount: number;
 }
