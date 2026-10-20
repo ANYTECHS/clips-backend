@@ -127,9 +127,19 @@ import { NftOwnershipService } from './nft-ownership.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
+import {
+  MintStatusResponseDto,
+  MintStatusNotFoundDto,
+} from './dto/mint-status-response.dto';
+import {
+  MetadataValidationResponseDto,
+  ValidateNftMetadataDto,
+  MetadataValidationBadRequestDto,
+} from './dto/metadata-validation.dto';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
-import { AdminContractService } from './admin-contract.service';
+import { Auth } from '../auth/decorators/auth.decorator';
+import { LoginGuard } from '../auth/guards/login.guard';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
@@ -522,7 +532,15 @@ export class NftController {
     },
   })
   @ApiUnauthorizedResponse({
-    description: 'Unauthorized — Bearer JWT required',
+    description:
+      'Unauthorized — Bearer JWT required, or wallet signature invalid (Issue #1165)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
   })
   @ApiForbiddenResponse({
     description:
@@ -572,6 +590,17 @@ export class NftController {
     // Reject mint requests for clips that don't exist or don't belong to the caller.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
     await this.nftMintService.assertMintCooldown(dto.creatorWallet);
+
+    // Signature check (Issue #1165): when the caller provides a wallet
+    // signature, verify it before any state change so unauthorized mints
+    // fail fast with 401.
+    if (dto.walletSignature) {
+      this.mintSignatureVerification.verify(
+        dto.clipId,
+        dto.creatorWallet,
+        dto.walletSignature,
+      );
+    }
 
     const collectionId = dto.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
     if (!isSupportedNftCollectionId(collectionId)) {
@@ -737,6 +766,14 @@ export class NftController {
   })
   @ApiUnauthorizedResponse({
     description:
+      'Unauthorized — Bearer JWT required, or wallet signature invalid (Issue #1165)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
       'Unauthorized — Bearer JWT required, or wallet signature invalid',
   })
   @ApiForbiddenResponse({

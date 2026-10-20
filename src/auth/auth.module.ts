@@ -64,6 +64,8 @@ import { QueueOverflowService } from '../common/queue/queue-overflow.service';
     EmailDeliveryProcessor,
     AdminGuard,
     QueueOverflowService,
+  ],
+  exports: [MailService, JwtModule, PassportModule, AdminGuard],
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';

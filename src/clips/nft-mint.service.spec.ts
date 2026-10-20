@@ -47,6 +47,8 @@ const prismaMock = {
       metadata: {},
       royaltyBps: null,
       maxSupply: null,
+      contractAddress: 'CCONTRACTADDRESS',
+    }),
     }),
   },
   nftWalletMintCooldown: {
@@ -225,6 +227,10 @@ describe('NftMintService.uploadMetadataToIPFS', () => {
     const result = await service.uploadMetadataToIPFS(5);
 
     expect(ipfsUploadServiceMock.uploadMetadata).toHaveBeenCalledTimes(1);
+    expect(prismaMock.clip.update).toHaveBeenCalledWith({
+      where: { id: 5 },
+      data: { collectionId: 'viral-clips', metadataUri: 'ipfs://bafyNewCid123' },
+    });
     expect(prismaMock.clip.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 5 },
@@ -416,6 +422,10 @@ describe('NftMintService.prepareMintTx', () => {
 
     await service.prepareMintTx(5, VALID_WALLET);
 
+    expect(prismaMock.clip.update).toHaveBeenCalledWith({
+      where: { id: 5 },
+      data: { collectionId: 'viral-clips', nftStatus: 'minting' },
+    });
     expect(prismaMock.clip.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 5 },

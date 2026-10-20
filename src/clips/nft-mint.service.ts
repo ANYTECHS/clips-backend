@@ -46,13 +46,6 @@ export interface PrepareMintTxResult {
   royaltyBps: number;
 }
 
-/**
- * Orchestrates the NFT minting workflow: ownership validation, IPFS metadata
- * upload, Soroban transaction preparation, and mint confirmation.
- *
- * This service is the bridge between the NFT controller / queue workers and
- * the underlying Prisma + Stellar layers.
- */
 @Injectable()
 export class NftMintService {
   private readonly logger = new Logger(NftMintService.name);
@@ -65,6 +58,9 @@ export class NftMintService {
     private readonly nftConfig: NftConfig,
   ) {}
 
+  async uploadMetadataToIPFS(
+    clipId: number,
+    collectionId = DEFAULT_NFT_COLLECTION_ID,
   // ──────────────────────────────────────────────────────────────────────────
   // Issue #748 — Upload clip metadata to IPFS
   // ──────────────────────────────────────────────────────────────────────────
@@ -103,6 +99,7 @@ export class NftMintService {
       include: { video: { select: { userId: true } } },
     });
 
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
     if (!clip) {
       throw new NotFoundException(`Clip ${clipId} not found`);
     }
@@ -148,6 +145,7 @@ export class NftMintService {
       metadata,
       clipId,
     );
+
     // Persist the CID to the Clip record so subsequent mint calls can
     // skip the upload step.
     await this.prisma.clip.update({
@@ -179,10 +177,6 @@ export class NftMintService {
     );
     return { clipId, cid, metadataUri };
   }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Issue #749 — Prepare Soroban mint transaction
-  // ──────────────────────────────────────────────────────────────────────────
 
   async prepareMintTx(
     clipId: number,
@@ -308,8 +302,9 @@ export class NftMintService {
       include: { video: { select: { userId: true } } },
     });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.video.userId !== userId)
+    if (clip.video.userId !== userId) {
       throw new ForbiddenException(`You do not own clip ${clipId}`);
+    }
   }
 
   async assertMintCooldown(walletAddress: string): Promise<void> {
@@ -356,6 +351,8 @@ export class NftMintService {
   ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.mintAddress) {
+      throw new BadRequestException(`Clip ${clipId} is already minted`);
     if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new BadRequestException(`Clip ${clipId} already minted`);
     if (
@@ -380,6 +377,10 @@ export class NftMintService {
     return { clipId, mintAddress, mintedAt, nftStatus: 'minted' };
   }
 
+  async prepareBurnTx(clipId: number, walletAddress: string) {
+    if (!this.stellarService.validateAddress(walletAddress).valid) {
+      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    }
 
   async prepareBurnTx(
     clipId: number,
@@ -395,25 +396,19 @@ export class NftMintService {
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId)
       throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
-    const xdr = Buffer.from(
-      JSON.stringify({
-        contract: contractId,
-        function: 'burn',
-        args: {
-          owner: walletAddress,
-          token_id: String(clipId),
-          refund_royalties: refundRoyalties,
-        },
-        network: this.stellarService.network,
-      }),
-    ).toString('base64');
     return {
-      xdr,
+      xdr: Buffer.from(
+        JSON.stringify({
+          contract: contractId,
+          function: 'burn',
+          args: { owner: walletAddress, token_id: String(clipId) },
+          network: this.stellarService.network,
+        }),
+      ).toString('base64'),
       tokenId: clipId,
       owner: walletAddress,
       contractId,
       network: this.stellarService.network,
-      refundRoyalties,
     };
   }
 
@@ -422,26 +417,31 @@ export class NftMintService {
     walletAddress: string,
     shares: Array<{ recipient: string; bps: number }>,
   ) {
-    const addrValidation = this.stellarService.validateAddress(walletAddress);
-    if (!addrValidation.valid)
-      throw new BadRequestException(addrValidation.message);
-    const totalBps = shares.reduce((sum, s) => sum + s.bps, 0);
-    if (totalBps > 10000)
+    if (!this.stellarService.validateAddress(walletAddress).valid) {
+      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    }
+    const totalBps = shares.reduce((sum, share) => sum + share.bps, 0);
+    if (totalBps > 10000) {
       throw new BadRequestException(
         `Combined royalty shares (${totalBps} bps) exceed 10000 bps`,
       );
+    }
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId)
       throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
-    const xdr = Buffer.from(
-      JSON.stringify({
-        contract: contractId,
-        function: 'set_royalties',
-        args: { token_id: String(clipId), royalties: shares },
-        network: this.stellarService.network,
-      }),
-    ).toString('base64');
-    return { xdr, tokenId: clipId, shares, totalBps };
+    return {
+      xdr: Buffer.from(
+        JSON.stringify({
+          contract: contractId,
+          function: 'set_royalties',
+          args: { token_id: String(clipId), royalties: shares },
+          network: this.stellarService.network,
+        }),
+      ).toString('base64'),
+      tokenId: clipId,
+      shares,
+      totalBps,
+    };
   }
 
   async prepareClaimRoyaltiesTx(
@@ -449,26 +449,25 @@ export class NftMintService {
     walletAddress: string,
     assetContractId?: string,
   ) {
-    const addrValidation = this.stellarService.validateAddress(walletAddress);
-    if (!addrValidation.valid)
-      throw new BadRequestException(addrValidation.message);
+    if (!this.stellarService.validateAddress(walletAddress).valid) {
+      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    }
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId)
       throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
-    const xdr = Buffer.from(
-      JSON.stringify({
-        contract: contractId,
-        function: 'claim_royalties',
-        args: {
-          recipient: walletAddress,
-          token_id: String(clipId),
-          ...(assetContractId ? { asset_contract_id: assetContractId } : {}),
-        },
-        network: this.stellarService.network,
-      }),
-    ).toString('base64');
     return {
-      xdr,
+      xdr: Buffer.from(
+        JSON.stringify({
+          contract: contractId,
+          function: 'claim_royalties',
+          args: {
+            recipient: walletAddress,
+            token_id: String(clipId),
+            ...(assetContractId ? { asset_contract_id: assetContractId } : {}),
+          },
+          network: this.stellarService.network,
+        }),
+      ).toString('base64'),
       tokenId: clipId,
       recipient: walletAddress,
       claimableBalance: 0,
@@ -480,7 +479,7 @@ export class NftMintService {
   private isPosted(postStatus: unknown): boolean {
     if (!postStatus || typeof postStatus !== 'object') return false;
     return Object.values(postStatus as Record<string, unknown>).some(
-      (v) => v === 'posted',
+      (value) => value === 'posted',
     );
   }
 

@@ -107,4 +107,29 @@ export class MintNftDto {
   @IsOptional()
   @IsString({ message: 'royaltyDescription must be a string' })
   royaltyDescription?: string;
+
+  /**
+   * Ed25519 signature over the canonical mint-authorization challenge message:
+   *   "ClipCash mint authorization for clip <clipId> by <creatorWallet>"
+   *
+   * When provided the backend verifies the signature before minting, proving
+   * the caller controls the private key for `creatorWallet` and rejecting
+   * unauthorized mints. Required for production mints (Issue #1165).
+   *
+   * Encoding: 128-char lowercase hex or standard/URL-safe base64.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Ed25519 signature (hex or base64) over the challenge message ' +
+      '"ClipCash mint authorization for clip <clipId> by <creatorWallet>". ' +
+      'Required signature field: when supplied the server verifies wallet ' +
+      'ownership before minting and rejects invalid signatures with 401. ' +
+      'Omit only during local testing (Issue #1165).',
+    example:
+      'a3f2c1d4e5b6a7f8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2' +
+      'c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4',
+  })
+  @IsOptional()
+  @IsString({ message: 'walletSignature must be a string' })
+  walletSignature?: string;
 }

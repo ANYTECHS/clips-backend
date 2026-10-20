@@ -1052,6 +1052,25 @@ export class AuthController {
   @Post('logout')
   @ApiOperation({
     summary: 'Logout user',
+    description:
+      'Revokes the refresh token and clears token cookies. Accepts the refresh token ' +
+      'in the request body (`RefreshTokenDto.refreshToken`) or via the `refresh_token` cookie. ' +
+      'Always clears cookies even when no valid token is supplied (Issue #926).',
+  })
+  @ApiBody({ type: RefreshTokenDto })
+  @ApiResponse({ status: 204, description: 'Logout successful - refresh token revoked, cookies cleared' })
+  @ApiResponse({
+    status: 401,
+    description: 'Refresh token invalid, expired, or already revoked (cookies are still cleared)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Invalid refresh token',
+        error: 'Unauthorized',
+      },
+    },
+  })
+
     description: 'Revokes refresh token and clears cookies',
   })
   @ApiBody({ type: RefreshTokenDto })
@@ -1227,6 +1246,9 @@ export class AuthController {
       },
     },
   })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   @ApiResponse({ status: 429, description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
@@ -1253,6 +1275,7 @@ export class AuthController {
     type: MfaSetupResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @HttpCode(HttpStatus.OK)
   @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
   @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
@@ -1275,6 +1298,9 @@ export class AuthController {
   })
   @ApiResponse({ status: 400, description: 'Invalid verification code' })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
   @ApiResponse({ status: 429, description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
@@ -1300,6 +1326,7 @@ export class AuthController {
     type: MfaStatusResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized — Bearer JWT required' })
+  @HttpCode(HttpStatus.OK)
   @ApiTooManyRequestsResponse({ description: 'Too Many Requests - Rate limit exceeded (5 requests per minute per IP). Retry after the Retry-After seconds.' })
   @HttpCode(HttpStatus.OK)
   @Throttle({ authStrict: { limit: 5, ttl: 60000 } })
