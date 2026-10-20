@@ -231,7 +231,14 @@ describe('ClipRoyaltyService', () => {
         service.validateRoyaltyConfiguration(-100);
       }).toThrow(BadRequestException);
     });
+
+    it('should reject combined BPS > 10000', () => {
+      expect(() => {
+        service.validateRoyaltyConfiguration(1500, 9000);
+      }).toThrow(BadRequestException);
+    });
   });
+
 
   describe('getRoyaltiesForRecipient', () => {
     it('should retrieve all royalties for a recipient', async () => {

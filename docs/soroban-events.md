@@ -14,6 +14,7 @@ Use the same event names and capitalization at the contract boundary and in the 
 | `Paused` / `Unpaused`  | `actor`                                                   | Optional reason                                                |
 | `Frozen` / `Unfrozen`  | `token_id`, `actor` when available                        | Optional reason                                                |
 | `Burn`                 | `token_id`, `from_address`                                | Optional burn details                                          |
+| `Refunded`             | `token_id`, `to_address`                                  | `amount`, `asset`                                               |
 | `RoyaltyPaid`          | `token_id`, `from_address`, `to_address`                  | `amount`, `asset`                                              |
 | `RoyaltyClaimed`       | `token_id`, `to_address`                                  | `amount`, `asset`                                              |
 
@@ -23,7 +24,7 @@ The indexer preserves Soroban topics and value under the event DTO's `payload` f
 
 ## Supported event types
 
-The API and indexer recognize `Mint`, `Transfer`, `RoyaltyUpdated`, `ConfigurationUpdated`, `MetadataRefreshed`, `Paused`, `Unpaused`, `Frozen`, `Unfrozen`, `Burn`, `RoyaltyPaid`, and `RoyaltyClaimed`. Event names are case-sensitive.
+The API and indexer recognize `Mint`, `Transfer`, `RoyaltyUpdated`, `ConfigurationUpdated`, `MetadataRefreshed`, `Paused`, `Unpaused`, `Frozen`, `Unfrozen`, `Burn`, `Refunded`, `RoyaltyPaid`, and `RoyaltyClaimed`. Event names are case-sensitive.
 
 ## API
 

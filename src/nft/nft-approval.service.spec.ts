@@ -71,31 +71,94 @@ describe('NftApprovalService (Issue #842)', () => {
   });
 
   it('prepares approve() XDR for a spender', async () => {
-    const result = await service.prepareApprove(42, OWNER, SPENDER);
+    const result = await service.prepareApprove(42, OWNER, SPENDER, 100);
     expect(result.tokenId).toBe(42);
     expect(result.spender).toBe(SPENDER);
-    expect(result.emits).toBe('Approval');
+    expect(result.liveUntilLedger).toBe(100);
+    expect(result.emits).toBe('approve');
     expect(result.xdr).toBe('mock-approve-xdr');
     expect(mockCall).toHaveBeenCalledWith(
       'approve',
       expect.anything(),
       expect.anything(),
       expect.anything(),
+      { v: 100 },
     );
   });
 
-  it('allows revoke by passing empty spender', async () => {
-    const result = await service.prepareApprove(42, OWNER, '');
-    expect(result.spender).toBe('');
+  it('revokes token approval by approving the owner address', async () => {
+    const result = await service.prepareApprove(42, OWNER, '', 100);
+    expect(result.spender).toBe(OWNER);
+    expect(mockCall).toHaveBeenCalledWith(
+      'approve',
+      expect.anything(),
+      expect.objectContaining({ address: OWNER }),
+      expect.anything(),
+      { v: 100 },
+    );
   });
 
-  it('prepares set_approval_for_all enable and disable', async () => {
-    const enabled = await service.prepareSetApprovalForAll(OWNER, SPENDER, true);
+  it('prepares approve_for_all grants and revocations by expiry ledger', async () => {
+    const enabled = await service.prepareSetApprovalForAll(OWNER, SPENDER, 100);
     expect(enabled.approved).toBe(true);
-    expect(enabled.emits).toBe('ApprovalForAll');
+    expect(enabled.liveUntilLedger).toBe(100);
+    expect(enabled.emits).toBe('approve_for_all');
+    expect(mockCall).toHaveBeenCalledWith(
+      'approve_for_all',
+      expect.anything(),
+      expect.anything(),
+      { v: 100 },
+    );
 
-    const disabled = await service.prepareSetApprovalForAll(OWNER, SPENDER, false);
+    const disabled = await service.prepareSetApprovalForAll(OWNER, SPENDER, 0);
     expect(disabled.approved).toBe(false);
+    expect(disabled.liveUntilLedger).toBe(0);
+  });
+
+  it('prepares single-token approval revocation as an owner-sourced u32 call', async () => {
+    const result = await service.prepareRevokeApproval(42, OWNER);
+
+    expect(result).toMatchObject({
+      tokenId: 42,
+      owner: OWNER,
+      emits: 'revoke_approval',
+      xdr: 'mock-approve-xdr',
+    });
+    expect(mockGetAccount).toHaveBeenCalledWith(OWNER);
+    expect(mockCall).toHaveBeenCalledWith('revoke_approval', { v: 42 });
+  });
+
+  it('prepares global approval revocation as an owner-sourced call', async () => {
+    const result = await service.prepareRevokeAllApprovals(OWNER);
+
+    expect(result).toMatchObject({
+      owner: OWNER,
+      emits: 'revoke_all_approvals',
+      xdr: 'mock-approve-xdr',
+    });
+    expect(mockGetAccount).toHaveBeenCalledWith(OWNER);
+    expect(mockCall).toHaveBeenCalledWith('revoke_all_approvals');
+  });
+
+  it('rejects token IDs outside the u32 range for revocation', async () => {
+    await expect(service.prepareRevokeApproval(-1, OWNER)).rejects.toThrow(
+      'tokenId must be a u32',
+    );
+    await expect(
+      service.prepareRevokeApproval(0x1_0000_0000, OWNER),
+    ).rejects.toThrow('tokenId must be a u32');
+  });
+
+  it('rejects missing or out-of-range approval expiry ledgers', async () => {
+    await expect(service.prepareApprove(42, OWNER, SPENDER)).rejects.toThrow(
+      'liveUntilLedger',
+    );
+    await expect(
+      service.prepareApprove(42, OWNER, SPENDER, 0),
+    ).rejects.toThrow('liveUntilLedger');
+    await expect(
+      service.prepareSetApprovalForAll(OWNER, SPENDER, 0x1_0000_0000),
+    ).rejects.toThrow('liveUntilLedger');
   });
 
   it('queries get_approved()', async () => {

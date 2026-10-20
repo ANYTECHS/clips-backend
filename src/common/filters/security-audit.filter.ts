@@ -4,7 +4,7 @@ import {
   ExceptionFilter,
   HttpException,
 } from '@nestjs/common';
-import { AppLoggerService } from '../../logger/logger.service';
+import { AuditLoggerService } from '../audit/audit-logger.service';
 
 const SECURITY_EVENTS: Record<number, string> = {
   401: 'AUTH_FAILURE',
@@ -14,13 +14,15 @@ const SECURITY_EVENTS: Record<number, string> = {
 
 /**
  * Logs security-relevant HTTP exceptions (auth failures, permission denials,
- * rate-limit violations, account lockouts) for auditing, then returns the
- * original error payload plus `requestId`. Never logs request bodies/headers.
- * Stack traces are stripped from client responses.
+ * rate-limit violations, account lockouts, admin actions) for auditing, then
+ * returns the original error payload plus `requestId`. Only method, path
+ * (without query secrets), IP, requestId, and userId are logged — never
+ * request bodies, headers, passwords, tokens, or secrets. Stack traces are
+ * stripped from client responses.
  */
 @Catch(HttpException)
 export class SecurityAuditFilter implements ExceptionFilter {
-  constructor(private readonly logger: AppLoggerService) {}
+  constructor(private readonly audit: AuditLoggerService) {}
 
   catch(exception: HttpException, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
@@ -34,20 +36,28 @@ export class SecurityAuditFilter implements ExceptionFilter {
         ? (exceptionResponse as Record<string, unknown>).error
         : undefined;
 
-    const event =
+    let event =
       errorCode === 'ACCOUNT_LOCKED'
         ? 'ACCOUNT_LOCKOUT'
         : SECURITY_EVENTS[status];
 
+    // Treat denied admin-plane calls as explicit admin actions for audit.
+    if (
+      status === 403 &&
+      typeof request.originalUrl === 'string' &&
+      request.originalUrl.startsWith('/admin')
+    ) {
+      event = 'ADMIN_ACTION';
+    }
+
     if (event) {
-      this.logger.warn(`Security event: ${event}`, {
-        context: 'SecurityAudit',
-        event,
-        statusCode: status,
+      this.audit.logSecurityEvent(event as never, {
         method: request.method,
         path: request.originalUrl ?? request.url,
         ip: request.ip,
         requestId: request.requestId,
+        userId: request.user?.id ?? request.user?.userId,
+        statusCode: status,
       });
     }
 

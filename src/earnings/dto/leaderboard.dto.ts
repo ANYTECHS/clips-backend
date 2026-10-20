@@ -97,7 +97,18 @@ export class LeaderboardEntryDto {
 }
 
 export class LeaderboardResponseDto {
-  @ApiProperty({ type: [LeaderboardEntryDto] })
+  @ApiProperty({
+    type: [LeaderboardEntryDto],
+    example: [
+      {
+        rank: 1,
+        userId: null,
+        displayName: 'Creator #1',
+        totalEarnings: 5000,
+        anonymized: true,
+      },
+    ],
+  })
   data: LeaderboardEntryDto[];
 
   @ApiProperty({ example: 1 })
