@@ -54,21 +54,6 @@ export class PayoutResponseDto {
 
   @ApiProperty({
     example: 'pending',
-    enum: [
-      'pending',
-      'under_review',
-      'pending_review',
-      'pending_approval',
-      'approved',
-      'processing',
-      'completed',
-      'failed',
-      'rejected',
-      'canceled',
-      'cancelled',
-    ],
-    description:
-      'Current payout status. Lifecycle: pending → under_review → approved|rejected → processing → completed|failed',
     enum: PAYOUT_STATUS_VALUES,
     description: PAYOUT_STATUS_SWAGGER_DESCRIPTION,
   })
@@ -99,6 +84,24 @@ export class PayoutResponseDto {
     description: 'Timestamp when the transaction was confirmed on Horizon',
   })
   confirmedAt?: Date | null;
+
+  @ApiPropertyOptional({
+    example: '2026-07-26T12:05:00.000Z',
+    description: 'Timestamp when the last Horizon confirmation check ran',
+  })
+  lastConfirmationCheckAt?: Date | null;
+
+  @ApiPropertyOptional({
+    example: 3,
+    description: 'Number of Horizon confirmation checks performed',
+  })
+  confirmationPollCount?: number;
+
+  @ApiPropertyOptional({
+    example: '2026-07-26T12:05:00.000Z',
+    description: 'Timestamp when the payout was completed',
+  })
+  paidAt?: Date | null;
 
   @ApiPropertyOptional({
     example: 'abcd1234',
@@ -154,9 +157,9 @@ export class PayoutProcessResponseDto {
 
   @ApiProperty({
     example: 'completed',
-    enum: ['completed'],
+    enum: ['processing', 'completed', 'failed'],
     description:
-      'Always `completed` on success. If submission or verification fails the payout is set to `failed`, a retry is scheduled, and a 500 is returned instead.',
+      'processing while Horizon confirmation is pending, completed after confirmation, or failed after an on-chain failure.',
   })
   status: string;
 
@@ -201,46 +204,18 @@ export class HorizonTxStatusDto {
     description: 'Ledger close time of the transaction (present when found)',
   })
   confirmedAt?: Date;
-}
 
-export class PayoutOnChainStatusResponseDto {
-  @ApiProperty({ example: 1, description: 'Payout ID' })
-  id: number;
-
-  @ApiProperty({
-    example: 'completed',
-    enum: ['pending', 'completed', 'failed'],
-    description:
-      'Payout status. pending = awaiting on-chain confirmation, completed = confirmed on-chain, failed = transaction failed or was not found',
+  @ApiPropertyOptional({
+    example: 'GABCDEF...',
+    description: 'Destination Stellar address (present when found)',
   })
-  status: string;
+  destination?: string;
 
-  @ApiProperty({
-    example: 'a1b2c3d4e5f6...',
-    nullable: true,
-    type: String,
-    description: 'On-chain Stellar transaction hash',
+  @ApiPropertyOptional({
+    example: 120,
+    description: 'Transferred amount (present when found)',
   })
-  onChainTxHash: string | null;
-
-  @ApiProperty({
-    example: '2026-07-27T12:05:00.000Z',
-    nullable: true,
-    type: Date,
-    description: 'Time the background verification job confirmed the payout',
-  })
-  confirmedAt: Date | null;
-
-  @ApiProperty({
-    type: HorizonTxStatusDto,
-    description: 'Live transaction status queried from Horizon',
-    example: {
-      found: true,
-      successful: true,
-      confirmedAt: '2026-07-27T12:05:00.000Z',
-    },
-  })
-  onChain: HorizonTxStatusDto;
+  transferredAmount?: number;
 }
 
 export class RejectPayoutDto {
@@ -346,31 +321,56 @@ export class OnChainTransactionStateDto {
     description: 'Ledger close time reported by Horizon (only set when found)',
   })
   confirmedAt?: Date;
+
+  @ApiPropertyOptional({
+    example: 'GABCDEF...',
+    description: 'Destination Stellar address (only set when found)',
+  })
+  destination?: string;
+
+  @ApiPropertyOptional({
+    example: 120,
+    description: 'Transferred amount (only set when found)',
+  })
+  transferredAmount?: number;
 }
 
 export class PayoutOnChainStatusResponseDto {
-  @ApiProperty({ example: 1 })
+  @ApiProperty({ example: 1, description: 'Payout ID' })
   id: number;
 
   @ApiProperty({
-    example: 'processing',
+    example: 'completed',
     enum: PAYOUT_STATUS_VALUES,
     description: PAYOUT_STATUS_SWAGGER_DESCRIPTION,
   })
   status: string;
 
-  @ApiPropertyOptional({ example: 'a1b2c3d4e5f6...', nullable: true })
+  @ApiPropertyOptional({
+    example: 'a1b2c3d4e5f6...',
+    nullable: true,
+    type: String,
+    description: 'On-chain Stellar transaction hash',
+  })
   onChainTxHash: string | null;
 
-  @ApiPropertyOptional({ example: null, nullable: true })
+  @ApiPropertyOptional({
+    example: '2026-07-27T12:05:00.000Z',
+    nullable: true,
+    type: Date,
+    description: 'Time the background verification job confirmed the payout',
+  })
   confirmedAt: Date | null;
 
   @ApiProperty({
     type: OnChainTransactionStateDto,
+    description: 'Live transaction status queried from Horizon',
     example: {
       found: true,
       successful: true,
       confirmedAt: '2026-07-27T12:05:00.000Z',
+      destination: 'GABCDEF...',
+      transferredAmount: 120,
     },
   })
   onChain: OnChainTransactionStateDto;

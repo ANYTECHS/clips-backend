@@ -30,6 +30,19 @@ export interface ClipData {
   };
 }
 
+export function collectClipPlatforms(
+  sourcePlatform: string | null | undefined,
+  clipPosts: { platform: string }[] = [],
+): string[] {
+  return [
+    ...new Set(
+      [sourcePlatform, ...clipPosts.map((post) => post.platform)]
+        .map((platform) => platform?.trim())
+        .filter((platform): platform is string => Boolean(platform)),
+    ),
+  ];
+}
+
 /** Result of building metadata plus uploading it to IPFS */
 export interface MetadataUploadResult {
   metadata: NftMetadata;
@@ -81,7 +94,10 @@ export class NftMetadataService {
       { trait_type: 'Platform', value: 'ClipCash' },
     ];
 
-    if (clip.originalVideoDuration !== undefined && clip.originalVideoDuration !== null) {
+    if (
+      clip.originalVideoDuration !== undefined &&
+      clip.originalVideoDuration !== null
+    ) {
       attributes.push({
         trait_type: 'Original Video Duration',
         value: clip.originalVideoDuration,
@@ -109,8 +125,14 @@ export class NftMetadataService {
     }
 
     if (clip.collection) {
-      attributes.push({ trait_type: 'Collection', value: clip.collection.name });
-      attributes.push({ trait_type: 'Collection Type', value: clip.collection.type });
+      attributes.push({
+        trait_type: 'Collection',
+        value: clip.collection.name,
+      });
+      attributes.push({
+        trait_type: 'Collection Type',
+        value: clip.collection.type,
+      });
     }
 
     return {
@@ -141,9 +163,10 @@ export class NftMetadataService {
       },
       duration: clip.duration,
       viralityScore: clip.viralityScore ?? 0,
-      originalDuration: clip.duration,
+      originalDuration: clip.originalVideoDuration ?? clip.duration,
       createdAt: clip.createdAt.toISOString(),
       platforms: clip.platforms ?? [],
+      thumbnail: clip.thumbnail ?? clip.clipUrl,
     };
   }
 

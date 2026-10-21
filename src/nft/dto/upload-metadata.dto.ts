@@ -9,8 +9,11 @@ export class UploadClipMetadataDto {
     example: 'viral-clips',
   })
   @IsOptional()
-  @IsString()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  @IsString({ message: 'collectionId must be a string' })
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+    message:
+      'collectionId must be a lowercase slug (letters, numbers and hyphens), e.g. viral-clips',
+  })
   collectionId?: string;
 
   @ApiProperty({
@@ -18,8 +21,8 @@ export class UploadClipMetadataDto {
     example: 42,
     minimum: 1,
   })
-  @IsInt()
-  @Min(1)
+  @IsInt({ message: 'clipId must be a whole number' })
+  @Min(1, { message: 'clipId must be a positive number' })
   @Type(() => Number)
   clipId: number;
 }

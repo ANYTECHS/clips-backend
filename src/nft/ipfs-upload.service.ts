@@ -40,9 +40,12 @@ export interface NftMetadata {
   fee_recipient?: string;
   /** Explicit royalty block for marketplaces / mint clients. */
   royalty: NftRoyaltyInfo;
-  viralityScore?: number;
+  viralityScore: number;
   originalDuration?: number;
-  createdAt?: string;
+  createdAt: string;
+  duration: number;
+  platforms: string[];
+  thumbnail: string;
 }
 
 export type IpfsProvider = 'pinata' | 'nftstorage';
@@ -98,6 +101,46 @@ export class IpfsUploadService {
     if (!metadata.animation_url?.trim()) {
       throw new BadRequestException(
         'NFT metadata is missing required field: animation_url',
+      );
+    }
+    if (typeof metadata.thumbnail !== 'string' || !metadata.thumbnail.trim()) {
+      throw new BadRequestException(
+        'NFT metadata is missing required field: thumbnail',
+      );
+    }
+    if (
+      typeof metadata.duration !== 'number' ||
+      !Number.isFinite(metadata.duration) ||
+      metadata.duration < 0
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing required field: duration',
+      );
+    }
+    if (
+      typeof metadata.viralityScore !== 'number' ||
+      !Number.isFinite(metadata.viralityScore)
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing required field: viralityScore',
+      );
+    }
+    if (
+      typeof metadata.createdAt !== 'string' ||
+      !Number.isFinite(Date.parse(metadata.createdAt))
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing a valid createdAt timestamp',
+      );
+    }
+    if (
+      !Array.isArray(metadata.platforms) ||
+      metadata.platforms.some(
+        (platform) => typeof platform !== 'string' || !platform.trim(),
+      )
+    ) {
+      throw new BadRequestException(
+        'NFT metadata platforms must be an array of non-empty strings',
       );
     }
     if (!Array.isArray(metadata.attributes)) {
