@@ -527,19 +527,24 @@ The frontend polls this endpoint every 2–3 seconds. Once `status` becomes `"co
   "name": "My Viral Clip #42",
   "description": "Best moment from my podcast episode 12 — captured automatically by ClipCash",
   "image": "https://res.cloudinary.com/clipcash/video/upload/t_thumbnail/clips/abc123.jpg",
+  "thumbnail": "https://res.cloudinary.com/clipcash/video/upload/t_thumbnail/clips/abc123.jpg",
   "animation_url": "https://res.cloudinary.com/clipcash/video/upload/clips/abc123.mp4",
-  "external_url": "https://clipcash.app/clips/abc123",
   "attributes": [
-    { "trait_type": "Creator", "value": "GABC...XYZ" },
-    { "trait_type": "Duration", "value": "00:00:42" },
+    { "trait_type": "Clip Duration", "value": 42 },
+    { "trait_type": "Virality Score", "value": 87 },
+    { "trait_type": "Creation Date", "value": "2026-10-20T11:00:00.000Z" },
+    { "trait_type": "Posted Platforms", "value": "tiktok, instagram" },
     { "trait_type": "Platform", "value": "ClipCash" },
     { "trait_type": "Royalty BPS", "value": 1000 },
-    { "trait_type": "Viral Score", "value": 87 }
+    { "trait_type": "Royalty Percent", "value": 10 }
   ],
-  "royalties": {
-    "basis_points": 1000,
-    "recipient": "GABC...XYZ"
-  }
+  "duration": 42,
+  "viralityScore": 87,
+  "originalDuration": 42,
+  "createdAt": "2026-10-20T11:00:00.000Z",
+  "platforms": ["tiktok", "instagram"],
+  "seller_fee_basis_points": 1000,
+  "royalty": { "bps": 1000, "percent": 10, "asset": "native" }
 }
 ```
 
