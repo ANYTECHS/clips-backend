@@ -34,28 +34,8 @@ interface Bucket {
   clipIds: Set<number>;
 }
 
-/**
- * Returns midnight UTC of the day the given instant falls in.
- *
- * Everything in this service is bucketed on UTC day boundaries: `Date.UTC`
- * avoids the host's local offset, so the same earning lands in the same bucket
- * regardless of where the worker runs or whether DST just shifted.
- */
-export function startOfUtcDay(instant: Date): Date {
-  return new Date(
-    Date.UTC(
-      instant.getUTCFullYear(),
-      instant.getUTCMonth(),
-      instant.getUTCDate(),
-    ),
-  );
-}
+export { startOfUtcDay, previousUtcDay } from '@clipcash/shared';
 
-/** Returns midnight UTC of the day before the given instant's UTC day. */
-export function previousUtcDay(instant: Date): Date {
-  const start = startOfUtcDay(instant);
-  return new Date(start.getTime() - 24 * 60 * 60 * 1000);
-}
 
 /**
  * Aggregates per-clip earnings into per-user daily totals (Issue #767).
