@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EarningCreatedEvent } from './webhooks.gateway';
+import { ConfigService } from '../config/config.service';
 import * as crypto from 'crypto';
 
 type PrismaTx = Omit<
@@ -16,12 +17,7 @@ type PrismaTx = Omit<
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
-export const WEBHOOK_SUPPORTED_PLATFORMS = [
-  'tiktok',
-  'youtube',
-  'instagram',
-] as const;
-export type WebhookPlatform = (typeof WEBHOOK_SUPPORTED_PLATFORMS)[number];
+export type WebhookPlatform = string;
 
 export interface ValidatedEarningPayload {
   clipId: number;
@@ -42,11 +38,12 @@ export class WebhooksService {
     private prisma: PrismaService,
     private earningsService: EarningsService,
     private eventEmitter: EventEmitter2,
+    private config: ConfigService,
   ) {}
 
-  isSupportedWebhookPlatform(platform: string): platform is WebhookPlatform {
-    return WEBHOOK_SUPPORTED_PLATFORMS.includes(
-      platform.toLowerCase() as WebhookPlatform,
+  isSupportedWebhookPlatform(platform: string): boolean {
+    return this.config.webhookPlatforms.includes(
+      platform.toLowerCase(),
     );
   }
 

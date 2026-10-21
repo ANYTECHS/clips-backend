@@ -18,6 +18,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ConfigService } from '../config/config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CloudinaryService } from './cloudinary.service';
 import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
@@ -27,10 +28,6 @@ import {
 } from './clip-post-status.util';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto';
 import { ALL_CLIPS_PROCESSED_EVENT } from './clips.events';
-
-export const ROYALTY_BPS_MIN = 0;
-export const ROYALTY_BPS_MAX = 1500;
-export const ROYALTY_BPS_DEFAULT = 1000;
 
 const NFT_STATUSES = {
   NONE: 'none',
@@ -80,9 +77,22 @@ export class ClipsService {
     private readonly prisma: PrismaService,
     private readonly cloudinary: CloudinaryService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly config: ConfigService,
     @Optional() @InjectQueue(CLIP_GENERATION_QUEUE)
     private readonly clipQueue?: Queue,
   ) {}
+
+  private get royaltyBpsMin(): number {
+    return this.config.minRoyaltyBps;
+  }
+
+  private get royaltyBpsMax(): number {
+    return this.config.maxRoyaltyBps;
+  }
+
+  private get royaltyBpsDefault(): number {
+    return this.config.defaultRoyaltyBps;
+  }
 
   /** Testing helper - seeds in-memory data for tests */
   _seed(clips: ClipRecord[]): void {
@@ -112,13 +122,13 @@ export class ClipsService {
     royaltyBps?: number,
   ): Promise<{ clipId: number; royaltyBps: number }> {
     // Default to 1000 when not provided.
-    const bps = royaltyBps ?? ROYALTY_BPS_DEFAULT;
+    const bps = royaltyBps ?? this.royaltyBpsDefault;
 
     // Validate range (DTO decorators already guard this on the HTTP layer;
     // this check guards programmatic calls from other services).
-    if (!Number.isInteger(bps) || bps < ROYALTY_BPS_MIN || bps > ROYALTY_BPS_MAX) {
+    if (!Number.isInteger(bps) || bps < this.royaltyBpsMin || bps > this.royaltyBpsMax) {
       throw new BadRequestException(
-        `royaltyBps must be an integer between ${ROYALTY_BPS_MIN} and ${ROYALTY_BPS_MAX} (received: ${bps})`,
+        `royaltyBps must be an integer between ${this.royaltyBpsMin} and ${this.royaltyBpsMax} (received: ${bps})`,
       );
     }
 
@@ -161,7 +171,7 @@ export class ClipsService {
       throw new NotFoundException(`Clip ${clipId} not found`);
     }
 
-    return { clipId: clip.id, royaltyBps: clip.royaltyBps ?? ROYALTY_BPS_DEFAULT };
+    return { clipId: clip.id, royaltyBps: clip.royaltyBps ?? this.royaltyBpsDefault };
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -851,10 +861,10 @@ export class ClipsService {
   }
 
   async updateRoyalty(clipId: number, userId: number, royaltyBps?: number) {
-    const bps = royaltyBps ?? ROYALTY_BPS_DEFAULT;
-    if (!Number.isInteger(bps) || bps < ROYALTY_BPS_MIN || bps > ROYALTY_BPS_MAX) {
+    const bps = royaltyBps ?? this.royaltyBpsDefault;
+    if (!Number.isInteger(bps) || bps < this.royaltyBpsMin || bps > this.royaltyBpsMax) {
       throw new BadRequestException(
-        `royaltyBps must be an integer between ${ROYALTY_BPS_MIN} and ${ROYALTY_BPS_MAX} (received: ${bps})`,
+        `royaltyBps must be an integer between ${this.royaltyBpsMin} and ${this.royaltyBpsMax} (received: ${bps})`,
       );
     }
     await this.validateClipOwnership(clipId, userId);

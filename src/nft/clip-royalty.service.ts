@@ -1,9 +1,8 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ConfigService } from '../config/config.service';
 import * as StellarSdk from '@stellar/stellar-sdk';
 import { checkedRoyaltyAmount } from '../common/helpers/safe-math.helper';
-
-export const MAX_ROYALTY_BPS = 1500; // 15%
 
 export interface ClipRoyaltyDetails {
   clipId: number;
@@ -20,7 +19,10 @@ export interface ClipRoyaltyDetails {
  */
 @Injectable()
 export class ClipRoyaltyService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private config: ConfigService,
+  ) {}
 
   /**
    * Set royalty for a clip
@@ -38,9 +40,9 @@ export class ClipRoyaltyService {
     platformFeeBps?: number,
   ): Promise<ClipRoyaltyDetails> {
     // Validate BPS
-    if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > MAX_ROYALTY_BPS) {
+    if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > this.config.maxRoyaltyBps) {
       throw new BadRequestException(
-        `Invalid royalty BPS: ${basisPoints}. Must be between 0 and ${MAX_ROYALTY_BPS} (15%).`,
+        `Invalid royalty BPS: ${basisPoints}. Must be between 0 and ${this.config.maxRoyaltyBps} (15%).`,
       );
     }
 
@@ -181,9 +183,9 @@ export class ClipRoyaltyService {
       );
     }
 
-    if (!Number.isInteger(royaltyBps) || royaltyBps < 0 || royaltyBps > MAX_ROYALTY_BPS) {
+    if (!Number.isInteger(royaltyBps) || royaltyBps < 0 || royaltyBps > this.config.maxRoyaltyBps) {
       throw new BadRequestException(
-        `Invalid royalty BPS: ${royaltyBps}. Must be between 0 and ${MAX_ROYALTY_BPS}.`,
+        `Invalid royalty BPS: ${royaltyBps}. Must be between 0 and ${this.config.maxRoyaltyBps}.`,
       );
     }
 
@@ -197,9 +199,9 @@ export class ClipRoyaltyService {
    * @param platformFeeBps Platform fee basis points (optional)
    */
   validateRoyaltyConfiguration(basisPoints: number, platformFeeBps?: number): void {
-    if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > MAX_ROYALTY_BPS) {
+    if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > this.config.maxRoyaltyBps) {
       throw new BadRequestException(
-        `Invalid royalty BPS: ${basisPoints}. Must be between 0 and ${MAX_ROYALTY_BPS} (15%).`,
+        `Invalid royalty BPS: ${basisPoints}. Must be between 0 and ${this.config.maxRoyaltyBps} (15%).`,
       );
     }
 
