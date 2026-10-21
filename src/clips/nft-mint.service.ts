@@ -58,9 +58,6 @@ export class NftMintService {
     private readonly nftConfig: NftConfig,
   ) {}
 
-  async uploadMetadataToIPFS(
-    clipId: number,
-    collectionId = DEFAULT_NFT_COLLECTION_ID,
   // ──────────────────────────────────────────────────────────────────────────
   // Issue #748 — Upload clip metadata to IPFS
   // ──────────────────────────────────────────────────────────────────────────
@@ -90,7 +87,6 @@ export class NftMintService {
    */
   async uploadMetadataToIPFS(
     clipId: number,
-    collectionId = DEFAULT_NFT_COLLECTION_ID,
     collectionId: string = DEFAULT_NFT_COLLECTION_ID,
   ): Promise<UploadMetadataResult> {
     const collection = await this.requireCollection(collectionId);
@@ -100,9 +96,6 @@ export class NftMintService {
     });
 
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (!clip) {
-      throw new NotFoundException(`Clip ${clipId} not found`);
-    }
     if (!clip.clipUrl) {
       throw new BadRequestException(
         `Clip ${clipId} is missing a clip URL — metadata cannot be built until the clip has been generated`,
@@ -133,10 +126,10 @@ export class NftMintService {
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
       collection: {
-        collectionId: clip.collection.collectionId,
-        name: clip.collection.name,
-        type: clip.collection.type,
-        metadata: clip.collection.metadata as Record<string, unknown>,
+        collectionId: collection.collectionId,
+        name: collection.name,
+        type: collection.type,
+        metadata: collection.metadata as Record<string, unknown>,
       },
     });
     // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
@@ -148,18 +141,6 @@ export class NftMintService {
 
     // Persist the CID to the Clip record so subsequent mint calls can
     // skip the upload step.
-    await this.prisma.clip.update({
-      where: { id: clipId },
-      data: {
-        metadataUri,
-        collectionId,
-        ...(collection.royaltyBps !== null
-          ? { royaltyBps: collection.royaltyBps }
-          : {}),
-      },
-    });
-    const cid = metadataUri.replace(/^ipfs:\/\//, '');
-
     await this.prisma.clip.update({
       where: { id: clipId },
       data: {
@@ -351,8 +332,6 @@ export class NftMintService {
   ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress) {
-      throw new BadRequestException(`Clip ${clipId} is already minted`);
     if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new BadRequestException(`Clip ${clipId} already minted`);
     if (
