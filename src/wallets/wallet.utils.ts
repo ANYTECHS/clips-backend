@@ -1,1 +1,2 @@
-export { maskAddress } from '../shared/address';
+export { maskAddress } from '@clipcash/shared';
+

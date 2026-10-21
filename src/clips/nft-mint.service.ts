@@ -13,7 +13,10 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { NftMetadataService } from '../nft/nft-metadata.service';
+import {
+  collectClipPlatforms,
+  NftMetadataService,
+} from '../nft/nft-metadata.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { StellarService } from '../stellar/stellar.service';
 import { NftConfig } from '../nft/nft.config';
@@ -92,10 +95,16 @@ export class NftMintService {
     const collection = await this.requireCollection(collectionId);
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
-      include: { video: { select: { userId: true } } },
+      include: {
+        video: { select: { userId: true } },
+        clipPosts: { select: { platform: true } },
+      },
     });
 
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
     if (!clip.clipUrl) {
       throw new BadRequestException(
         `Clip ${clipId} is missing a clip URL — metadata cannot be built until the clip has been generated`,
@@ -125,6 +134,7 @@ export class NftMintService {
       viralityScore: clip.viralityScore,
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
       collection: {
         collectionId: collection.collectionId,
         name: collection.name,
@@ -151,6 +161,7 @@ export class NftMintService {
           : {}),
       },
     });
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
 
     const cid = metadataUri.replace(/^ipfs:\/\//, '');
     this.logger.log(
@@ -584,4 +595,3 @@ export class NftMintService {
     ).toString('base64');
   }
 }
-

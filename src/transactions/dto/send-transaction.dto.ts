@@ -8,6 +8,7 @@ import {
   ValidationArguments,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import { STELLAR_PUBLIC_KEY_REGEX } from '@clipcash/shared';
 
 /** Stellar amounts: up to 7 decimal places, between 0.0000001 and 10000 XLM */
 function IsXlmAmount(validationOptions?: ValidationOptions) {
@@ -49,7 +50,7 @@ export class CreateTransactionDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(56)
-  @Matches(/^G[A-Z2-7]{55}$/, { message: 'destination must be a valid Stellar public key (G...)' })
+  @Matches(STELLAR_PUBLIC_KEY_REGEX, { message: 'destination must be a valid Stellar public key (G...)' })
   destination: string;
 
   @ApiProperty({

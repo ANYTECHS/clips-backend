@@ -415,7 +415,7 @@ Before initiating a mint:
 1. The clip must exist and belong to the authenticated user.
 2. `clip.postStatus` must **not** be `"posted"`. Auto-posted clips cannot be minted (returns `400`).
 3. The user must have a connected Stellar wallet.
-4. The wallet must have sufficient XLM balance (minimum 2 XLM recommended; a warning is issued if below threshold but the request is not blocked at prepare time).
+4. The wallet should have at least 2 XLM. Mint preparation rejects balances below this threshold with a warning-style error; the balance endpoint can be called first to show the current balance.
 
 ### Minting Sequence Diagram
 
@@ -527,19 +527,24 @@ The frontend polls this endpoint every 2–3 seconds. Once `status` becomes `"co
   "name": "My Viral Clip #42",
   "description": "Best moment from my podcast episode 12 — captured automatically by ClipCash",
   "image": "https://res.cloudinary.com/clipcash/video/upload/t_thumbnail/clips/abc123.jpg",
+  "thumbnail": "https://res.cloudinary.com/clipcash/video/upload/t_thumbnail/clips/abc123.jpg",
   "animation_url": "https://res.cloudinary.com/clipcash/video/upload/clips/abc123.mp4",
-  "external_url": "https://clipcash.app/clips/abc123",
   "attributes": [
-    { "trait_type": "Creator", "value": "GABC...XYZ" },
-    { "trait_type": "Duration", "value": "00:00:42" },
+    { "trait_type": "Clip Duration", "value": 42 },
+    { "trait_type": "Virality Score", "value": 87 },
+    { "trait_type": "Creation Date", "value": "2026-10-20T11:00:00.000Z" },
+    { "trait_type": "Posted Platforms", "value": "tiktok, instagram" },
     { "trait_type": "Platform", "value": "ClipCash" },
     { "trait_type": "Royalty BPS", "value": 1000 },
-    { "trait_type": "Viral Score", "value": 87 }
+    { "trait_type": "Royalty Percent", "value": 10 }
   ],
-  "royalties": {
-    "basis_points": 1000,
-    "recipient": "GABC...XYZ"
-  }
+  "duration": 42,
+  "viralityScore": 87,
+  "originalDuration": 42,
+  "createdAt": "2026-10-20T11:00:00.000Z",
+  "platforms": ["tiktok", "instagram"],
+  "seller_fee_basis_points": 1000,
+  "royalty": { "bps": 1000, "percent": 10, "asset": "native" }
 }
 ```
 
@@ -757,41 +762,27 @@ The full (unmasked) address is stored in the database and used internally for bl
 
 ## 10. Balance Checks and Warnings
 
-When `GET /wallets/:id/balance` is called for a Stellar wallet, the backend fetches the native XLM balance from Horizon or the Soroban RPC and returns a `lowBalance` warning flag if below the threshold.
+`GET /wallets/:id/balance` fetches the native XLM balance from the configured Horizon server and returns the balance with a boolean `warning` flag. The endpoint is authenticated and only returns a balance for a wallet owned by the caller.
 
 **Threshold:** 2 XLM
 
 ```json
 {
-  "walletId": "wlt_01J5XQP9N8ZC3AGYRVWFDB3VBK",
-  "maskedAddress": "******P5QQ",
-  "chain": "stellar",
-  "balance": {
-    "xlm": "1.4500000",
-    "usdEstimate": "0.21",
-    "lowBalance": true,
-    "lowBalanceWarning": "Your XLM balance is below 2 XLM. Minting an NFT requires at least 1 XLM for transaction fees. Please top up your wallet."
-  }
+  "balance": 1.45,
+  "warning": true
 }
 ```
 
-When `lowBalance` is `false`:
+At exactly 2 XLM or above, `warning` is `false`:
 
 ```json
 {
-  "walletId": "wlt_01J5XQP9N8ZC3AGYRVWFDB3VBK",
-  "maskedAddress": "******P5QQ",
-  "chain": "stellar",
-  "balance": {
-    "xlm": "24.8300000",
-    "usdEstimate": "3.72",
-    "lowBalance": false,
-    "lowBalanceWarning": null
-  }
+  "balance": 2,
+  "warning": false
 }
 ```
 
-> Note: Balance checks do not block minting at `mint-prepare` time. If the balance is insufficient, the transaction will be rejected by the Stellar network at submission time and `mint-confirm` will return a `422` error.
+Mint preparation also checks the creator wallet balance and rejects balances below 2 XLM before creating a mint transaction.
 
 ---
 
@@ -950,7 +941,7 @@ Get a single wallet by its internal ID.
 
 ### GET /wallets/:id/balance
 
-Fetch the on-chain balance for a wallet. For Stellar wallets, returns XLM balance with a low-balance warning if below 2 XLM. For Solana and EVM wallets, returns the native token balance.
+Fetch the native XLM balance for a wallet from Horizon and return a warning when it is below 2 XLM.
 
 **Path parameters:**
 
@@ -958,37 +949,21 @@ Fetch the on-chain balance for a wallet. For Stellar wallets, returns XLM balanc
 |---|---|
 | `id` | Wallet ID |
 
-**Response `200 OK` (Stellar, sufficient balance):**
+**Response `200 OK` (sufficient balance):**
 
 ```json
 {
-  "walletId": "wlt_01J5XQP9N8ZC3AGYRVWFDB3VBK",
-  "maskedAddress": "******P5QQ",
-  "chain": "stellar",
-  "balance": {
-    "xlm": "24.8300000",
-    "usdEstimate": "3.72",
-    "lowBalance": false,
-    "lowBalanceWarning": null
-  },
-  "fetchedAt": "2026-08-29T16:30:00.000Z"
+  "balance": 24.83,
+  "warning": false
 }
 ```
 
-**Response `200 OK` (Stellar, low balance):**
+**Response `200 OK` (low balance):**
 
 ```json
 {
-  "walletId": "wlt_01J5XQP9N8ZC3AGYRVWFDB3VBK",
-  "maskedAddress": "******P5QQ",
-  "chain": "stellar",
-  "balance": {
-    "xlm": "1.4500000",
-    "usdEstimate": "0.22",
-    "lowBalance": true,
-    "lowBalanceWarning": "Your XLM balance is below 2 XLM. Minting an NFT requires at least 1 XLM for transaction fees. Please top up your wallet."
-  },
-  "fetchedAt": "2026-08-29T16:30:00.000Z"
+  "balance": 1.45,
+  "warning": true
 }
 ```
 
@@ -997,7 +972,7 @@ Fetch the on-chain balance for a wallet. For Stellar wallets, returns XLM balanc
 | Status | Code | Cause |
 |---|---|---|
 | 404 | `WALLET_NOT_FOUND` | Wallet ID does not exist for this user |
-| 502 | `BALANCE_FETCH_FAILED` | Stellar Horizon or Soroban RPC unreachable |
+| 502 | `BALANCE_FETCH_FAILED` | Stellar Horizon request failed |
 
 ---
 
