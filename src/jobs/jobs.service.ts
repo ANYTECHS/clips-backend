@@ -92,6 +92,8 @@ export class JobsService {
   /**
    * Reads the BullMQ job progress payload and exposes a normalized progress DTO.
    * This supports monitoring for clip generation and related queues.
+   * Failed states include `failedReason`/`attemptsMade` so API consumers can
+   * accurately represent asynchronous failures (Issue #1235).
    */
   async getJobProgress(jobId: string, type?: string): Promise<JobProgressResponseDto> {
     const queues = type ? [this.resolveQueue(type)] : Object.values(this.queueMap);
@@ -110,6 +112,9 @@ export class JobsService {
         stage: progressValue.stage,
         queue: queue.name,
         state,
+        failedReason: job.failedReason ?? undefined,
+        attemptsMade: job.attemptsMade,
+        maxAttempts: job.opts.attempts ?? 1,
       };
     }
 

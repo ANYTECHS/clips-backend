@@ -187,6 +187,21 @@ A typical authenticated flow:
 3. Use the Swagger Authorize dialog.
 4. Call a protected endpoint like wallet, clip, or payout routes.
 
+Concrete example — test an authenticated endpoint:
+
+```bash
+# 1. Register (or log in) and capture the token
+curl -X POST http://localhost:3000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"dev@example.com","password":"ChangeMe123!","name":"Dev"}'
+
+# 2. Call a protected route with the token
+curl http://localhost:3000/wallets \
+  -H "Authorization: Bearer <access_token>"
+```
+
+In Swagger UI the same flow is: `POST /auth/login` → copy `accessToken` → Authorize → `GET /wallets`.
+
 ## 9) Running tests
 
 Run the unit test suite:
@@ -332,6 +347,8 @@ http://localhost:3000/api/docs-json
 
 - [README.md](../README.md)
 - [docs/stellar-configuration.md](./stellar-configuration.md)
+- [docs/swagger.md](./swagger.md)
+- [docs/api-contract.md](./api-contract.md)
 - [.env.example](../.env.example)
 
 This is the recommended baseline for a new developer to get the backend running locally without guesswork.

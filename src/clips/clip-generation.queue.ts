@@ -36,3 +36,16 @@ export const CLIP_GENERATION_JOB_OPTIONS = {
   removeOnFail: false,
   priority: CLIP_GENERATION_QUEUE_PRIORITY,
 } as const;
+
+/**
+ * BullMQ worker options for the clip-generation processor (Issue #1235).
+ * Lock duration must exceed the longest expected job run (30 min timeout + buffer).
+ */
+export const CLIP_GENERATION_WORKER_OPTIONS = {
+  lockDuration: 32 * 60 * 1000,
+  stalledInterval: 30 * 1000,
+  maxStalledCount: 3,
+} as const;
+
+/** Backwards-compatible alias for older processor specs. */
+export const CLIP_JOB_OPTIONS = CLIP_GENERATION_JOB_OPTIONS;

@@ -15,7 +15,7 @@ import { PayoutLimitsService } from './payout-limits.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { MailService } from '../auth/mail.service';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
-import { buildPaginationArgs } from '../prisma/query-helpers';
+import { paginateQuery, payoutDetailSelect } from '../prisma/query-helpers';
 
 import { OPEN_PAYOUT_STATUSES, expandStatusFilter, normalizePayoutStatusFilter } from './payouts.constants';
 import { ADMIN_PENDING_PAYOUT_STATUSES, PAID_OUT_PAYOUT_STATUSES, PAYOUT_STATUSES } from './payouts.constants';
@@ -460,10 +460,11 @@ export class PayoutsService {
     page = 1,
     limit = 20,
   ): Promise<PaginatedResponseDto<any>> {
+    // Issue #1237: single paginated query via the shared payout select.
+    // Previously the paginated branch was dead code and the live branch ignored
+    // pagination and used an unexpanded status filter; both are fixed here
+    // while keeping the PaginatedResponseDto contract unchanged.
     const filterStatus = this.parseStatusFilter(status);
-    const { skip, take, page: normalizedPage, limit: normalizedLimit } =
-      buildPaginationArgs(page, limit);
-
     const where = {
       userId,
       ...(filterStatus
@@ -471,73 +472,27 @@ export class PayoutsService {
         : {}),
     };
 
-    const payouts = await this.prisma.payout.findMany({
-      where: {
-        userId,
-        ...(filterStatus ? { status: filterStatus } : {}),
-      },
-      select: {
-        id: true,
-        amount: true,
-        currency: true,
-        method: true,
-        status: true,
-        transactionId: true,
-        onChainTxHash: true,
-        confirmedAt: true,
-        retryCount: true,
-        stellarXdr: true,
-        feeAmount: true,
-        feePercentage: true,
-        finalAmount: true,
-        paidAt: true,
-        approvedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const result = await paginateQuery(
+      ({ skip, take }) =>
+        this.prisma.payout.findMany({
+          where,
+          select: payoutDetailSelect,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+        }),
+      () => this.prisma.payout.count({ where }),
+      page,
+      limit,
+    );
 
-    return payouts.map((p) => ({
+    const items = result.items.map((p) => ({
       ...p,
-      fee: p.feeAmount,
-      netAmount: p.finalAmount,
+      fee: (p as { feeAmount?: number }).feeAmount,
+      netAmount: (p as { finalAmount?: number }).finalAmount,
     }));
-    const select = {
-      id: true,
-      amount: true,
-      currency: true,
-      method: true,
-      status: true,
-      transactionId: true,
-      onChainTxHash: true,
-      confirmedAt: true,
-      retryCount: true,
-      stellarXdr: true,
-      feeAmount: true,
-      feePercentage: true,
-      finalAmount: true,
-      paidAt: true,
-      approvedAt: true,
-      approvedBy: true,
-      rejectedAt: true,
-      rejectionReason: true,
-      createdAt: true,
-      updatedAt: true,
-    };
 
-    const [items, total] = await Promise.all([
-      this.prisma.payout.findMany({
-        where,
-        select,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take,
-      }),
-      this.prisma.payout.count({ where }),
-    ]);
-
-    return new PaginatedResponseDto(items, total, normalizedPage, normalizedLimit);
+    return new PaginatedResponseDto(items, result.total, result.page, result.limit);
   }
 
   async getPayoutById(

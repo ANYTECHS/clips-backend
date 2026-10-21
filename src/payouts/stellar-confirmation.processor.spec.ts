@@ -23,6 +23,7 @@ import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import { CurrencyService } from '../common/services/currency.service';
+import { MetricsService } from '../metrics/metrics.service';
 
 const TX_HASH = 'abc123deadbeef';
 const CONFIRMED_AT = new Date('2025-01-15T10:00:00.000Z');
@@ -77,6 +78,10 @@ function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingMo
       { provide: GracefulShutdownService, useValue: mockShutdownService },
       { provide: PrismaService, useValue: mockPrismaService },
       { provide: StellarService, useValue: mockStellarService },
+      {
+        provide: MetricsService,
+        useValue: { recordJobStart: jest.fn(), recordJobCompletion: jest.fn(), recordJobFailure: jest.fn() },
+      },
       { provide: CircuitBreakerService, useValue: { execute: jest.fn() } },
       {
         provide: PayoutReceiptService,
@@ -149,8 +154,13 @@ describe('StellarConfirmationProcessor', () => {
   describe('process', () => {
     it('should delegate to pollPendingStellarPayouts', async () => {
       const spy = jest.spyOn(payoutsService, 'pollPendingStellarPayouts').mockResolvedValue();
-      await processor.process({ id: 'job-1' } as any);
+      await processor.process({ id: 'job-1', opts: { attempts: 3 }, attemptsMade: 0 } as any);
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('exposes standardized failed/completed handlers (Issue #1235)', () => {
+      expect(typeof processor.onFailed).toBe('function');
+      expect(typeof processor.onCompleted).toBe('function');
     });
   });
 });

@@ -19,6 +19,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
+import { buildPaginationArgs, clipListSelect } from '../prisma/query-helpers';
 import { CloudinaryService } from './cloudinary.service';
 import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
 import {
@@ -755,13 +756,18 @@ export class ClipsService {
     data: ClipRecord[];
     meta: { total: number; page: number; limit: number; totalPages: number };
   }> {
-    const page = options.page ?? 1;
-    const limit = options.limit ?? 20;
+    // Issue #1237: centralized pagination bounds (page 1-based, limit 1–100).
+    // Error messages and the legacy `{ data, meta }` response contract are unchanged.
+    const {
+      page,
+      limit,
+      skip,
+    } = buildPaginationArgs(options.page ?? 1, options.limit ?? 20);
 
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    if (!Number.isInteger(options.limit ?? limit) || (options.limit !== undefined && (options.limit < 1 || options.limit > 100))) {
       throw new BadRequestException('limit must be an integer between 1 and 100');
     }
-    if (!Number.isInteger(page) || page < 1) {
+    if (!Number.isInteger(options.page ?? page) || (options.page !== undefined && options.page < 1)) {
       throw new BadRequestException('page must be a positive integer');
     }
 
@@ -785,42 +791,16 @@ export class ClipsService {
       orderBy = [{ createdAt: 'desc' }];
     }
 
-    const skip = (page - 1) * limit;
-
     // Issue #866: use explicit `select` — never `include: { video: true }` or
     // similar broad includes that would load entire relation sub-trees.
+    // Issue #1237: projection comes from the shared `clipListSelect` helper.
     const [data, total] = await Promise.all([
       this.prisma.clip.findMany({
         where,
         orderBy,
         skip,
         take: limit,
-        select: {
-          id: true,
-          videoId: true,
-          clipUrl: true,
-          thumbnail: true,
-          platform: true,
-          title: true,
-          caption: true,
-          startTime: true,
-          endTime: true,
-          duration: true,
-          viralityScore: true,
-          royaltyBps: true,
-          selected: true,
-          postStatus: true,
-          postedAt: true,
-          metadataUri: true,
-          mintAddress: true,
-          mintedAt: true,
-          nftStatus: true,
-          status: true,
-          localFilePath: true,
-          error: true,
-          createdAt: true,
-          updatedAt: true,
-        },
+        select: clipListSelect,
       }),
       this.prisma.clip.count({ where }),
     ]);
