@@ -348,6 +348,40 @@ export class PayoutsService {
         : {}),
     };
 
+    const payouts = await this.prisma.payout.findMany({
+      where: {
+        userId,
+        ...(filterStatus ? { status: filterStatus } : {}),
+      },
+      select: {
+        id: true,
+        amount: true,
+        currency: true,
+        method: true,
+        status: true,
+        transactionId: true,
+        onChainTxHash: true,
+        confirmedAt: true,
+        lastConfirmationCheckAt: true,
+        confirmationPollCount: true,
+        retryCount: true,
+        stellarXdr: true,
+        feeAmount: true,
+        feePercentage: true,
+        finalAmount: true,
+        paidAt: true,
+        approvedAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return payouts.map((p) => ({
+      ...p,
+      fee: p.feeAmount,
+      netAmount: p.finalAmount,
+    }));
     const select = {
       id: true,
       amount: true,
@@ -357,6 +391,8 @@ export class PayoutsService {
       transactionId: true,
       onChainTxHash: true,
       confirmedAt: true,
+      lastConfirmationCheckAt: true,
+      confirmationPollCount: true,
       retryCount: true,
       stellarXdr: true,
       feeAmount: true,
@@ -403,6 +439,8 @@ export class PayoutsService {
         transactionId: true,
         onChainTxHash: true,
         confirmedAt: true,
+        lastConfirmationCheckAt: true,
+        confirmationPollCount: true,
         retryCount: true,
         stellarXdr: true,
         feeAmount: true,
