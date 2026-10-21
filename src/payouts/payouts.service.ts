@@ -10,15 +10,19 @@ import { PayoutReceiptService } from './payout-receipt.service';
 import { EarningsService } from '../earnings/earnings.service';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
-import { ConfigService } from '../config/config.service';
 import { PayoutLimitsService } from './payout-limits.service';
-import { CurrencyService } from '../common/services/currency.service';
 import { MailService } from '../auth/mail.service';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
 import { buildPaginationArgs } from '../prisma/query-helpers';
 
-import { OPEN_PAYOUT_STATUSES, expandStatusFilter, normalizePayoutStatusFilter } from './payouts.constants';
-import { ADMIN_PENDING_PAYOUT_STATUSES, PAID_OUT_PAYOUT_STATUSES, PAYOUT_STATUSES } from './payouts.constants';
+import {
+  ADMIN_PENDING_PAYOUT_STATUSES,
+  OPEN_PAYOUT_STATUSES,
+  PAID_OUT_PAYOUT_STATUSES,
+  PAYOUT_STATUSES,
+  expandStatusFilter,
+  normalizePayoutStatusFilter,
+} from './payouts.constants';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
@@ -36,28 +40,19 @@ export class PayoutsService {
     process.env.DEFAULT_PAYOUT_CURRENCY ?? 'USD';
 
   constructor(
-    private prisma: PrismaService,
-    private earningsService: EarningsService,
-    private stellarService: StellarService,
-    private payoutReceiptService: PayoutReceiptService,
-    private feeService: FeeService,
-    private payoutApprovalService: PayoutApprovalService,
+    private readonly prisma: PrismaService,
+    private readonly earningsService: EarningsService,
+    private readonly stellarService: StellarService,
+    private readonly payoutReceiptService: PayoutReceiptService,
+    private readonly feeService: FeeService,
+    private readonly payoutApprovalService: PayoutApprovalService,
+    private readonly payoutLimitsService: PayoutLimitsService,
     private readonly payoutValidationService: PayoutValidationService,
     private readonly payoutProcessingService: PayoutProcessingService,
     private readonly stellarPayoutVerification: StellarPayoutVerificationService,
     private readonly mailService: MailService,
-  ) {
-    this.payoutLimitsService = payoutLimitsService;
-  }
+  ) {}
 
-  /**
-   * Enforce the minimum Stellar payout threshold (Issue #766).
-   *
-   * `MIN_STELLAR_PAYOUT` (default 5) is expressed as a *USD equivalent*, so a
-   * payout denominated in another currency is converted before comparison —
-   * otherwise 5 units of a weaker currency would clear a "5 USD" floor and the
-   * micro-payout this threshold exists to prevent would go through anyway.
-   */
   private async assertMinimumPayout(
     amount: number,
     currency?: string,
@@ -83,7 +78,6 @@ export class PayoutsService {
       ''
     );
   }
-  }
 
   async initiateStellarPayout(
     userId: number,
@@ -96,7 +90,11 @@ export class PayoutsService {
     transactionId: string;
     stellarXdr: string;
   }> {
-    return this.payoutProcessingService.initiateStellarPayout(userId, payoutId, amount);
+    return this.payoutProcessingService.initiateStellarPayout(
+      userId,
+      payoutId,
+      amount,
+    );
   }
 
   async requestPayout(userId: number): Promise<{
@@ -106,6 +104,8 @@ export class PayoutsService {
     createdAt: Date;
     feeAmount?: number;
     finalAmount?: number;
+    fee?: number;
+    netAmount?: number;
   }> {
     await this.payoutValidationService.ensureNoOpenPayout(userId);
     const wallet = await this.payoutValidationService.getActiveStellarWallet(userId);
@@ -126,12 +126,12 @@ export class PayoutsService {
       const availableBalance =
         (totalEarnings._sum.amount ?? 0) - (totalPaidOut._sum.amount ?? 0);
 
-      await this.assertMinimumPayout(availableBalance, currency);
+      await this.payoutValidationService.assertMinimumPayout(availableBalance, currency);
       const payoutAmount = this.payoutLimitsService.resolvePayoutAmount(
         availableBalance,
         currency,
       );
-      await this.payoutValidationService.assertMinimumPayout(availableBalance, currency);
+      this.payoutValidationService.assertPayoutLimits(payoutAmount, currency);
 
       const fee = await this.feeService.calculateFee(payoutAmount, 'stellar');
       const status = this.payoutApprovalService.resolveInitialStatus(payoutAmount);
@@ -163,14 +163,6 @@ export class PayoutsService {
     };
   }
 
-  /**
-   * Create one or more pending payout requests (Issues #980 / #981).
-   *
-   * Single-destination: pass `method`.
-   * Split fiat/crypto: pass `destinations` whose percentages sum to 100
-   * (or absolute amounts that sum to `amount`). Separate Payout rows are
-   * created atomically inside a single DB transaction.
-   */
   async requestPayoutWithDetails(
     userId: number,
     amount: number,
@@ -209,47 +201,15 @@ export class PayoutsService {
     const normalizedCurrency = (currency ?? this.defaultPayoutCurrency).toUpperCase();
     const splits = this.resolvePayoutDestinations(amount, method, destinations);
 
-    const existingPending = await this.prisma.payout.findFirst({
-      where: { userId, status: { in: [...OPEN_PAYOUT_STATUSES] } },
-    });
-
-    if (existingPending) {
-      throw new ConflictException(
-        'A payout request is already pending for this user',
-      );
-    }
-
-    await this.assertMinimumPayout(amount, normalizedCurrency);
-    this.assertPayoutLimits(amount, normalizedCurrency);
-
-    const earningsSummary = await this.earningsService.getUserTotalEarnings(userId);
-    const availableBalance = earningsSummary.availableBalance;
-
-    if (amount > availableBalance) {
-      throw new BadRequestException(
-        `Insufficient balance. Available: ${availableBalance} ${normalizedCurrency}`,
-      );
-    }
-    method: 'fiat' | 'stellar',
-  ): Promise<{
-    id: number;
-    amount: number;
-    currency: string;
-    method: string;
-    status: string;
-    createdAt: Date;
-    feeAmount?: number;
-    finalAmount?: number;
-  }> {
     await this.payoutValidationService.ensureNoOpenPayout(userId);
-    await this.payoutValidationService.assertMinimumPayout(amount, currency);
-    this.payoutValidationService.assertPayoutLimits(amount, currency);
+    await this.payoutValidationService.assertMinimumPayout(amount, normalizedCurrency);
+    this.payoutValidationService.assertPayoutLimits(amount, normalizedCurrency);
 
     const earningsSummary = await this.earningsService.getUserTotalEarnings(userId);
     this.payoutValidationService.assertSufficientBalance(
       amount,
       earningsSummary.availableBalance,
-      currency,
+      normalizedCurrency,
     );
 
     const created = await this.prisma.$transaction(async (tx) => {
@@ -267,7 +227,8 @@ export class PayoutsService {
           split.method,
         );
 
-        // Issue #980: new requests start as pending.
+        const status = this.payoutApprovalService.resolveInitialStatus(split.amount);
+
         const payout = await tx.payout.create({
           data: {
             userId,
@@ -276,7 +237,7 @@ export class PayoutsService {
             amount: split.amount,
             currency: normalizedCurrency,
             method: split.method,
-            status: 'pending',
+            status,
             feeAmount: feeCalculation.feeAmount,
             feePercentage: feeCalculation.feePercentage,
             finalAmount: feeCalculation.finalAmount,
@@ -323,11 +284,6 @@ export class PayoutsService {
     };
   }
 
-  /**
-   * Normalise a single-method or multi-destination request into concrete
-   * per-destination amounts. Percentages must sum to 100 (±0.01); absolute
-   * amounts must sum to the parent request amount.
-   */
   private resolvePayoutDestinations(
     totalAmount: number,
     method?: 'fiat' | 'stellar',
@@ -337,79 +293,11 @@ export class PayoutsService {
       amount?: number;
     }>,
   ): Array<{ method: 'fiat' | 'stellar'; amount: number }> {
-    if (!destinations || destinations.length === 0) {
-      if (!method) {
-        throw new BadRequestException(
-          'Either method or destinations is required',
-        );
-      }
-      return [{ method, amount: totalAmount }];
-    }
-
-    const methods = new Set(destinations.map((d) => d.method));
-    if (methods.size !== destinations.length) {
-      throw new BadRequestException(
-        'Duplicate destination methods are not allowed in a split payout',
-      );
-    }
-
-    const usingPercentage = destinations.every(
-      (d) => d.percentage !== undefined && d.percentage !== null,
+    return this.payoutValidationService.resolvePayoutDestinations(
+      totalAmount,
+      method,
+      destinations,
     );
-    const usingAmount = destinations.every(
-      (d) => d.amount !== undefined && d.amount !== null,
-    );
-
-    if (!usingPercentage && !usingAmount) {
-      throw new BadRequestException(
-        'Each destination must specify either percentage or amount consistently',
-      );
-    }
-
-    if (usingPercentage) {
-      const percentSum = destinations.reduce(
-        (sum, d) => sum + (d.percentage ?? 0),
-        0,
-      );
-      if (Math.abs(percentSum - 100) > 0.01) {
-        throw new BadRequestException(
-          `Destination percentages must sum to 100. Received: ${percentSum}`,
-        );
-      }
-
-      const splits = destinations.map((d, index) => {
-        const raw = (totalAmount * (d.percentage ?? 0)) / 100;
-        // Round intermediate legs to cents; put remainder on the last leg so
-        // floating-point drift never creates a shortfall/overage.
-        const amount =
-          index === destinations.length - 1
-            ? 0 // filled below
-            : Math.round(raw * 100) / 100;
-        return { method: d.method, amount };
-      });
-      const allocated = splits
-        .slice(0, -1)
-        .reduce((sum, s) => sum + s.amount, 0);
-      splits[splits.length - 1].amount =
-        Math.round((totalAmount - allocated) * 100) / 100;
-      return splits;
-    if (method === 'stellar') {
-      walletId = (await this.payoutValidationService.getActiveStellarWallet(userId)).id;
-    } else if (method === 'fiat') {
-      payoutMethodId = (await this.payoutValidationService.getDefaultPayoutMethod(userId)).id;
-    }
-
-    const amountSum = destinations.reduce((sum, d) => sum + (d.amount ?? 0), 0);
-    if (Math.abs(amountSum - totalAmount) > 0.01) {
-      throw new BadRequestException(
-        `Destination amounts must sum to ${totalAmount}. Received: ${amountSum}`,
-      );
-    }
-
-    return destinations.map((d) => ({
-      method: d.method,
-      amount: d.amount as number,
-    }));
   }
 
   private async resolveDestinationIds(
@@ -440,18 +328,6 @@ export class PayoutsService {
       );
     }
     return { walletId: null, payoutMethodId: payoutMethod.id };
-    return {
-      id: payout.id,
-      amount: payout.amount,
-      currency: payout.currency,
-      method: payout.method,
-      status: payout.status,
-      createdAt: payout.createdAt,
-      fee: payout.feeAmount,
-      feeAmount: payout.feeAmount,
-      netAmount: payout.finalAmount,
-      finalAmount: payout.finalAmount,
-    };
   }
 
   async getPayouts(
@@ -466,6 +342,7 @@ export class PayoutsService {
 
     const where = {
       userId,
+      deletedAt: null,
       ...(filterStatus
         ? { status: { in: expandStatusFilter(filterStatus) } }
         : {}),
@@ -541,15 +418,18 @@ export class PayoutsService {
       this.prisma.payout.count({ where }),
     ]);
 
-    return new PaginatedResponseDto(items, total, normalizedPage, normalizedLimit);
+    const mapped = items.map((p) => ({
+      ...p,
+      fee: p.feeAmount,
+      netAmount: p.finalAmount,
+    }));
+
+    return new PaginatedResponseDto(mapped, total, normalizedPage, normalizedLimit);
   }
 
-  async getPayoutById(
-    userId: number,
-    payoutId: number,
-  ): Promise<any> {
+  async getPayoutById(userId: number, payoutId: number): Promise<any> {
     const payout = await this.prisma.payout.findFirst({
-      where: { id: payoutId, userId },
+      where: { id: payoutId, userId, deletedAt: null },
       select: {
         id: true,
         amount: true,
@@ -591,11 +471,6 @@ export class PayoutsService {
     return normalizePayoutStatusFilter(status);
   }
 
-  /**
-   * Query Horizon, verify destination/amount, and update payout status (#982).
-   * - 404 transaction-not-found when the hash is missing on Horizon
-   * - 409 verification-conflict when destination/amount do not match
-   */
   async getOnChainStatus(
     userId: number,
     payoutId: number,
@@ -613,7 +488,7 @@ export class PayoutsService {
     };
   }> {
     const payout = await this.prisma.payout.findFirst({
-      where: { id: payoutId, userId },
+      where: { id: payoutId, userId, deletedAt: null },
       select: {
         id: true,
         status: true,
@@ -813,13 +688,12 @@ export class PayoutsService {
     const updated = await this.prisma.payout.update({
       where: { id: payoutId },
       data: {
-        status: 'rejected',
+        status: PAYOUT_STATUSES.REJECTED,
         rejectedAt: now,
         reviewedAt: now,
         rejectionReason: reason.trim(),
         approvedBy: adminUserId,
       },
-      data: { status: PAYOUT_STATUSES.REJECTED, rejectedAt: now, reviewedAt: now, rejectionReason: reason ?? null },
     });
 
     await this.prisma.earningsAuditLog.create({
@@ -867,7 +741,6 @@ export class PayoutsService {
 
   async listPendingPayouts(): Promise<Array<{ id: number; userId: number; amount: number; currency: string; status: string; createdAt: Date }>> {
     return this.prisma.payout.findMany({
-      where: { status: { in: ['pending_approval', 'under_review', 'pending_review', 'approved'] } },
       where: { status: { in: [...ADMIN_PENDING_PAYOUT_STATUSES] } },
       orderBy: { createdAt: 'asc' },
       select: { id: true, userId: true, amount: true, currency: true, status: true, createdAt: true },
@@ -876,7 +749,6 @@ export class PayoutsService {
 
   async listPendingReviewPayouts(): Promise<Array<{ id: number; userId: number; amount: number; currency: string; status: string; createdAt: Date }>> {
     return this.prisma.payout.findMany({
-      where: { status: { in: ['under_review', 'pending_review'] } },
       where: { status: PAYOUT_STATUSES.PENDING_REVIEW },
       orderBy: { createdAt: 'asc' },
       select: { id: true, userId: true, amount: true, currency: true, status: true, createdAt: true },
@@ -893,22 +765,13 @@ export class PayoutsService {
 
   async cancelPayout(userId: number, payoutId: number): Promise<{ id: number; status: string }> {
     const payout = await this.prisma.payout.findFirst({
-      where: { id: payoutId, userId },
+      where: { id: payoutId, userId, deletedAt: null },
     });
 
     if (!payout) {
       throw new NotFoundException('Payout record not found');
     }
 
-    if (
-      !['pending', 'under_review', 'pending_review', 'pending_approval'].includes(
-        payout.status,
-      )
-    ) {
-      throw new BadRequestException(
-        `Cannot cancel payout in '${payout.status}' status. Only pending payouts can be canceled.`,
-      );
-    }
     this.payoutValidationService.assertCanCancel(payout.status);
 
     const updated = await this.prisma.payout.update({
@@ -928,13 +791,9 @@ export class PayoutsService {
     return this.payoutProcessingService.pollPendingStellarPayouts();
   }
 
-  /**
-   * Get payout receipt PDF for download
-   */
   async getPayoutReceiptPdf(userId: number, payoutId: number): Promise<Buffer> {
-    // Verify ownership and that payout exists
     const payout = await this.prisma.payout.findFirst({
-      where: { id: payoutId, userId },
+      where: { id: payoutId, userId, deletedAt: null },
       include: {
         wallet: { select: { address: true } },
         user: { select: { email: true } },
@@ -945,27 +804,20 @@ export class PayoutsService {
       throw new NotFoundException('Payout not found');
     }
 
-    if (payout.status !== 'completed') {
-      throw new ConflictException(
-        'Receipt is not yet available — payout is not completed',
     if (payout.status !== PAYOUT_STATUSES.COMPLETED) {
       throw new BadRequestException(
         'Receipt is only available for completed payouts',
       );
     }
 
-    // Verify receipt exists
     const receipt = await this.prisma.payoutReceipt.findUnique({
       where: { payoutId },
     });
 
     if (!receipt) {
-      throw new ConflictException(
-        'Receipt is not yet available for this payout',
-      );
+      throw new NotFoundException('Receipt not found for this payout');
     }
 
-    // Generate PDF on-demand
     return this.payoutReceiptService.getReceiptPdf(payoutId, {
       payoutId: payout.id,
       amount: payout.amount,
@@ -984,13 +836,9 @@ export class PayoutsService {
     });
   }
 
-  /**
-   * Get payout receipt metadata
-   */
   async getReceiptMetadata(userId: number, payoutId: number) {
-    // Verify ownership
     const payout = await this.prisma.payout.findFirst({
-      where: { id: payoutId, userId },
+      where: { id: payoutId, userId, deletedAt: null },
     });
 
     if (!payout) {
