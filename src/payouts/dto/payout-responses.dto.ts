@@ -101,6 +101,24 @@ export class PayoutResponseDto {
   confirmedAt?: Date | null;
 
   @ApiPropertyOptional({
+    example: '2026-07-26T12:05:00.000Z',
+    description: 'Timestamp when the last Horizon confirmation check ran',
+  })
+  lastConfirmationCheckAt?: Date | null;
+
+  @ApiPropertyOptional({
+    example: 3,
+    description: 'Number of Horizon confirmation checks performed',
+  })
+  confirmationPollCount?: number;
+
+  @ApiPropertyOptional({
+    example: '2026-07-26T12:05:00.000Z',
+    description: 'Timestamp when the payout was completed',
+  })
+  paidAt?: Date | null;
+
+  @ApiPropertyOptional({
     example: 'abcd1234',
     description:
       'Deterministic internal transaction identifier for payout processing',
@@ -154,9 +172,9 @@ export class PayoutProcessResponseDto {
 
   @ApiProperty({
     example: 'completed',
-    enum: ['completed'],
+    enum: ['processing', 'completed', 'failed'],
     description:
-      'Always `completed` on success. If submission or verification fails the payout is set to `failed`, a retry is scheduled, and a 500 is returned instead.',
+      'processing while Horizon confirmation is pending, completed after confirmation, or failed after an on-chain failure.',
   })
   status: string;
 
