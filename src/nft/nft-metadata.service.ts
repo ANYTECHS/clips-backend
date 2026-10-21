@@ -163,7 +163,7 @@ export class NftMetadataService {
       },
       duration: clip.duration,
       viralityScore: clip.viralityScore ?? 0,
-      originalDuration: clip.duration,
+      originalDuration: clip.originalVideoDuration ?? clip.duration,
       createdAt: clip.createdAt.toISOString(),
       platforms: clip.platforms ?? [],
       thumbnail: clip.thumbnail ?? clip.clipUrl,

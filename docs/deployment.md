@@ -431,9 +431,19 @@ OpenAPI JSON spec:
 https://api.clipcash.app/api/docs-json
 ```
 
+### Public vs. Protected
+
+| Environment | Swagger UI (`/api/docs`) | Notes |
+|---|---|---|
+| Development / staging (`NODE_ENV` ≠ `production`) | Enabled | Public to anyone who can reach the host |
+| Production (default) | **Disabled** | `openapi.json` is still written to disk at startup |
+| Production + `ENABLE_SWAGGER_UI=true` | Enabled | Not authenticated by the app — restrict it at the reverse proxy (IP allowlist, VPN or basic auth) |
+
+The docs page itself is unauthenticated; protected endpoints still require a JWT, which you can supply through the **Authorize** button (`persistAuthorization` keeps it across reloads). Enabling Swagger UI also relaxes the CSP to allow its inline boot script.
+
 ### API Version
 
-The current API does not use URL versioning. All endpoints are served from `/` (e.g. `/clips`, `/wallets`).
+The OpenAPI document version is set with `.setVersion('1.0')` in `src/main.ts`; bump it when the public contract changes. The API does not use URL versioning — endpoints are served from `/` (e.g. `/clips`, `/wallets`). See [versioning.md](./versioning.md) for the versioning policy.
 
 ### Exporting the OpenAPI Spec
 
@@ -460,7 +470,11 @@ ALLOWED_ORIGINS=https://clipcash.app,https://www.clipcash.app
 
 The backend will reject cross-origin requests from any origin not in this list.
 
-> If you are running Swagger UI from a different domain than the API, add that domain to `ALLOWED_ORIGINS`.
+In production `ALLOWED_ORIGINS` defaults to **empty**, so it must be set or every browser request from the frontend is rejected. In development it defaults to `http://localhost:3000,http://127.0.0.1:3000`.
+
+Allowed methods and headers can be overridden with `ALLOWED_METHODS` and `ALLOWED_HEADERS` (comma-separated).
+
+> Swagger UI at `/api/docs` is served from the same origin as the API, so it needs no CORS entry. Only add an origin if you host Swagger UI (or another API client) on a different domain.
 
 ---
 
