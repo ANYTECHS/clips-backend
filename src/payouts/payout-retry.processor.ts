@@ -7,6 +7,7 @@ import { MetricsService } from '../metrics/metrics.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { handleFailedEvent, handleProcessingError } from '../queue/processor-error.handler';
 
 interface PayoutRetryJob {
   payoutId: number;
@@ -46,42 +47,20 @@ export class PayoutRetryProcessor extends WorkerHost implements OnModuleInit {
         'success',
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(
-        `[payout-retry] job ${job.id} failed for payout ${payoutId}: ${message}`,
-        error instanceof Error ? error.stack : undefined,
-      );
-      this.metricsService.recordJobCompletion(
+      handleProcessingError(
+        this.logger,
+        this.metricsService,
+        PAYOUT_RETRY_QUEUE,
+        job,
         jobMetricId,
-        PAYOUT_RETRY_QUEUE,
-        'failure',
+        error,
       );
-      this.metricsService.recordJobFailure(
-        PAYOUT_RETRY_QUEUE,
-        message,
-      );
-      throw error;
     }
   }
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<PayoutRetryJob>, error: Error): void {
-    const maxAttempts = job.opts.attempts ?? 1;
-    const isFinalAttempt = job.attemptsMade >= maxAttempts;
-
-    if (!isFinalAttempt) {
-      this.logger.warn(
-        `[RETRY] Payout retry job ${job.id} failed on attempt ${job.attemptsMade}/${maxAttempts} — ` +
-          `payoutId=${job.data.payoutId} — reason: ${error.message} — retrying`,
-      );
-      return;
-    }
-
-    this.logger.error(
-      `[FINAL FAILURE] Payout retry job ${job.id} exhausted all ${maxAttempts} attempts — ` +
-        `payoutId=${job.data.payoutId} — reason: ${error.message}`,
-      error.stack,
-    );
-    this.metricsService.recordJobFailure(PAYOUT_RETRY_QUEUE, 'final_failure');
+    // Standardized retry vs final logging + final_failure metric (Issue #1235).
+    handleFailedEvent(this.logger, this.metricsService, PAYOUT_RETRY_QUEUE, job, error, 5000);
   }
 }

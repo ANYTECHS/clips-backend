@@ -7,6 +7,7 @@ import { NftMintService } from './nft-mint.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { handleFailedEvent, handleProcessingError } from '../queue/processor-error.handler';
 
 export interface NftMintJob {
   clipId: number;
@@ -44,31 +45,21 @@ export class NftMintProcessor extends WorkerHost implements OnModuleInit {
       this.metricsService.recordJobCompletion(jobMetricId, NFT_MINT_QUEUE, 'success');
       return { xdr: result.xdr, clipId };
     } catch (error) {
-      this.metricsService.recordJobCompletion(jobMetricId, NFT_MINT_QUEUE, 'failure');
-      this.metricsService.recordJobFailure(NFT_MINT_QUEUE, error instanceof Error ? error.message : String(error));
-      throw error;
+      handleProcessingError(
+        this.logger,
+        this.metricsService,
+        NFT_MINT_QUEUE,
+        job,
+        jobMetricId,
+        error,
+      );
     }
   }
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<NftMintJob>, error: Error): void {
-    const maxAttempts = job.opts.attempts ?? 1;
-    const isFinalAttempt = job.attemptsMade >= maxAttempts;
-
-    if (!isFinalAttempt) {
-      this.logger.warn(
-        `[RETRY] NFT mint job ${job.id} failed on attempt ${job.attemptsMade}/${maxAttempts} — ` +
-          `clipId=${job.data.clipId} — reason: ${error.message} — retrying`,
-      );
-      return;
-    }
-
-    this.logger.error(
-      `[FINAL FAILURE] NFT mint job ${job.id} exhausted all ${maxAttempts} attempts — ` +
-        `clipId=${job.data.clipId} — reason: ${error.message}`,
-      error.stack,
-    );
-    this.metricsService.recordJobFailure(NFT_MINT_QUEUE, 'final_failure');
+    // Standardized retry vs final logging + final_failure metric (Issue #1235).
+    handleFailedEvent(this.logger, this.metricsService, NFT_MINT_QUEUE, job, error, 2000);
   }
 
   @OnWorkerEvent('completed')

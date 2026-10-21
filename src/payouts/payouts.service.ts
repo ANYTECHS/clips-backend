@@ -13,7 +13,7 @@ import { PayoutApprovalService } from './payout-approval.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import { MailService } from '../auth/mail.service';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
-import { buildPaginationArgs } from '../prisma/query-helpers';
+import { paginateQuery, payoutDetailSelect } from '../prisma/query-helpers';
 
 import {
   ADMIN_PENDING_PAYOUT_STATUSES,
@@ -336,10 +336,11 @@ export class PayoutsService {
     page = 1,
     limit = 20,
   ): Promise<PaginatedResponseDto<any>> {
+    // Issue #1237: single paginated query via the shared payout select.
+    // Previously the paginated branch was dead code and the live branch ignored
+    // pagination and used an unexpanded status filter; both are fixed here
+    // while keeping the PaginatedResponseDto contract unchanged.
     const filterStatus = this.parseStatusFilter(status);
-    const { skip, take, page: normalizedPage, limit: normalizedLimit } =
-      buildPaginationArgs(page, limit);
-
     const where = {
       userId,
       deletedAt: null,
@@ -348,6 +349,19 @@ export class PayoutsService {
         : {}),
     };
 
+    const result = await paginateQuery(
+      ({ skip, take }) =>
+        this.prisma.payout.findMany({
+          where,
+          select: payoutDetailSelect,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take,
+        }),
+      () => this.prisma.payout.count({ where }),
+      page,
+      limit,
+    );
     const payouts = await this.prisma.payout.findMany({
       where: {
         userId,
@@ -377,11 +391,13 @@ export class PayoutsService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return payouts.map((p) => ({
+    const items = result.items.map((p) => ({
       ...p,
-      fee: p.feeAmount,
-      netAmount: p.finalAmount,
+      fee: (p as { feeAmount?: number }).feeAmount,
+      netAmount: (p as { finalAmount?: number }).finalAmount,
     }));
+
+    return new PaginatedResponseDto(items, result.total, result.page, result.limit);
     const select = {
       id: true,
       amount: true,

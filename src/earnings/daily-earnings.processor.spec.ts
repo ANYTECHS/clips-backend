@@ -4,6 +4,7 @@ import { Job } from 'bullmq';
 import { DailyEarningsProcessor } from './daily-earnings.processor';
 import { DailyEarningsAggregationService } from './daily-earnings-aggregation.service';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { MetricsService } from '../metrics/metrics.service';
 import {
   DAILY_EARNINGS_CRON,
   DAILY_EARNINGS_JOB,
@@ -34,6 +35,11 @@ describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
       register: jest.fn(),
       registerQueue: jest.fn(),
     };
+    const metrics = {
+      recordJobStart: jest.fn(),
+      recordJobCompletion: jest.fn(),
+      recordJobFailure: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -41,6 +47,7 @@ describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
         { provide: getQueueToken(DAILY_EARNINGS_QUEUE), useValue: queue },
         { provide: DailyEarningsAggregationService, useValue: aggregation },
         { provide: GracefulShutdownService, useValue: shutdown },
+        { provide: MetricsService, useValue: metrics },
       ],
     }).compile();
 
@@ -86,8 +93,10 @@ describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
   });
 
   describe('process', () => {
+    const baseJob = { opts: { attempts: 3 }, attemptsMade: 0 } as Job;
+
     it('aggregates the previous day when the job carries no date', async () => {
-      await processor.process({ id: '1', data: {} } as Job);
+      await processor.process({ id: '1', data: {}, ...baseJob } as Job);
 
       expect(aggregation.aggregateDay).toHaveBeenCalledWith(undefined);
     });
@@ -96,6 +105,7 @@ describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
       await processor.process({
         id: '2',
         data: { date: '2026-03-01' },
+        ...baseJob,
       } as Job);
 
       const [passed] = aggregation.aggregateDay.mock.calls[0];
@@ -104,7 +114,7 @@ describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
 
     it('fails loudly on an unparseable date rather than aggregating the wrong day', async () => {
       await expect(
-        processor.process({ id: '3', data: { date: 'not-a-date' } } as Job),
+        processor.process({ id: '3', data: { date: 'not-a-date' }, ...baseJob } as Job),
       ).rejects.toThrow('Invalid date');
 
       expect(aggregation.aggregateDay).not.toHaveBeenCalled();
@@ -114,8 +124,13 @@ describe('DailyEarningsProcessor (Issue #767 / #979)', () => {
       aggregation.aggregateDay.mockRejectedValueOnce(new Error('db down'));
 
       await expect(
-        processor.process({ id: '4', data: {} } as Job),
+        processor.process({ id: '4', data: {}, ...baseJob } as Job),
       ).rejects.toThrow('db down');
+    });
+
+    it('exposes standardized failed/completed handlers (Issue #1235)', () => {
+      expect(typeof processor.onFailed).toBe('function');
+      expect(typeof processor.onCompleted).toBe('function');
     });
   });
 });
