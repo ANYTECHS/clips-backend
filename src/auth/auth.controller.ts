@@ -46,6 +46,9 @@ export class AuthController {
   ) {}
 
   @Post('signup')
+  @ApiOperation({ summary: 'Register a new user account' })
+  @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid input or user already exists' })
   @ApiOperation({
     summary: 'Register a new user account',
     description:
@@ -175,6 +178,52 @@ export class AuthController {
   }
 
   @Post('magic-link')
+  @ApiOperation({
+    summary: 'Request magic link for passwordless login',
+    description:
+      'Generates a time-limited (15-minute) passwordless login token and sends a magic link to the user email. Always responds with 200 to protect against email enumeration.',
+  })
+  @ApiBody({
+    type: MagicLinkRequestDto,
+    examples: {
+      default: {
+        summary: 'Standard magic link request',
+        value: {
+          email: 'creator@example.com',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Magic link sent if email exists',
+    schema: {
+      example: {
+        message: 'If that email exists, a magic link has been sent.',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid email format',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: ['Please provide a valid email address'],
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 429,
+    description: 'Too many requests - Rate limit exceeded',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'ThrottlerException: Too Many Requests',
+      },
+    },
+  })
   @ApiOperation({ summary: 'Request magic link for passwordless login' })
   @ApiResponse({ status: 200, description: 'Magic link sent if email exists' })
   @ApiResponse({ status: 400, description: 'Invalid email format' })
@@ -188,6 +237,102 @@ export class AuthController {
   }
 
   @Get('verify-magic')
+  @ApiOperation({
+    summary: 'Verify magic link token and authenticate',
+    description:
+      'Validates a single-use magic link token, revokes it upon consumption, and issues JWT access and refresh tokens. Returns tokens in JSON body or sets HttpOnly cookies when use_cookies=true.',
+  })
+  @ApiQuery({
+    name: 'token',
+    required: true,
+    description: 'Magic link authentication token received via email',
+    example: 'd3b07384d113edec49eaa6238ad5ff00',
+  })
+  @ApiQuery({
+    name: 'use_cookies',
+    required: false,
+    description: 'Return tokens in secure HttpOnly cookies instead of JSON response body',
+    example: 'false',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Token verified successfully and authenticated session established',
+    schema: {
+      examples: {
+        jsonResponse: {
+          summary: 'Tokens in body (use_cookies=false)',
+          value: {
+            user: {
+              id: 1,
+              email: 'creator@example.com',
+              role: 'USER',
+            },
+            tokens: {
+              accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+              refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+            },
+            csrfToken: '4a81b7e6c9f2...',
+          },
+        },
+        cookieResponse: {
+          summary: 'Tokens in cookies (use_cookies=true)',
+          value: {
+            user: {
+              id: 1,
+              email: 'creator@example.com',
+              role: 'USER',
+            },
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Missing token query parameter',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Token is required',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Unauthorized - Magic link token has expired or has already been used',
+    schema: {
+      examples: {
+        tokenExpired: {
+          summary: 'Magic link expired',
+          value: {
+            statusCode: 401,
+            message: 'Magic link has expired',
+            error: 'Unauthorized',
+          },
+        },
+        tokenAlreadyUsed: {
+          summary: 'Magic link already consumed',
+          value: {
+            statusCode: 401,
+            message: 'Magic link has already been used',
+            error: 'Unauthorized',
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Not Found - Invalid or unknown magic link token',
+    schema: {
+      example: {
+        statusCode: 404,
+        message: 'Invalid or expired magic link',
+        error: 'Not Found',
+      },
+    },
+  })
   @ApiOperation({ summary: 'Verify magic link token', description: 'Validates magic link and returns tokens' })
   @ApiResponse({ status: 200, description: 'Token verified successfully' })
   @ApiResponse({ status: 400, description: 'Invalid or expired token' })
@@ -287,6 +432,9 @@ export class AuthController {
   }
 
   @Post('reset-password')
+  @ApiOperation({ summary: 'Reset password', description: 'Sets new password using reset token' })
+  @ApiResponse({ status: 200, description: 'Password reset successful' })
+  @ApiResponse({ status: 400, description: 'Invalid token or password requirements not met' })
   @ApiOperation({
     summary: 'Reset password',
     description:
