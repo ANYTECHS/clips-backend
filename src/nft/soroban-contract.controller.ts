@@ -1,5 +1,6 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Query, Inject, Optional } from '@nestjs/common';
 import {
+  ApiBadGatewayResponse,
   ApiInternalServerErrorResponse,
   ApiOkResponse,
   ApiOperation,
@@ -7,7 +8,17 @@ import {
 } from '@nestjs/swagger';
 import { StellarService } from '../stellar/stellar.service';
 import { AdminContractService } from './admin-contract.service';
-import { SorobanPauseInfoDto, SorobanPauseReasonDto } from './dto/soroban-pause.dto';
+import {
+  SorobanPauseInfoDto,
+  SorobanPauseReasonDto,
+} from './dto/soroban-pause.dto';
+import { SorobanFeeEstimationService } from './soroban-fee-estimation.service';
+import {
+  EstimateMintFeeQueryDto,
+  EstimateTransferFeeQueryDto,
+  SorobanFeeEstimateDto,
+  SorobanFeeEstimationErrorDto,
+} from './dto/soroban-fee-estimate.dto';
 
 @ApiTags('soroban')
 @ApiInternalServerErrorResponse({ description: 'Soroban RPC request failed' })
@@ -16,6 +27,9 @@ export class SorobanContractController {
   constructor(
     private readonly stellarService: StellarService,
     private readonly adminContractService: AdminContractService,
+    @Optional()
+    @Inject(SorobanFeeEstimationService)
+    private readonly feeEstimationService?: SorobanFeeEstimationService,
   ) {}
 
   @Get('contract/info')
@@ -104,5 +118,67 @@ export class SorobanContractController {
   })
   async getPauseReason(): Promise<SorobanPauseReasonDto> {
     return { reason: await this.adminContractService.getPauseReason() };
+  }
+
+  @Get('fees/mint')
+  @ApiOperation({
+    summary: 'Estimate Soroban NFT mint transaction fee',
+    description:
+      'Simulates the Soroban mint transaction against the latest ledger to calculate the approximate ' +
+      'transaction fee in stroops before user signs. Fee estimates are approximate; actual costs may ' +
+      'vary before submission due to surge pricing, ledger state changes, or resource consumption fluctuations.',
+  })
+  @ApiOkResponse({
+    description:
+      'Estimated mint fee in stroops with resource breakdown and limitations disclaimer',
+    type: SorobanFeeEstimateDto,
+  })
+  @ApiBadGatewayResponse({
+    description: 'Soroban RPC node returned an error during simulation',
+    type: SorobanFeeEstimationErrorDto,
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'Soroban fee estimation failed due to an unexpected server or network error',
+    type: SorobanFeeEstimationErrorDto,
+  })
+  estimateMintFee(
+    @Query() query?: EstimateMintFeeQueryDto,
+  ): Promise<SorobanFeeEstimateDto> {
+    if (!this.feeEstimationService) {
+      throw new Error('SorobanFeeEstimationService is not available');
+    }
+    return this.feeEstimationService.estimate_mint_fee(query);
+  }
+
+  @Get('fees/transfer')
+  @ApiOperation({
+    summary: 'Estimate Soroban NFT transfer transaction fee',
+    description:
+      'Simulates the Soroban transfer transaction against the latest ledger to calculate the approximate ' +
+      'transaction fee in stroops before user signs. Fee estimates are approximate; actual costs may ' +
+      'vary before submission due to surge pricing, ledger state changes, or resource consumption fluctuations.',
+  })
+  @ApiOkResponse({
+    description:
+      'Estimated transfer fee in stroops with resource breakdown and limitations disclaimer',
+    type: SorobanFeeEstimateDto,
+  })
+  @ApiBadGatewayResponse({
+    description: 'Soroban RPC node returned an error during simulation',
+    type: SorobanFeeEstimationErrorDto,
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'Soroban fee estimation failed due to an unexpected server or network error',
+    type: SorobanFeeEstimationErrorDto,
+  })
+  estimateTransferFee(
+    @Query() query?: EstimateTransferFeeQueryDto,
+  ): Promise<SorobanFeeEstimateDto> {
+    if (!this.feeEstimationService) {
+      throw new Error('SorobanFeeEstimationService is not available');
+    }
+    return this.feeEstimationService.estimate_transfer_fee(query);
   }
 }
