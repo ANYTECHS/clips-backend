@@ -7,6 +7,7 @@ describe('SorobanContractController', () => {
     networkPassphrase: 'Test SDF Network ; September 2015',
   };
   const adminContractService = {
+    getContractMetadata: jest.fn(),
     getContractVersion: jest.fn(),
     getPauseInfo: jest.fn(),
     getPauseReason: jest.fn(),
@@ -28,16 +29,18 @@ describe('SorobanContractController', () => {
     );
   });
 
-  it('returns configured public contract information', () => {
-    process.env.SOROBAN_NFT_CONTRACT_ID = 'C'.padEnd(56, 'A');
+  it('returns current contract metadata from the contract service', async () => {
+    const metadata = {
+      name: 'ClipCash NFT',
+      symbol: 'CLIP',
+      version: '0.1.0',
+      owner: 'GADMIN',
+      platform_fee: 500,
+    };
+    adminContractService.getContractMetadata.mockResolvedValue(metadata);
 
-    expect(controller.getContractInfo()).toEqual({
-      contractId: 'C'.padEnd(56, 'A'),
-      network: 'testnet',
-      rpcUrl: stellarService.rpcUrl,
-      networkPassphrase: stellarService.networkPassphrase,
-      explorerUrl: `https://stellar.expert/explorer/testnet/contract/${'C'.padEnd(56, 'A')}`,
-    });
+    await expect(controller.getContractInfo()).resolves.toEqual(metadata);
+    expect(adminContractService.getContractMetadata).toHaveBeenCalledTimes(1);
   });
 
   it('delegates version reads to the on-chain contract service', async () => {
