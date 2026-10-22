@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { AppLoggerService } from '../../logger/logger.service';
+import { ApiResponseDto } from '../dtos/api-response.dto';
 
 /**
  * Global HTTP exception filter.
@@ -32,38 +33,32 @@ export class HttpExceptionLoggingFilter implements ExceptionFilter {
     const exceptionResponse =
       exception instanceof HttpException ? exception.getResponse() : null;
 
-    let body: Record<string, unknown>;
+    let message: string;
+    let errorDetail: string | undefined;
 
     if (typeof exceptionResponse === 'string') {
-      body = {
-        statusCode: status,
-        message: exceptionResponse,
-        error: HttpStatus[status] ?? 'Error',
-      };
+      message = exceptionResponse;
+      errorDetail = HttpStatus[status] ?? 'Error';
     } else if (
       exceptionResponse &&
       typeof exceptionResponse === 'object' &&
       !Array.isArray(exceptionResponse)
     ) {
-      body = { ...(exceptionResponse as Record<string, unknown>) };
-      if (body.statusCode === undefined) body.statusCode = status;
+      const resp = exceptionResponse as Record<string, unknown>;
+      message = (resp.message as string) || HttpStatus[status] || 'Error';
+      errorDetail = (resp.error as string) || (resp.message as string);
     } else {
-      body = {
-        statusCode: status,
-        message:
-          status === HttpStatus.INTERNAL_SERVER_ERROR
-            ? 'Internal server error'
-            : 'An error occurred',
-        error: HttpStatus[status] ?? 'Error',
-      };
+      message =
+        status === HttpStatus.INTERNAL_SERVER_ERROR
+          ? 'Internal server error'
+          : 'An error occurred';
+      errorDetail = HttpStatus[status] ?? 'Error';
     }
 
-    // Never leak stack traces through API responses
-    delete body.stack;
-    delete body.trace;
+    const body = ApiResponseDto.error(status, message, errorDetail);
 
     if (requestId) {
-      body.requestId = requestId;
+      (body as any).requestId = requestId;
     }
 
     if (status >= 500) {

@@ -49,6 +49,43 @@ export class AuthController {
   @ApiOperation({ summary: 'Register a new user account' })
   @ApiResponse({ status: 201, description: 'User created successfully' })
   @ApiResponse({ status: 400, description: 'Invalid input or user already exists' })
+  @ApiOperation({
+    summary: 'Register a new user account',
+    description:
+      'Registers a user account. Password must be at least 10 characters long with a minimum zxcvbn score of 3 (scale 0-4).',
+  })
+  @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid input or password does not meet strength requirements (min length 10, min score 3)',
+    schema: {
+      examples: {
+        passwordTooWeak: {
+          summary: 'Password too weak (zxcvbn score < 3)',
+          value: {
+            statusCode: 400,
+            message: [
+              JSON.stringify({
+                score: 1,
+                feedback: ['This is a very common password'],
+                suggestions: 'Add another word or two. Add numbers, Add special characters',
+              }),
+            ],
+            error: 'Bad Request',
+          },
+        },
+        passwordTooShort: {
+          summary: 'Password too short (< 10 characters)',
+          value: {
+            statusCode: 400,
+            message: ['Password must be at least 10 characters long'],
+            error: 'Bad Request',
+          },
+        },
+      },
+    },
+  })
   @ApiResponse({ status: 429, description: 'Too many requests' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
   @Throttle({ auth: { limit: 10, ttl: 60000 } })
@@ -187,6 +224,10 @@ export class AuthController {
       },
     },
   })
+  @ApiOperation({ summary: 'Request magic link for passwordless login' })
+  @ApiResponse({ status: 200, description: 'Magic link sent if email exists' })
+  @ApiResponse({ status: 400, description: 'Invalid email format' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
   async requestMagicLink(
     @Body(new ValidationPipe({ transform: true })) dto: MagicLinkRequestDto,
   ) {
@@ -292,6 +333,11 @@ export class AuthController {
       },
     },
   })
+  @ApiOperation({ summary: 'Verify magic link token', description: 'Validates magic link and returns tokens' })
+  @ApiResponse({ status: 200, description: 'Token verified successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  @ApiQuery({ name: 'token', required: true, description: 'Magic link token' })
+  @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
   async verifyMagicLink(
     @Query('token') token: string,
     @Req() req: any,
@@ -389,6 +435,35 @@ export class AuthController {
   @ApiOperation({ summary: 'Reset password', description: 'Sets new password using reset token' })
   @ApiResponse({ status: 200, description: 'Password reset successful' })
   @ApiResponse({ status: 400, description: 'Invalid token or password requirements not met' })
+  @ApiOperation({
+    summary: 'Reset password',
+    description:
+      'Sets a new password using a reset token. Password must be at least 10 characters long with a minimum zxcvbn strength score of 3 (scale 0-4).',
+  })
+  @ApiResponse({ status: 200, description: 'Password reset successful' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid token or password does not meet strength requirements (min length 10, min score 3)',
+    schema: {
+      examples: {
+        passwordTooWeak: {
+          summary: 'Password does not meet score requirement (score < 3)',
+          value: {
+            statusCode: 400,
+            message: [
+              JSON.stringify({
+                score: 2,
+                feedback: ['Predictable substitutions like @ for a are easy to guess'],
+                suggestions: 'Avoid predictable letter and number substitutions',
+              }),
+            ],
+            error: 'Bad Request',
+          },
+        },
+      },
+    },
+  })
   @HttpCode(HttpStatus.OK)
   async resetPassword(
     @Body(new ValidationPipe({ transform: true })) dto: ResetPasswordDto,
