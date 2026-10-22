@@ -118,6 +118,7 @@ import {
   RoyaltyClaimHistoryQueryDto,
   RoyaltyClaimHistoryResponseDto,
 } from './dto/royalty-claim-history.dto';
+import { PrepareTransferDto, PrepareTransferResponseDto } from './dto/prepare-transfer.dto';
 import { NftMintService } from '../clips/nft-mint.service';
 import {
   collectClipPlatforms,
@@ -1132,6 +1133,36 @@ export class NftController {
       royaltyBps,
     );
     return { salePrice: query.salePrice, royaltyBps, royaltyAmount };
+  }
+
+  /**
+   * POST /nfts/prepare-transfer
+   * Prepares a Soroban NFT transfer transaction with royalty enforcement.
+   * Calculates creator and platform royalties, verifies payment distribution,
+   * generates the RoyaltyPaid event payload, and returns XDR with royalty breakdown.
+   */
+  @Post('prepare-transfer')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ nftTransfer: { limit: 10, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Prepare an NFT transfer with royalty enforcement',
+    description:
+      'Overrides standard transfer logic to enforce automatic secondary sale royalty distribution. Calculates creator and platform royalties, emits the RoyaltyPaid event, and returns transaction XDR with complete royalty breakdown.',
+  })
+  @ApiBody({ type: PrepareTransferDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Transfer prepared successfully with royalty breakdown',
+    type: PrepareTransferResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Invalid addresses or sale price',
+  })
+  async prepareTransfer(
+    @Body() dto: PrepareTransferDto,
+  ): Promise<PrepareTransferResponseDto> {
+    return this.nftService.prepareTransferWithRoyalty(dto);
   }
 
   /**
