@@ -1,6 +1,5 @@
 import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsStrongPassword } from '../validators/decorators';
 
 export class SignupDto {
   @ApiProperty({
@@ -25,6 +24,9 @@ export class SignupDto {
   email: string;
 
   @ApiProperty({
+    description: 'User password (minimum 8 characters, maximum 32 characters)',
+    example: 'SecurePass123!',
+    minLength: 8,
     description:
       'User password meeting strength requirements:\n' +
       '- Minimum 10 characters long\n' +
@@ -39,6 +41,8 @@ export class SignupDto {
     required: true,
   })
   @IsString({ message: 'Password must be a string' })
+  @MinLength(8, { message: 'Password is too short (min 8 characters)' })
+  @MaxLength(32, { message: 'Password is too long (max 32 characters)' })
   @MinLength(10, { message: 'Password must be at least 10 characters long' })
   @MaxLength(32, { message: 'Password is too long (max 32 characters)' })
   @IsStrongPassword()

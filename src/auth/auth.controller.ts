@@ -48,6 +48,18 @@ export class AuthController {
   @Post('signup')
   @ApiOperation({ summary: 'Register a new user account' })
   @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed or user already exists',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: [
+          'name must be at least 2 characters long',
+          'Invalid email format',
+          'Password is too short (min 8 characters)',
+        ],
+        error: 'Bad Request',
   @ApiResponse({ status: 400, description: 'Invalid input or user already exists' })
   @ApiOperation({
     summary: 'Register a new user account',
@@ -112,6 +124,20 @@ export class AuthController {
   @Post('login')
   @ApiOperation({ summary: 'Authenticate user and get access tokens' })
   @ApiResponse({ status: 200, description: 'Login successful' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed or invalid credentials',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: [
+          'Please provide a valid email address',
+          'Password must be at least 8 characters long',
+        ],
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiResponse({ status: 400, description: 'Invalid credentials' })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
   @ApiResponse({ status: 429, description: 'Too many requests - brute force protection' })
@@ -178,6 +204,19 @@ export class AuthController {
   }
 
   @Post('magic-link')
+  @ApiOperation({ summary: 'Request magic link for passwordless login' })
+  @ApiResponse({ status: 200, description: 'Magic link sent if email exists' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: ['Please provide a valid email address'],
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiOperation({
     summary: 'Request magic link for passwordless login',
     description:
@@ -374,6 +413,17 @@ export class AuthController {
   @Post('refresh')
   @ApiOperation({ summary: 'Refresh access token', description: 'Get new access token using refresh token' })
   @ApiResponse({ status: 200, description: 'Tokens refreshed successfully' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed or refresh token missing',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Refresh token is required',
+        error: 'Bad Request',
+      },
+    },
+  })
   @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
@@ -434,6 +484,17 @@ export class AuthController {
   @Post('reset-password')
   @ApiOperation({ summary: 'Reset password', description: 'Sets new password using reset token' })
   @ApiResponse({ status: 200, description: 'Password reset successful' })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Validation failed or requirements not met',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: [
+          'Reset token is required',
+          'Password must be at least 8 characters long',
+        ],
+        error: 'Bad Request',
   @ApiResponse({ status: 400, description: 'Invalid token or password requirements not met' })
   @ApiOperation({
     summary: 'Reset password',
