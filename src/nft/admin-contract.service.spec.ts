@@ -18,7 +18,6 @@ jest.mock('@stellar/stellar-sdk', () => {
         simulateTransaction: mockSimulateTransaction,
       })),
     },
-        if (scVal.__xdr === '') return '';
     Contract: jest.fn().mockImplementation(() => ({
       call: jest.fn((fnName: string) => ({ fnName })),
     })),
@@ -33,6 +32,15 @@ jest.mock('@stellar/stellar-sdk', () => {
       },
     },
     scValToNative: jest.fn((scVal: { __xdr: string }) => {
+      if (scVal.__xdr === 'contract-metadata') {
+        return new Map([
+          ['name', 'ClipCash NFT'],
+          ['symbol', 'CLIP'],
+          ['version', '0.1.0'],
+          ['owner', 'GADMIN'],
+          ['platform_fee', 500],
+        ]);
+      }
       const numericValue = Number(scVal.__xdr);
       return Number.isNaN(numericValue) ? scVal.__xdr : numericValue;
     }),
@@ -91,6 +99,31 @@ describe('AdminContractService.getCollectionInfo (Issue #679)', () => {
     circuitBreakerService.execute.mockRejectedValue(new Error('Soroban RPC down'));
 
     await expect(service.getCollectionInfo()).rejects.toBeInstanceOf(
+      InternalServerErrorException,
+    );
+  });
+
+  it('decodes metadata returned by contract_info()', async () => {
+    mockSimulateTransaction.mockResolvedValue({
+      results: [{ xdr: 'contract-metadata' }],
+    });
+
+    await expect(service.getContractMetadata()).resolves.toEqual({
+      name: 'ClipCash NFT',
+      symbol: 'CLIP',
+      version: '0.1.0',
+      owner: 'GADMIN',
+      platform_fee: 500,
+    });
+    expect(mockSimulateTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects malformed contract_info() metadata', async () => {
+    mockSimulateTransaction.mockResolvedValue({
+      results: [{ xdr: 'malformed-metadata' }],
+    });
+
+    await expect(service.getContractMetadata()).rejects.toBeInstanceOf(
       InternalServerErrorException,
     );
   });

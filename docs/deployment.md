@@ -312,7 +312,7 @@ Both wrappers set `STELLAR_NETWORK` and delegate to `scripts/deploy.sh`, which v
 
 ### Contract Info Endpoint
 
-The backend exposes the deployed contract details at:
+The backend exposes the deployed contract's on-chain metadata at:
 
 ```
 GET /soroban/contract/info
@@ -322,15 +322,18 @@ Example response:
 
 ```json
 {
-  "contractId": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4",
-  "network": "testnet",
-  "rpcUrl": "https://soroban-testnet.stellar.org",
-  "networkPassphrase": "Test SDF Network ; September 2015",
-  "explorerUrl": "https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4"
+  "name": "ClipCash NFT",
+  "symbol": "CLIP",
+  "version": "0.1.0",
+  "owner": "GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "platform_fee": 500
 }
 ```
 
-Use this endpoint after every deployment to confirm the backend is configured with the expected contract ID and network. `GET /soroban/contract/version` additionally reports the on-chain contract version.
+The `platform_fee` value is in basis points (500 = 5%). To inspect the
+configured contract ID and network connection, use `GET /nfts/contract/info`.
+`GET /soroban/contract/version` additionally reports the on-chain contract
+version.
 
 
 ### Platform Payout Wallet

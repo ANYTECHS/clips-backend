@@ -1,13 +1,14 @@
 import { Controller, Get } from '@nestjs/common';
 import {
+  ApiResponse,
   ApiInternalServerErrorResponse,
-  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
 import { StellarService } from '../stellar/stellar.service';
 import { AdminContractService } from './admin-contract.service';
 import { SorobanPauseInfoDto, SorobanPauseReasonDto } from './dto/soroban-pause.dto';
+import { ContractInfoDto } from './dto/contract-info.dto';
 
 @ApiTags('soroban')
 @ApiInternalServerErrorResponse({ description: 'Soroban RPC request failed' })
@@ -20,43 +21,17 @@ export class SorobanContractController {
 
   @Get('contract/info')
   @ApiOperation({
-    summary: 'Get configured Soroban NFT contract information',
+    summary: 'Get Soroban NFT contract metadata',
     description:
-      'Returns the configured contract ID and public network connection details. This endpoint is read-only.',
+      'Reads the contract name, symbol, version, owner, and platform fee using contract_info(). This endpoint is read-only.',
   })
-  @ApiOkResponse({
-    description: 'Configured Soroban contract information',
-    schema: {
-      example: {
-        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
-        network: 'testnet',
-        rpcUrl: 'https://soroban-testnet.stellar.org',
-        networkPassphrase: 'Test SDF Network ; September 2015',
-        explorerUrl:
-          'https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
-      },
-    },
+  @ApiResponse({
+    status: 200,
+    description: 'Current contract metadata',
+    type: ContractInfoDto,
   })
-  getContractInfo(): {
-    contractId: string;
-    network: string;
-    rpcUrl: string;
-    networkPassphrase: string;
-    explorerUrl: string;
-  } {
-    const contractId =
-      process.env.SOROBAN_NFT_CONTRACT_ID?.trim() ||
-      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
-    const network = this.stellarService.network.toLowerCase();
-    const explorerNetwork = network === 'public' ? 'public' : 'testnet';
-
-    return {
-      contractId,
-      network,
-      rpcUrl: this.stellarService.rpcUrl,
-      networkPassphrase: this.stellarService.networkPassphrase,
-      explorerUrl: `https://stellar.expert/explorer/${explorerNetwork}/contract/${contractId}`,
-    };
+  getContractInfo(): Promise<ContractInfoDto> {
+    return this.adminContractService.getContractMetadata();
   }
 
   @Get('contract/version')
