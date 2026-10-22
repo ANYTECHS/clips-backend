@@ -12,6 +12,11 @@ describe('SorobanContractController', () => {
     getPauseInfo: jest.fn(),
     getPauseReason: jest.fn(),
   };
+  const feeEstimationService = {
+    estimate_mint_fee: jest.fn(),
+    estimate_transfer_fee: jest.fn(),
+  };
+
   let controller: SorobanContractController;
 
   beforeEach(() => {
@@ -20,6 +25,7 @@ describe('SorobanContractController', () => {
     controller = new SorobanContractController(
       stellarService as any,
       adminContractService as any,
+      feeEstimationService as any,
     );
   });
 
@@ -65,5 +71,75 @@ describe('SorobanContractController', () => {
       reason: 'Scheduled contract maintenance',
     });
     expect(adminContractService.getPauseReason).toHaveBeenCalledTimes(1);
+  });
+
+  describe('GET /soroban/fees/mint (#1091)', () => {
+    it('delegates mint fee estimation to feeEstimationService', async () => {
+      const mockEstimate = {
+        operation: 'mint' as const,
+        estimatedFee: '15500',
+        unit: 'stroops',
+        network: 'testnet',
+        timestamp: '2026-10-22T09:30:00.000Z',
+        limitations: 'Estimates are approximate',
+        estimatedFeeXlm: '0.0015500',
+      };
+      feeEstimationService.estimate_mint_fee.mockResolvedValue(mockEstimate);
+
+      const query = { clipId: 10, collectionId: 'default' };
+      const result = await controller.estimateMintFee(query);
+
+      expect(feeEstimationService.estimate_mint_fee).toHaveBeenCalledWith(
+        query,
+      );
+      expect(result).toEqual(mockEstimate);
+    });
+
+    it('throws when feeEstimationService is not provided', () => {
+      const unconfiguredController = new SorobanContractController(
+        stellarService as any,
+        adminContractService as any,
+      );
+
+      expect(() => unconfiguredController.estimateMintFee()).toThrow(
+        'SorobanFeeEstimationService is not available',
+      );
+    });
+  });
+
+  describe('GET /soroban/fees/transfer (#1091)', () => {
+    it('delegates transfer fee estimation to feeEstimationService', async () => {
+      const mockEstimate = {
+        operation: 'transfer' as const,
+        estimatedFee: '9600',
+        unit: 'stroops',
+        network: 'testnet',
+        timestamp: '2026-10-22T09:30:00.000Z',
+        limitations: 'Estimates are approximate',
+        estimatedFeeXlm: '0.0009600',
+      };
+      feeEstimationService.estimate_transfer_fee.mockResolvedValue(
+        mockEstimate,
+      );
+
+      const query = { tokenId: 42 };
+      const result = await controller.estimateTransferFee(query);
+
+      expect(feeEstimationService.estimate_transfer_fee).toHaveBeenCalledWith(
+        query,
+      );
+      expect(result).toEqual(mockEstimate);
+    });
+
+    it('throws when feeEstimationService is not provided', () => {
+      const unconfiguredController = new SorobanContractController(
+        stellarService as any,
+        adminContractService as any,
+      );
+
+      expect(() => unconfiguredController.estimateTransferFee()).toThrow(
+        'SorobanFeeEstimationService is not available',
+      );
+    });
   });
 });

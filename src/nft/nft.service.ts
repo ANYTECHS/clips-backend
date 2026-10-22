@@ -15,6 +15,12 @@ import { UpdateRoyaltyRecipientResponseDto } from './dto/update-royalty-recipien
 import { UpdateMetadataDto, UpdateMetadataResponseDto } from './dto/update-metadata.dto';
 import { GasMetricsService } from './gas-metrics.service';
 import { ClipsService } from '../clips/clips.service';
+import {
+  PrepareTransferDto,
+  PrepareTransferResponseDto,
+  RoyaltyBreakdownResponse,
+  RoyaltyPaidEventResponse,
+} from './dto/prepare-transfer.dto';
 
 /**
  * A single royalty recipient entry.
@@ -424,10 +430,135 @@ export class NftService {
     return royalties;
   }
 
+  /**
+   * Calculates creator and platform royalties from sale price based on basis points.
+   */
+  calculateTransferRoyalties(
+    salePriceBigInt: bigint,
+    creatorWallet: string,
+    creatorBps: number = this.config.creatorRoyaltyBps,
+  ): RoyaltyBreakdownResponse & { sellerProceeds: string } {
+    const platformBps = this.config.platformRoyaltyBps;
+    const platformWallet = this.config.platformWallet;
+
+    const creatorRoyaltyAmount = (salePriceBigInt * BigInt(creatorBps)) / 10000n;
+    const platformRoyaltyAmount = (salePriceBigInt * BigInt(platformBps)) / 10000n;
+    const totalRoyaltyAmount = creatorRoyaltyAmount + platformRoyaltyAmount;
+    const sellerProceeds = salePriceBigInt - totalRoyaltyAmount;
+
+    return {
+      creatorWallet,
+      creatorRoyaltyBps: creatorBps,
+      creatorRoyaltyAmount: creatorRoyaltyAmount.toString(),
+      platformWallet,
+      platformRoyaltyBps: platformBps,
+      platformRoyaltyAmount: platformRoyaltyAmount.toString(),
+      totalRoyaltyAmount: totalRoyaltyAmount.toString(),
+      sellerProceeds: sellerProceeds.toString(),
+    };
+  }
+
+  /**
+   * Prepare an NFT transfer transaction with automatic royalty deduction and enforcement.
+   * Emits RoyaltyPaid event and distributes payment to creator and platform before seller payout.
+   */
+  async prepareTransferWithRoyalty(
+    dto: PrepareTransferDto,
+  ): Promise<PrepareTransferResponseDto> {
+    this.validateConfig();
+
+    let salePriceBigInt: bigint;
+    try {
+      salePriceBigInt = BigInt(dto.salePrice);
+    } catch {
+      throw new BadRequestException('Invalid salePrice format');
+    }
+
+    if (salePriceBigInt < 0n) {
+      throw new BadRequestException('salePrice must be non-negative');
+    }
+
+    const from = dto.fromAddress || dto.fromWallet || '';
+    const to = dto.toAddress || dto.toWallet || '';
+    const tokenIdStr = String(dto.tokenId);
+    const salePriceStr = String(dto.salePrice);
+    const creatorBps = dto.royaltyBpsOverride ?? this.config.creatorRoyaltyBps;
+
+    const breakdown = this.calculateTransferRoyalties(
+      salePriceBigInt,
+      from,
+      creatorBps,
+    );
+
+    // RoyaltyPaid event emission payload
+    const event: RoyaltyPaidEventResponse = {
+      name: 'RoyaltyPaid',
+      data: {
+        tokenId: tokenIdStr,
+        from,
+        to,
+        creator: breakdown.creatorWallet,
+        creatorRoyalty: breakdown.creatorRoyaltyAmount,
+        platform: breakdown.platformWallet,
+        platformRoyalty: breakdown.platformRoyaltyAmount,
+        salePrice: salePriceStr,
+      },
+    };
+
+    // Simulated transaction XDR containing transfer, royalty distribution, and RoyaltyPaid event
+    const simulatedPayload = {
+      type: 'transfer_with_royalty',
+      tokenId: tokenIdStr,
+      from,
+      to,
+      salePrice: salePriceStr,
+      sellerProceeds: breakdown.sellerProceeds,
+      royalties: [
+        {
+          recipient: breakdown.creatorWallet,
+          amount: breakdown.creatorRoyaltyAmount,
+          bps: breakdown.creatorRoyaltyBps,
+        },
+        {
+          recipient: breakdown.platformWallet,
+          amount: breakdown.platformRoyaltyAmount,
+          bps: breakdown.platformRoyaltyBps,
+        },
+      ],
+      event,
+      createdAt: new Date().toISOString(),
+    };
+
+    const xdr = Buffer.from(JSON.stringify(simulatedPayload)).toString('base64');
+
+    this.logger.log(
+      `Prepared transfer with royalty for tokenId=${tokenIdStr} | salePrice=${salePriceStr} | royalties=${breakdown.totalRoyaltyAmount}`,
+    );
+
+    return {
+      xdr,
+      tokenId: tokenIdStr,
+      from,
+      to,
+      salePrice: salePriceStr,
+      sellerProceeds: breakdown.sellerProceeds,
+      royaltyBreakdown: {
+        creatorWallet: breakdown.creatorWallet,
+        creatorRoyaltyBps: breakdown.creatorRoyaltyBps,
+        creatorRoyaltyAmount: breakdown.creatorRoyaltyAmount,
+        platformWallet: breakdown.platformWallet,
+        platformRoyaltyBps: breakdown.platformRoyaltyBps,
+        platformRoyaltyAmount: breakdown.platformRoyaltyAmount,
+        totalRoyaltyAmount: breakdown.totalRoyaltyAmount,
+      },
+      event,
+    };
+  }
+
   private validateConfig(): void {
     if (!this.config.platformWallet) {
       throw new BadRequestException(
-        'PLATFORM_WALLET_ADDRESS is not configured. Cannot mint NFT.',
+        'PLATFORM_WALLET_ADDRESS is not configured. Cannot process NFT operations.',
       );
     }
     const platformBps = this.getPlatformRoyaltyBps();
