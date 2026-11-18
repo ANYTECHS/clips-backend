@@ -7,6 +7,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsStellarTransactionHash } from '../../common/validators/decorators';
 
 export class CreateStellarSubscriptionDto {
   @ApiProperty({ example: 'pro', description: 'Subscription plan identifier' })
@@ -107,4 +108,21 @@ export class StellarPaymentIntentDto {
     example: 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5',
   })
   assetIssuer?: string | null;
+}
+
+export class VerifyStellarPaymentQueryDto {
+  @ApiProperty({
+    description: 'Payment intent ID to verify',
+    example: 'pi_01HXYZ',
+  })
+  @IsString()
+  @IsNotEmpty()
+  paymentIntentId: string;
+
+  @ApiProperty({
+    description: 'Stellar transaction hash — 64 lowercase hex characters',
+    example: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
+  })
+  @IsStellarTransactionHash()
+  transactionHash: string;
 }
