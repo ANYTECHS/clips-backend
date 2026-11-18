@@ -12,6 +12,7 @@ import {
 } from '@nestjs/swagger';
 import { ClipsService } from '../clips/clips.service';
 import { Auth } from '../auth/decorators/auth.decorator';
+import { ParsePositiveIntPipe } from '../common/pipes';
 
 @ApiTags('Videos')
 @ApiBadRequestResponse({ description: 'Invalid request parameters' })
@@ -40,7 +41,7 @@ export class VideosController {
     summary: 'Cancel video processing',
     description: 'Cancels ongoing clip generation for a video',
   })
-  @ApiParam({ name: 'id', description: 'Video ID' })
+  @ApiParam({ name: 'id', description: 'Positive integer video ID', type: Number, example: 42 })
   @ApiResponse({
     status: 200,
     description: 'Video processing cancelled',
@@ -52,8 +53,8 @@ export class VideosController {
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 404, description: 'Video not found' })
-  async cancel(@Param('id') id: string, @Req() req: any) {
+  async cancel(@Param('id', ParsePositiveIntPipe) id: number, @Req() req: any) {
     const userId = Number(req.user?.id ?? 0);
-    return this.clipsService.cancelVideo(id, userId);
+    return this.clipsService.cancelVideo(String(id), userId);
   }
 }
