@@ -9,6 +9,20 @@ import {
 
 export { CLIP_ROYALTY_BPS_MAX };
 
+// Array validation factories and standalone duplicate-rejection decorator.
+export {
+  IsIdArray,
+  IsStringArray,
+  IsNestedArray,
+  NoDuplicates,
+} from './array-validators';
+export type {
+  IdArrayOptions,
+  StringArrayOptions,
+  NestedArrayOptions,
+  ArrayFieldOptions,
+} from './array-validators';
+
 export function IsValidPlatform(
   validationOptions?: ValidationOptions,
 ): PropertyDecorator {
