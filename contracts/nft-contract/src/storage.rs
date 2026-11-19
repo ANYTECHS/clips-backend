@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env, Map, Vec};
+use soroban_sdk::{Address, BytesN, Env, String, Vec};
 use soroban_sdk::contracttype;
 use soroban_sdk::Symbol;
 
@@ -104,4 +104,79 @@ pub fn set_token_metadata(env: &Env, token_id: u64, metadata: &crate::ClipMetada
 
 pub fn get_token_metadata(env: &Env, token_id: u64) -> Option<crate::ClipMetadata> {
     env.storage().persistent().get(&(token_id, Symbol::new(env, "metadata")))
+}
+
+const MINT_SIGNER_KEY: &str = "mint_signer";
+const MINT_COOLDOWN_KEY: &str = "mint_cooldown";
+
+pub fn set_mint_signer(env: &Env, key: &BytesN<32>) {
+    env.storage().instance().set(&Symbol::new(env, MINT_SIGNER_KEY), key);
+}
+
+pub fn get_mint_signer(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&Symbol::new(env, MINT_SIGNER_KEY))
+}
+
+pub fn is_nonce_used(env: &Env, nonce: u64) -> bool {
+    env.storage().persistent().has(&(Symbol::new(env, "nonce"), nonce))
+}
+
+pub fn set_nonce_used(env: &Env, nonce: u64) {
+    env.storage().persistent().set(&(Symbol::new(env, "nonce"), nonce), &true);
+}
+
+pub fn is_clip_minted(env: &Env, clip_id: &String) -> bool {
+    env.storage().persistent().has(&(Symbol::new(env, "clip"), clip_id.clone()))
+}
+
+pub fn set_clip_minted(env: &Env, clip_id: &String) {
+    env.storage().persistent().set(&(Symbol::new(env, "clip"), clip_id.clone()), &true);
+}
+
+pub fn set_mint_cooldown(env: &Env, seconds: u64) {
+    env.storage().instance().set(&Symbol::new(env, MINT_COOLDOWN_KEY), &seconds);
+}
+
+pub fn get_mint_cooldown(env: &Env) -> u64 {
+    env.storage().instance().get(&Symbol::new(env, MINT_COOLDOWN_KEY)).unwrap_or(0)
+}
+
+pub fn set_last_mint(env: &Env, wallet: &Address, ts: u64) {
+    env.storage().persistent().set(&(Symbol::new(env, "last_mint"), wallet.clone()), &ts);
+}
+
+pub fn get_last_mint(env: &Env, wallet: &Address) -> Option<u64> {
+    env.storage().persistent().get(&(Symbol::new(env, "last_mint"), wallet.clone()))
+}
+
+fn operators_key(env: &Env, owner: &Address) -> (Symbol, Address) {
+    (Symbol::new(env, "operators"), owner.clone())
+}
+
+pub fn get_operators(env: &Env, owner: &Address) -> Vec<Address> {
+    env.storage().persistent().get(&operators_key(env, owner)).unwrap_or(Vec::new(env))
+}
+
+pub fn is_operator(env: &Env, owner: &Address, operator: &Address) -> bool {
+    get_operators(env, owner).contains(operator)
+}
+
+pub fn add_operator(env: &Env, owner: &Address, operator: &Address) {
+    let mut ops = get_operators(env, owner);
+    if !ops.contains(operator) {
+        ops.push_back(operator.clone());
+        env.storage().persistent().set(&operators_key(env, owner), &ops);
+    }
+}
+
+pub fn remove_operator(env: &Env, owner: &Address, operator: &Address) {
+    let mut ops = get_operators(env, owner);
+    if let Some(i) = ops.first_index_of(operator) {
+        ops.remove(i);
+        env.storage().persistent().set(&operators_key(env, owner), &ops);
+    }
+}
+
+pub fn clear_operators(env: &Env, owner: &Address) {
+    env.storage().persistent().remove(&operators_key(env, owner));
 }

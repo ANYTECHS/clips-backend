@@ -1,3 +1,5 @@
+import { MintAuthorizationService } from './mint-authorization.service';
+import { NftApprovalsController } from './nft-approvals.controller';
 import { Module } from '@nestjs/common';
 import { IpfsUploadModule } from './ipfs-upload.module';
 import { NftOwnershipModule } from './nft-ownership.module';
@@ -39,8 +41,10 @@ import { RedisModule } from '../redis/redis.module';
     NftMintGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
+    MintAuthorizationService,
   ],
   controllers: [
+    NftApprovalsController,
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,
