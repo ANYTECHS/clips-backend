@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Body,
   Req,
   HttpCode,
   HttpStatus,
@@ -13,10 +15,13 @@ import {
   ApiBearerAuth,
   ApiUnauthorizedResponse,
   ApiConflictResponse,
+  ApiBadRequestResponse,
+  ApiBody,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @ApiTags('users')
 @ApiBearerAuth('access-token')
@@ -36,6 +41,18 @@ export class UsersController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMe(@Req() req: any) {
     return this.usersService.getMe(req.user.userId);
+  }
+
+  @Patch('me')
+  @ApiOperation({ summary: 'Update current user profile (partial update)' })
+  @ApiBody({ type: UpdateProfileDto })
+  @ApiResponse({ status: 200, description: 'Updated user profile' })
+  @ApiBadRequestResponse({
+    description: 'Invalid profile data or unsupported fields',
+  })
+  @ApiConflictResponse({ description: 'Username already taken' })
+  async updateMe(@Req() req: any, @Body() dto: UpdateProfileDto) {
+    return this.usersService.updateProfile(req.user.userId, dto);
   }
 
   @Post('wallet/create')

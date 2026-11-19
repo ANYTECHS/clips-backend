@@ -63,7 +63,7 @@ pub fn get_owner_tokens(env: &Env, owner: &Address) -> Vec<u64> {
 
 pub fn increment_total_supply(env: &Env) {
     let current = get_total_supply(env);
-    env.storage().instance().set(&Symbol::new(env, TOTAL_SUPPLY_KEY), &(current + 1));
+    env.storage().instance().set(&Symbol::new(env, TOTAL_SUPPLY_KEY), &current.checked_add(1).expect("total supply overflow"));
 }
 
 pub fn get_total_supply(env: &Env) -> u64 {

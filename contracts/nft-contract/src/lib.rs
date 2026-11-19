@@ -47,18 +47,29 @@ pub enum Error {
     InvalidTokenId = 6,
     /// Royalty value is outside the valid 0–10 000 BPS range.
     InvalidRoyaltyBps = 7,
+    /// clip_id or content_uri is empty / content_uri is too long.
+    InvalidMetadata = 8,
+    /// `from` and `to` are the same address.
+    InvalidRecipient = 9,
 }
+
+/// Maximum accepted length for `content_uri` (bytes).
+const MAX_URI_LEN: u32 = 512;
 
 #[contractimpl]
 impl ClipsNftContract {
+    /// One-time initialization. `admin` must authorize so the contract
+    /// cannot be front-run-initialized with an arbitrary admin.
     pub fn initialize(env: Env, admin: Address) -> Result<(), Error> {
         if storage::has_admin(&env) {
             return Err(Error::AlreadyInitialized);
         }
+        admin.require_auth();
         storage::set_admin(&env, &admin);
         Ok(())
     }
 
+    /// Mint a new NFT. Admin (backend signer) authorization required.
     pub fn mint(
         env: Env,
         to: Address,
@@ -70,8 +81,13 @@ impl ClipsNftContract {
         let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
+        // Double-mint prevention.
         if storage::has_token(&env, token_id) {
             return Err(Error::InvalidTokenId);
+        }
+        // Basic metadata/URI validation.
+        if clip_id.len() == 0 || content_uri.len() == 0 || content_uri.len() > MAX_URI_LEN {
+            return Err(Error::InvalidMetadata);
         }
 
         let creator = to.clone();
@@ -94,6 +110,7 @@ impl ClipsNftContract {
         Ok(())
     }
 
+    /// Owner-initiated transfer. Clears any outstanding approval.
     pub fn transfer(
         env: Env,
         from: Address,
@@ -101,6 +118,9 @@ impl ClipsNftContract {
         token_id: u64,
     ) -> Result<(), Error> {
         from.require_auth();
+        if from == to {
+            return Err(Error::InvalidRecipient);
+        }
 
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
 
@@ -119,10 +139,15 @@ impl ClipsNftContract {
         updated_token.owner = to.clone();
         storage::set_token(&env, token_id, &updated_token);
 
+        // Revoke approval so a previous spender cannot move the token
+        // away from the new owner.
+        storage::remove_approval(&env, token_id);
+
         events::emit_transfer(&env, &from, &to, token_id);
         Ok(())
     }
 
+    /// Spender (approved address or owner) transfer. Clears approval.
     pub fn transfer_from(
         env: Env,
         spender: Address,
@@ -131,6 +156,9 @@ impl ClipsNftContract {
         token_id: u64,
     ) -> Result<(), Error> {
         spender.require_auth();
+        if from == to {
+            return Err(Error::InvalidRecipient);
+        }
 
         let token_data = storage::get_token(&env, token_id).ok_or(Error::TokenNotFound)?;
 

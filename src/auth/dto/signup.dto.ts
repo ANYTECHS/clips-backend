@@ -1,5 +1,11 @@
 import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsValidPassword,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_REQUIREMENTS,
+} from '../validators/password-policy';
 
 export class SignupDto {
   @ApiProperty({
@@ -21,13 +27,13 @@ export class SignupDto {
   email: string;
 
   @ApiProperty({
-    description: 'User password (min 8 characters)',
+    description: `User password: ${PASSWORD_REQUIREMENTS}. Never returned in responses.`,
     example: 'SecurePass123!',
-    minLength: 8,
-    maxLength: 32,
+    minLength: PASSWORD_MIN_LENGTH,
+    maxLength: PASSWORD_MAX_LENGTH,
+    format: 'password',
+    writeOnly: true,
   })
-  @IsString()
-  @MinLength(8, { message: 'Password is too short (min 8 characters)' })
-  @MaxLength(32, { message: 'Password is too long (max 32 characters)' })
+  @IsValidPassword()
   password: string;
 }

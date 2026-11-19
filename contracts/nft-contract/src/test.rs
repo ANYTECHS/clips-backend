@@ -5,6 +5,7 @@ use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 fn setup_env() -> (Env, Address, ClipsNftContractClient<'static>) {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register_contract(None, ClipsNftContract);
     let client = ClipsNftContractClient::new(&env, &contract_id);
     (env, contract_id, client)
