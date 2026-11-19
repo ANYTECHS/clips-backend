@@ -38,6 +38,7 @@ import { NftCollectionController } from './nft-collection.controller';
 import { NftMintStatusService } from './nft-mint-status.service';
 import { NftStandardQueriesService } from './nft-standard-queries.service';
 import { NftStandardQueriesController } from './nft-standard-queries.controller';
+import { SorobanFeeEstimationService } from './soroban-fee-estimation.service';
 import { ClipsModule } from '../clips/clips.module';
 
 @Module({
@@ -76,6 +77,7 @@ import { ClipsModule } from '../clips/clips.module';
     NftMintStatusService,
     NftCollectionService,
     NftStandardQueriesService,
+    SorobanFeeEstimationService,
   ],
   controllers: [
     NftController,
@@ -110,6 +112,7 @@ import { ClipsModule } from '../clips/clips.module';
     NftMintStatusService,
     NftCollectionService,
     NftStandardQueriesService,
+    SorobanFeeEstimationService,
   ],
 })
 export class NftModule {}

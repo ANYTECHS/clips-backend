@@ -13,7 +13,10 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { NftMetadataService } from '../nft/nft-metadata.service';
+import {
+  collectClipPlatforms,
+  NftMetadataService,
+} from '../nft/nft-metadata.service';
 import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { StellarService } from '../stellar/stellar.service';
 import { NftConfig } from '../nft/nft.config';
@@ -58,9 +61,6 @@ export class NftMintService {
     private readonly nftConfig: NftConfig,
   ) {}
 
-  async uploadMetadataToIPFS(
-    clipId: number,
-    collectionId = DEFAULT_NFT_COLLECTION_ID,
   // ──────────────────────────────────────────────────────────────────────────
   // Issue #748 — Upload clip metadata to IPFS
   // ──────────────────────────────────────────────────────────────────────────
@@ -90,13 +90,15 @@ export class NftMintService {
    */
   async uploadMetadataToIPFS(
     clipId: number,
-    collectionId = DEFAULT_NFT_COLLECTION_ID,
     collectionId: string = DEFAULT_NFT_COLLECTION_ID,
   ): Promise<UploadMetadataResult> {
     const collection = await this.requireCollection(collectionId);
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
-      include: { video: { select: { userId: true } } },
+      include: {
+        video: { select: { userId: true } },
+        clipPosts: { select: { platform: true } },
+      },
     });
 
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
@@ -132,11 +134,12 @@ export class NftMintService {
       viralityScore: clip.viralityScore,
       createdAt: clip.createdAt,
       royaltyBps: clip.royaltyBps ?? 1000,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
       collection: {
-        collectionId: clip.collection.collectionId,
-        name: clip.collection.name,
-        type: clip.collection.type,
-        metadata: clip.collection.metadata as Record<string, unknown>,
+        collectionId: collection.collectionId,
+        name: collection.name,
+        type: collection.type,
+        metadata: collection.metadata as Record<string, unknown>,
       },
     });
     // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
@@ -159,17 +162,6 @@ export class NftMintService {
       },
     });
     const cid = metadataUri.replace(/^ipfs:\/\//, '');
-
-    await this.prisma.clip.update({
-      where: { id: clipId },
-      data: {
-        metadataUri,
-        collectionId,
-        ...(collection.royaltyBps !== null
-          ? { royaltyBps: collection.royaltyBps }
-          : {}),
-      },
-    });
 
     const cid = metadataUri.replace(/^ipfs:\/\//, '');
     this.logger.log(
@@ -351,8 +343,6 @@ export class NftMintService {
   ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
     const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
-    if (clip.mintAddress) {
-      throw new BadRequestException(`Clip ${clipId} is already minted`);
     if (clip.mintAddress || clip.nftStatus === 'minted')
       throw new BadRequestException(`Clip ${clipId} already minted`);
     if (
@@ -605,4 +595,3 @@ export class NftMintService {
     ).toString('base64');
   }
 }
-

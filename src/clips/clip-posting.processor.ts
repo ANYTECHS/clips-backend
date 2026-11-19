@@ -9,6 +9,7 @@ import { MetricsService } from '../metrics/metrics.service';
 import { CLIP_POSTING_QUEUE, type ClipPostingJob } from './clip-posting.queue';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { handleFailedEvent } from '../queue/processor-error.handler';
 
 /**
  * BullMQ processor for clip-posting jobs.
@@ -174,21 +175,8 @@ export class ClipPostingProcessor extends WorkerHost implements OnModuleInit {
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ClipPostingJob>, error: Error): void {
-    const isFinalAttempt = job.attemptsMade >= (job.opts.attempts ?? 1);
-
-    if (isFinalAttempt) {
-      this.logger.error(
-        `[posting] job ${job.id} exhausted all attempts — ` +
-          `clipId=${job.data.clipId} reason: ${error.message}`,
-      );
-      this.metricsService.recordJobFailure(CLIP_POSTING_QUEUE, 'final_failure');
-    } else {
-      this.logger.warn(
-        `[posting] job ${job.id} will be retried — ` +
-          `attempt ${job.attemptsMade}/${job.opts.attempts ?? 1} ` +
-          `reason: ${error.message}`,
-      );
-    }
+    // Standardized retry vs final logging + final_failure metric (Issue #1235).
+    handleFailedEvent(this.logger, this.metricsService, CLIP_POSTING_QUEUE, job, error, 5000);
   }
 
   @OnWorkerEvent('completed')

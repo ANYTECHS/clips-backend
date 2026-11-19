@@ -1,4 +1,15 @@
-use soroban_sdk::contracterror;
+use soroban_sdk::{contracterror, contracttype, Address, String};
+
+/// Read-only summary of the deployed contract's public metadata.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractInfo {
+    pub name: String,
+    pub symbol: String,
+    pub version: String,
+    pub owner: Address,
+    pub platform_fee: u32,
+}
 
 /// Response type for NFT metadata
 #[derive(Clone, Debug)]

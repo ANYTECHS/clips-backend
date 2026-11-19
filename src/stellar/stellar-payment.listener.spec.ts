@@ -21,10 +21,14 @@ function makeConfig(overrides: Partial<StellarConfig> = {}): StellarConfig {
 const mockPrisma = {
   subscription: {
     findFirst: jest.fn(),
-    update: jest.fn(),
   },
-  payout: { create: jest.fn() },
   $transaction: jest.fn(),
+};
+
+const transactionClient = {
+  subscription: { updateMany: jest.fn() },
+  payout: { create: jest.fn() },
+  subscriptionRevenue: { create: jest.fn() },
 };
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -34,6 +38,10 @@ describe('StellarPaymentListener', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.$transaction.mockImplementation((callback) =>
+      callback(transactionClient),
+    );
+    transactionClient.subscription.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -119,14 +127,33 @@ describe('StellarPaymentListener', () => {
         status: 'pending',
         stellarMemo: 'SUB-1',
       });
-      mockPrisma.$transaction.mockResolvedValue(undefined);
-
       await listener.handlePaymentRecord({ ...baseRecord, amount: '15' });
 
       expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-      // Verify the two operations passed to $transaction
-      const ops = mockPrisma.$transaction.mock.calls[0][0];
-      expect(ops).toHaveLength(2);
+      expect(transactionClient.subscription.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 1, status: 'pending', stellarTxHash: null },
+        }),
+      );
+      expect(transactionClient.payout.create).toHaveBeenCalledTimes(1);
+      expect(transactionClient.subscriptionRevenue.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not create payment records when another delivery claimed the subscription', async () => {
+      jest.spyOn(listener as any, 'fetchMemo').mockResolvedValue('SUB-1');
+      mockPrisma.subscription.findFirst.mockResolvedValue({
+        id: 1,
+        userId: 42,
+        plan: 'pro',
+        status: 'pending',
+        stellarMemo: 'SUB-1',
+      });
+      transactionClient.subscription.updateMany.mockResolvedValue({ count: 0 });
+
+      await listener.handlePaymentRecord({ ...baseRecord, amount: '15' });
+
+      expect(transactionClient.payout.create).not.toHaveBeenCalled();
+      expect(transactionClient.subscriptionRevenue.create).not.toHaveBeenCalled();
     });
   });
 

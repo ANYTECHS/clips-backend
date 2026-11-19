@@ -42,9 +42,7 @@ import {
   PayoutRequestResponseDto,
   SplitPayoutRequestResponseDto,
 } from './dto/payout-request-response.dto';
-import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
-import { OnChainStatusResponseDto } from './dto/on-chain-status.dto';
-import { PayoutReceiptDto } from './dto/receipt-responses.dto';
+
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
 import { FeeService } from './fee.service';
@@ -294,17 +292,13 @@ export class PayoutsController {
 
   @Post('request')
   @ApiOperation({
-    summary: 'Request a payout (single or split destinations)',
+    summary: 'Request a payout with specified amount and method (single or split)',
     description:
-      'Initiates a creator payout. Requires JWT. The requested amount must fall ' +
-      'within the configured minimum and maximum payout limits for the currency ' +
-      '(defaults: MIN_PAYOUT_USD=5, MAX_PAYOUT_USD=10000; override with ' +
-      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON).',
       'Initiates a creator payout. Requires JWT. Validates amount, currency, and method; ' +
-      'checks available balance and the minimum payout threshold (default 5 USD equivalent). ' +
+      'checks available balance and the minimum and maximum payout thresholds (default 5 USD equivalent). ' +
       'Optionally accepts a `destinations` array to split the payout between fiat and Stellar ' +
-      '(percentages must sum to 100). Creates one or more Payout rows with status `pending` ' +
-      'inside a database transaction. Duplicate open requests are rejected.',
+      '(percentages must sum to 100). Creates one or more Payout rows with initial status ' +
+      'inside a database transaction. Duplicate open requests are rejected with 409 Conflict.',
   })
   @ApiBody({
     type: CreatePayoutDto,
@@ -313,7 +307,7 @@ export class PayoutsController {
         summary: 'Single Stellar payout',
         value: { amount: 50, currency: 'USD', method: 'stellar' },
       },
-      fiat: {
+      fiatSingle: {
         summary: 'Single fiat payout',
         value: { amount: 75, currency: 'USD', method: 'fiat' },
       },
@@ -328,7 +322,7 @@ export class PayoutsController {
           ],
         },
       },
-      fiat: {
+      bankTransfer: {
         summary: 'Bank transfer payout request',
         value: { amount: 250, currency: 'USD', method: 'fiat' },
       },
@@ -360,56 +354,8 @@ export class PayoutsController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid request, insufficient balance, or amount outside min/max payout limits',
-    schema: {
-      examples: {
-        belowMinimum: {
-          summary: 'Below minimum payout',
-          value: {
-            statusCode: 400,
-            message: 'Minimum payout for USD is 5. Requested amount: 3.',
-            error: 'Bad Request',
-          },
-        },
-        aboveMaximum: {
-          summary: 'Above maximum payout',
-          value: {
-            statusCode: 400,
-            message: 'Maximum payout for USD is 10000. Requested amount: 15000.',
-      'Invalid request, insufficient balance, invalid split, or amount below the minimum payout threshold',
-    schema: {
-      examples: {
-        validation: {
-          value: {
-            statusCode: 400,
-            message: ['Minimum payout for USD is 5. Requested amount: 3.'],
-            error: 'Bad Request',
-          },
-        },
-        insufficientBalance: {
-          value: {
-            statusCode: 400,
-            message: 'Insufficient balance. Available: 20 USD',
-            error: 'Bad Request',
-          },
-        },
-        invalidSplit: {
-          value: {
-            statusCode: 400,
-            message: 'Destination percentages must sum to 100. Received: 90',
-            error: 'Bad Request',
-          },
-        },
-      },
-    },
-  })
-  @ApiUnauthorizedResponse({
-    description: 'Unauthorized — missing or invalid bearer token',
-    schema: API_ERROR_SCHEMA,
-  })
-  @ApiConflictResponse({ description: 'Pending payout already exists' })
       'Request failed validation: malformed body, amount below the minimum or above the maximum payout, ' +
-      'insufficient balance, or no Stellar wallet / default payout method configured.',
+      'insufficient balance, invalid split destinations, or no Stellar wallet / default payout method configured.',
     content: {
       'application/json': {
         schema: validationErrorSchema,
@@ -434,6 +380,10 @@ export class PayoutsController {
             summary: 'Insufficient balance',
             ...payoutError(400, 'Bad Request', 'Insufficient balance. Available: 80 USD'),
           },
+          invalidSplit: {
+            summary: 'Invalid split percentages',
+            ...payoutError(400, 'Bad Request', 'Destination percentages must sum to 100. Received: 90'),
+          },
           noWallet: {
             summary: 'No Stellar wallet connected',
             ...payoutError(400, 'Bad Request', 'No active Stellar wallet found. Please connect a wallet first.'),
@@ -445,6 +395,10 @@ export class PayoutsController {
         },
       },
     },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — missing or invalid bearer token',
+    schema: API_ERROR_SCHEMA,
   })
   @ApiConflictResponse({
     description: 'The user already has an open payout (pending, pending_review, pending_approval, approved or processing)',
@@ -459,6 +413,7 @@ export class PayoutsController {
       },
     },
   })
+
   async requestPayout(
     @Req() req: RequestWithUser,
     @Body() dto: CreatePayoutDto,
@@ -597,21 +552,6 @@ export class PayoutsController {
   @ApiQuery({
     name: 'status',
     required: false,
-    description:
-      'Filter by payout status. `cancelled` is accepted as an alias of `canceled`.',
-    enum: [
-      'pending',
-      'under_review',
-      'pending_review',
-      'pending_approval',
-      'approved',
-      'processing',
-      'completed',
-      'failed',
-      'rejected',
-      'canceled',
-      'cancelled',
-    ],
     description: `Filter by payout status.\n\n${PAYOUT_STATUS_SWAGGER_DESCRIPTION}`,
     enum: PAYOUT_STATUS_VALUES,
     example: 'completed',
@@ -760,17 +700,8 @@ export class PayoutsController {
   @ApiResponse({
     status: 200,
     description:
-      'On-chain verification result with onChainTxHash and confirmation status',
-    schema: {
-      example: {
-        id: 101,
-        amount: 100,
-        transactionId: 'abcd1234',
-        stellarXdr: 'AAAAAgAAAADh1...',
-        status: 'pending',
-      },
-    },
-    type: OnChainStatusResponseDto,
+      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
+    type: PayoutOnChainStatusResponseDto,
     schema: {
       type: 'object',
       required: ['id', 'status', 'onChainTxHash', 'confirmedAt', 'onChain'],
@@ -846,8 +777,6 @@ export class PayoutsController {
         details: 'Amount mismatch: expected 120, got 100',
       },
     },
-      'Real-time on-chain status including found/successful/confirmedAt from Horizon',
-    type: PayoutOnChainStatusResponseDto,
   })
   async getOnChainStatus(
     @Req() req: RequestWithUser,

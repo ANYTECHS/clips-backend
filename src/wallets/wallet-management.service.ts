@@ -12,7 +12,7 @@ import {
   SUPPORTED_CHAINS,
   isSupportedChain,
 } from './chain.constants';
-import { maskAddress } from './wallet.utils';
+import { maskAddress } from '@clipcash/shared';
 
 export interface DisconnectResult {
   message: string;

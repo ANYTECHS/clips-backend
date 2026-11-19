@@ -118,8 +118,12 @@ import {
   RoyaltyClaimHistoryQueryDto,
   RoyaltyClaimHistoryResponseDto,
 } from './dto/royalty-claim-history.dto';
+import { PrepareTransferDto, PrepareTransferResponseDto } from './dto/prepare-transfer.dto';
 import { NftMintService } from '../clips/nft-mint.service';
-import { NftMetadataService } from './nft-metadata.service';
+import {
+  collectClipPlatforms,
+  NftMetadataService,
+} from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
 import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
@@ -143,7 +147,7 @@ import { LoginGuard } from '../auth/guards/login.guard';
 import { ClaimRoyaltyService } from './claim-royalty.service';
 import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
-import { maskAddress } from '../wallets/wallet.utils';
+import { maskAddress } from '@clipcash/shared';
 import {
   UpdateRoyaltyRecipientDto,
   UpdateRoyaltyRecipientResponseDto,
@@ -1010,6 +1014,7 @@ export class NftController {
         name: 'Game-winning goal',
         description: 'ClipCash generated clip 42',
         image: 'https://cdn.example.com/thumbs/42.jpg',
+        thumbnail: 'https://cdn.example.com/thumbs/42.jpg',
         animation_url: 'https://cdn.example.com/clips/42.mp4',
         attributes: [
           { trait_type: 'Clip Duration', value: 34 },
@@ -1025,6 +1030,10 @@ export class NftController {
           percent: 10,
           recipient: 'GABF...KJ93XD',
         },
+        duration: 34,
+        viralityScore: 87,
+        createdAt: '2026-07-20T09:30:00.000Z',
+        platforms: ['tiktok', 'youtube'],
       },
     },
   })
@@ -1032,7 +1041,10 @@ export class NftController {
   async getMetadata(
     @Param('clipId', ParseIntPipe) clipId: number,
   ): Promise<NftMetadataResponseDto> {
-    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { clipPosts: { select: { platform: true } } },
+    });
     if (!clip) {
       throw new NotFoundException(`Clip with ID ${clipId} not found`);
     }
@@ -1067,6 +1079,7 @@ export class NftController {
       createdAt: clip.createdAt,
       royaltyBps,
       royaltyRecipient,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
     });
   }
 
@@ -1120,6 +1133,36 @@ export class NftController {
       royaltyBps,
     );
     return { salePrice: query.salePrice, royaltyBps, royaltyAmount };
+  }
+
+  /**
+   * POST /nfts/prepare-transfer
+   * Prepares a Soroban NFT transfer transaction with royalty enforcement.
+   * Calculates creator and platform royalties, verifies payment distribution,
+   * generates the RoyaltyPaid event payload, and returns XDR with royalty breakdown.
+   */
+  @Post('prepare-transfer')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ nftTransfer: { limit: 10, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Prepare an NFT transfer with royalty enforcement',
+    description:
+      'Overrides standard transfer logic to enforce automatic secondary sale royalty distribution. Calculates creator and platform royalties, emits the RoyaltyPaid event, and returns transaction XDR with complete royalty breakdown.',
+  })
+  @ApiBody({ type: PrepareTransferDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Transfer prepared successfully with royalty breakdown',
+    type: PrepareTransferResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Invalid addresses or sale price',
+  })
+  async prepareTransfer(
+    @Body() dto: PrepareTransferDto,
+  ): Promise<PrepareTransferResponseDto> {
+    return this.nftService.prepareTransferWithRoyalty(dto);
   }
 
   /**
@@ -2796,6 +2839,7 @@ export class NftController {
           name: 'My Viral Clip',
           description: 'A great moment from my latest video',
           image: 'https://cdn.example.com/thumbnail.jpg',
+          thumbnail: 'https://cdn.example.com/thumbnail.jpg',
           animation_url: 'https://cdn.example.com/clip.mp4',
           attributes: [
             { trait_type: 'Clip Duration', value: 30 },
@@ -2808,8 +2852,10 @@ export class NftController {
           seller_fee_basis_points: 1000,
           royalty: { bps: 1000, percent: 10, asset: 'native' },
           viralityScore: 85,
+          duration: 30,
           originalDuration: 30,
           createdAt: '2026-01-01T00:00:00.000Z',
+          platforms: ['tiktok'],
         },
       },
     },
@@ -2825,7 +2871,10 @@ export class NftController {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(clipId, userId);
 
-    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { clipPosts: { select: { platform: true } } },
+    });
     if (!clip) {
       throw new NotFoundException(`Clip ${clipId} not found`);
     }
@@ -2840,6 +2889,7 @@ export class NftController {
       viralityScore: clip.viralityScore,
       royaltyBps: clip.royaltyBps ?? 1000,
       createdAt: clip.createdAt,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
     };
 
     return this.nftMetadataService.buildPreview(clipData);

@@ -131,10 +131,6 @@ describe('PayoutsService', () => {
           useValue: mockPayoutReceiptService,
         },
         {
-          provide: EarningsService,
-          useValue: mockEarningsService,
-        },
-        {
           provide: FeeService,
           useValue: mockFeeService,
         },
@@ -171,26 +167,10 @@ describe('PayoutsService', () => {
         },
         {
           provide: PayoutLimitsService,
-          useValue: {
-            getLimits: jest.fn().mockReturnValue({ min: 5, max: 10000 }),
-          },
+          useValue: mockPayoutLimitsService,
         },
-        {
-          provide: PayoutValidationService,
-          useValue: {
-            assertMinimumPayout: jest.fn().mockResolvedValue(undefined),
-            assertPayoutLimits: jest.fn(),
-          },
-        },
-        {
-          provide: PayoutProcessingService,
-          useValue: {
-            processPayout: jest.fn(),
-            batchProcessPayouts: jest.fn(),
-            pollPendingStellarPayouts: jest.fn(),
-            initiateStellarPayout: jest.fn(),
-          },
-        },
+        PayoutValidationService,
+        PayoutProcessingService,
         {
           provide: StellarPayoutVerificationService,
           useValue: {
@@ -203,8 +183,6 @@ describe('PayoutsService', () => {
             sendEmail: jest.fn().mockResolvedValue(undefined),
           },
         },
-        PayoutValidationService,
-        PayoutProcessingService,
       ],
     }).compile();
 

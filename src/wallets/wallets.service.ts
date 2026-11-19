@@ -4,7 +4,7 @@ import {
   WalletManagementService,
   DisconnectResult,
 } from './wallet-management.service';
-import { maskAddress } from './wallet.utils';
+import { maskAddress } from '@clipcash/shared';
 
 export type { DisconnectResult };
 

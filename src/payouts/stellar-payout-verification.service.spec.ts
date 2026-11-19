@@ -50,6 +50,22 @@ describe('StellarPayoutVerificationService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  it('distinguishes a missing transaction from an unavailable Horizon', async () => {
+    mockTransactionCall.mockRejectedValueOnce({ response: { status: 404 } });
+    await expect(
+      service.verifyPayoutTransaction('not-indexed-yet', {
+        throwOnNotFound: false,
+      }),
+    ).resolves.toMatchObject({ outcome: 'unknown', found: false });
+
+    mockTransactionCall.mockRejectedValueOnce(new Error('connection timeout'));
+    await expect(
+      service.verifyPayoutTransaction('temporarily-unavailable', {
+        throwOnNotFound: false,
+      }),
+    ).resolves.toMatchObject({ outcome: 'unavailable', found: false });
+  });
+
   it('returns failed when transaction is unsuccessful', async () => {
     mockTransactionCall.mockResolvedValue({
       successful: false,

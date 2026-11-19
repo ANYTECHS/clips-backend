@@ -8,6 +8,8 @@ import { PayoutValidationService } from './payout-validation.service';
 import { getQueueToken } from '@nestjs/bullmq';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { MAX_BULK_PAYOUT_BATCH_SIZE } from './payouts.constants';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 
 describe('PayoutProcessingService.batchProcessPayouts', () => {
   let service: PayoutProcessingService;
@@ -47,6 +49,11 @@ describe('PayoutProcessingService.batchProcessPayouts', () => {
           useValue: {
             assertMinimumPayout: jest.fn().mockResolvedValue(undefined),
           },
+        },
+        { provide: PayoutRetryStrategyService, useValue: {} },
+        {
+          provide: StellarPayoutVerificationService,
+          useValue: { verifyPayoutTransaction: jest.fn() },
         },
         {
           provide: getQueueToken(PAYOUT_RETRY_QUEUE),

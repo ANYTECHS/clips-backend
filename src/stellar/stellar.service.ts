@@ -54,11 +54,14 @@ export class StellarService {
 
     if (this.network === 'public') {
       this.rpcUrl = 'https://soroban-rpc.stellar.org';
-      this.horizonUrl = 'https://horizon.stellar.org';
+      this.horizonUrl =
+        process.env.STELLAR_HORIZON_URL ?? 'https://horizon.stellar.org';
       this.networkPassphrase = 'Public Global Stellar Network ; September 2015';
     } else {
       this.rpcUrl = 'https://soroban-testnet.stellar.org';
-      this.horizonUrl = 'https://horizon-testnet.stellar.org';
+      this.horizonUrl =
+        process.env.STELLAR_HORIZON_URL ??
+        'https://horizon-testnet.stellar.org';
       this.networkPassphrase = 'Test SDF Network ; September 2015';
     }
 

@@ -106,6 +106,20 @@ impl ClipCashNFT {
         get_platform_royalty_bps(&env).unwrap_or(1000) // Default 10%
     }
 
+    /// Return the contract's public metadata and current platform fee.
+    ///
+    /// `platform_fee` is reported in basis points and uses the platform
+    /// royalty configuration already stored by `initialize`.
+    pub fn contract_info(env: Env) -> ContractInfo {
+        ContractInfo {
+            name: soroban_sdk::String::from_str(&env, "ClipCash NFT"),
+            symbol: soroban_sdk::String::from_str(&env, "CLIP"),
+            version: soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION")),
+            owner: get_owner(&env).expect("Owner not initialized"),
+            platform_fee: get_platform_royalty_bps(&env).unwrap_or(1000),
+        }
+    }
+
     /// Update royalty configuration (owner only)
     ///
     /// # Arguments
@@ -176,7 +190,21 @@ mod tests {
 
     #[test]
     fn test_initialization() {
-        // Test will be implemented with Soroban test framework
-        // See tests/integration_test.rs for full test suite
+        let env = Env::default();
+        let contract_id = env.register(ClipCashNFT, ());
+        let client = ClipCashNFTClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+
+        client.initialize(&owner, &250, &500);
+
+        let info = client.contract_info();
+        assert_eq!(info.name, soroban_sdk::String::from_str(&env, "ClipCash NFT"));
+        assert_eq!(info.symbol, soroban_sdk::String::from_str(&env, "CLIP"));
+        assert_eq!(
+            info.version,
+            soroban_sdk::String::from_str(&env, env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(info.owner, owner);
+        assert_eq!(info.platform_fee, 500);
     }
 }

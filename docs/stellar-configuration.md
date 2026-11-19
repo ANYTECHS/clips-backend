@@ -161,6 +161,27 @@ Notes:
 - `ROYALTY_ASSET_CODE` defaults to `native` when not set.
 - `ROYALTY_ASSET_CONTRACT_ID` is required only when paying royalties in a custom Soroban asset contract.
 
+## 7b) Transaction configuration
+
+These variables control payout eligibility, limits, and webhook verification.
+They are transaction settings, not secrets (except `WEBHOOK_SECRET`, which must stay private).
+
+```env
+MIN_PAYOUT_USD=5
+MAX_PAYOUT_USD=10000
+PAYOUT_APPROVAL_THRESHOLD=500
+MIN_STELLAR_PAYOUT=5
+STELLAR_POLL_INTERVAL_MS=10000
+WEBHOOK_SECRET="REPLACE_WITH_WEBHOOK_SECRET_MIN_32_CHARS"
+```
+
+Notes:
+- `MIN_PAYOUT_USD` / `MAX_PAYOUT_USD` bound each payout in USD-equivalent.
+- `PAYOUT_APPROVAL_THRESHOLD` — payouts at or above this amount require manual admin approval.
+- `MIN_STELLAR_PAYOUT` is a legacy alias for the minimum (kept for backwards compatibility).
+- `STELLAR_POLL_INTERVAL_MS` controls Horizon polling when streaming is unavailable.
+- `WEBHOOK_SECRET` is an HMAC-SHA256 secret for Stellar webhooks — never commit a real value, never show it in Swagger examples.
+
 ## 8) Production vs testnet guidance
 
 ### Testnet configuration example
@@ -196,11 +217,15 @@ Use this configuration only in production with real addresses and a properly dep
 ## 9) APIs and flows affected by Stellar configuration
 
 The following API areas depend on Stellar configuration:
-- wallet balance and validation endpoints
-- payout initiation and confirmation flows
-- NFT mint creation and royalty queries
-- subscription payment verification and webhook processing
-- transaction status lookups against Horizon
+- wallet balance and validation endpoints (`GET /wallets`, `GET /wallets/validate`)
+- payout initiation and confirmation flows (`POST /payouts`, `POST /payouts/initiate-stellar`, `GET /payouts/:id/onchain-status`)
+- NFT mint creation and royalty queries (`POST /nft/mint`, `GET /nft/royalty`)
+- subscription payment verification and webhook processing (`POST /webhooks/stellar`)
+- transaction status lookups against Horizon (`GET /transactions/:id`)
+
+Network-specific behavior:
+- `testnet` endpoints return testnet Horizon/RPC data and accept Friendbot-funded addresses; never use mainnet addresses here.
+- `public` endpoints query mainnet Horizon/RPC and enforce real-asset validation; testnet contract IDs are rejected.
 
 These endpoints should not show real account secrets or signing keys in Swagger examples.
 
@@ -226,8 +251,14 @@ STELLAR_POLL_INTERVAL_MS=10000
 STELLAR_PLAN_BASIC_AMOUNT=5
 STELLAR_PLAN_PRO_AMOUNT=15
 STELLAR_PLAN_ELITE_AMOUNT=30
+MIN_PAYOUT_USD=5
+MAX_PAYOUT_USD=10000
+PAYOUT_APPROVAL_THRESHOLD=500
+WEBHOOK_SECRET="REPLACE_WITH_WEBHOOK_SECRET_MIN_32_CHARS"
 SOROBAN_RPC_URL="https://soroban-testnet.stellar.org"
 SOROBAN_NFT_CONTRACT_ID="CAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+ROYALTY_ASSET_CODE="native"
+ROYALTY_ASSET_CONTRACT_ID=""
 STELLAR_PLATFORM_SECRET="REPLACE_WITH_PLATFORM_SECRET"
 ```
 

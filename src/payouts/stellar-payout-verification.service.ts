@@ -15,6 +15,7 @@ export type PayoutVerificationOutcome =
   | 'confirmed'
   | 'failed'
   | 'unknown'
+  | 'unavailable'
   | 'conflict';
 
 export interface PayoutVerificationResult {
@@ -97,7 +98,7 @@ export class StellarPayoutVerificationService {
       this.logger.warn(
         `Horizon lookup failed for ${txHash}: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return { outcome: 'unknown', found: false };
+      return { outcome: 'unavailable', found: false };
     }
 
     const confirmedAt = tx.created_at ? new Date(tx.created_at) : undefined;

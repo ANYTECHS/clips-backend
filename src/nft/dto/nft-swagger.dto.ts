@@ -353,6 +353,12 @@ export class NftMetadataResponseDto {
   @ApiProperty({ example: 'https://cdn.example.com/thumbs/42.jpg' })
   image: string;
 
+  @ApiProperty({
+    example: 'https://cdn.example.com/thumbs/42.jpg',
+    description: 'Thumbnail image URI for the clip',
+  })
+  thumbnail: string;
+
   @ApiProperty({ example: 'https://cdn.example.com/clips/42.mp4' })
   animation_url: string;
 
@@ -396,8 +402,8 @@ export class NftMetadataResponseDto {
   @ApiProperty({ example: 34, description: 'Clip duration in seconds' })
   duration: number;
 
-  @ApiPropertyOptional({ example: 87, description: 'Clip virality score' })
-  viralityScore?: number;
+  @ApiProperty({ example: 87, description: 'Clip virality score' })
+  viralityScore: number;
 
   @ApiPropertyOptional({
     example: 34,
@@ -405,11 +411,11 @@ export class NftMetadataResponseDto {
   })
   originalDuration?: number;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     example: '2026-07-20T09:30:00.000Z',
     description: 'Creation timestamp',
   })
-  createdAt?: string;
+  createdAt: string;
 
   @ApiProperty({
     example: ['tiktok', 'youtube'],

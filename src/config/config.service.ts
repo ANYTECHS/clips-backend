@@ -156,8 +156,15 @@ export class ConfigService {
   /**
    * Hard ceiling for royalty values accepted in DTOs / API requests.
    * Prevents accidental or malicious over-royalty configuration.
+   * Env var: MAX_ROYALTY_BPS.
    */
-  readonly maxRoyaltyBps = 1500;
+  readonly maxRoyaltyBps = parseInt(process.env.MAX_ROYALTY_BPS ?? '1500', 10);
+
+  /**
+   * Minimum royalty in basis points allowed for user input.
+   * Env var: MIN_ROYALTY_BPS.
+   */
+  readonly minRoyaltyBps = parseInt(process.env.MIN_ROYALTY_BPS ?? '0', 10);
 
   /** Minimum seconds between successful NFT mints from one Stellar wallet. */
   readonly nftMintWalletCooldownSeconds = Math.max(
@@ -168,8 +175,24 @@ export class ConfigService {
   /**
    * Default royalty in bps applied when a creator does not specify one
    * (mirrors the DTO default for consistency).
+   * Env var: DEFAULT_ROYALTY_BPS.
    */
-  readonly defaultRoyaltyBps = 1000;
+  readonly defaultRoyaltyBps = parseInt(process.env.DEFAULT_ROYALTY_BPS ?? '1000', 10);
+
+  /**
+   * Default NFT collection ID used when creating new NFT collections.
+   * Env var: DEFAULT_NFT_COLLECTION_ID.
+   */
+  readonly defaultNftCollectionId = process.env.DEFAULT_NFT_COLLECTION_ID ?? 'viral-clips';
+
+  /**
+   * List of webhook platforms supported for event notifications.
+   * Subset of supportedPlatforms that have webhook integrations.
+   * Env var: WEBHOOK_PLATFORMS (comma-separated).
+   */
+  readonly webhookPlatforms: ReadonlyArray<string> = (
+    process.env.WEBHOOK_PLATFORMS ?? 'tiktok,youtube,instagram'
+  ).split(',').map(p => p.trim()).filter(Boolean);
 
   // ---------------------------------------------------------------------------
   // Stellar / Soroban
@@ -287,15 +310,35 @@ export class ConfigService {
       );
     }
 
-    // Validate royalty BPS values
-    if (!Number.isInteger(this.creatorRoyaltyBps) || this.creatorRoyaltyBps < 0 || this.creatorRoyaltyBps > this.maxRoyaltyBps) {
+    // Validate royalty BPS configuration
+    if (!Number.isInteger(this.maxRoyaltyBps) || this.maxRoyaltyBps <= 0) {
       throw new Error(
-        `Invalid CREATOR_ROYALTY_BPS: "${process.env.CREATOR_ROYALTY_BPS}" — must be an integer between 0 and ${this.maxRoyaltyBps}`,
+        `Invalid MAX_ROYALTY_BPS: "${process.env.MAX_ROYALTY_BPS}" — must be a positive integer`,
       );
     }
-    if (!Number.isInteger(this.platformRoyaltyBps) || this.platformRoyaltyBps < 0 || this.platformRoyaltyBps > this.maxRoyaltyBps) {
+    if (!Number.isInteger(this.minRoyaltyBps) || this.minRoyaltyBps < 0) {
       throw new Error(
-        `Invalid PLATFORM_ROYALTY_BPS: "${process.env.PLATFORM_ROYALTY_BPS}" — must be an integer between 0 and ${this.maxRoyaltyBps}`,
+        `Invalid MIN_ROYALTY_BPS: "${process.env.MIN_ROYALTY_BPS}" — must be a non-negative integer`,
+      );
+    }
+    if (this.minRoyaltyBps > this.maxRoyaltyBps) {
+      throw new Error(
+        `MIN_ROYALTY_BPS (${this.minRoyaltyBps}) must not exceed MAX_ROYALTY_BPS (${this.maxRoyaltyBps})`,
+      );
+    }
+    if (!Number.isInteger(this.creatorRoyaltyBps) || this.creatorRoyaltyBps < this.minRoyaltyBps || this.creatorRoyaltyBps > this.maxRoyaltyBps) {
+      throw new Error(
+        `Invalid CREATOR_ROYALTY_BPS: "${process.env.CREATOR_ROYALTY_BPS}" — must be an integer between ${this.minRoyaltyBps} and ${this.maxRoyaltyBps}`,
+      );
+    }
+    if (!Number.isInteger(this.platformRoyaltyBps) || this.platformRoyaltyBps < this.minRoyaltyBps || this.platformRoyaltyBps > this.maxRoyaltyBps) {
+      throw new Error(
+        `Invalid PLATFORM_ROYALTY_BPS: "${process.env.PLATFORM_ROYALTY_BPS}" — must be an integer between ${this.minRoyaltyBps} and ${this.maxRoyaltyBps}`,
+      );
+    }
+    if (!Number.isInteger(this.defaultRoyaltyBps) || this.defaultRoyaltyBps < this.minRoyaltyBps || this.defaultRoyaltyBps > this.maxRoyaltyBps) {
+      throw new Error(
+        `Invalid DEFAULT_ROYALTY_BPS: "${process.env.DEFAULT_ROYALTY_BPS}" — must be an integer between ${this.minRoyaltyBps} and ${this.maxRoyaltyBps}`,
       );
     }
 

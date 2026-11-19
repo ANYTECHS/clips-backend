@@ -3,6 +3,7 @@ import { StellarService } from './stellar.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
 import { ServiceUnavailableException } from '../common/exceptions/service-unavailable.exception';
+import { Horizon } from '@stellar/stellar-sdk';
 
 // Mock fetch for Horizon calls
 global.fetch = jest.fn();
@@ -175,6 +176,51 @@ describe('StellarService', () => {
     });
   });
 
+  describe('getWalletBalance', () => {
+    const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+    let loadAccountSpy: jest.SpyInstance;
+
+    afterEach(() => {
+      loadAccountSpy?.mockRestore();
+    });
+
+    it('queries Horizon and warns when the native balance is below 2 XLM', async () => {
+      loadAccountSpy = jest
+        .spyOn(Horizon.Server.prototype, 'loadAccount')
+        .mockResolvedValue({
+          balances: [{ asset_type: 'native', balance: '1.9999999' }],
+        } as never);
+
+      await expect(service.getWalletBalance(address)).resolves.toEqual({
+        balance: 1.9999999,
+        warning: true,
+      });
+      expect(loadAccountSpy).toHaveBeenCalledWith(address);
+    });
+
+    it('does not warn when the native balance is exactly 2 XLM', async () => {
+      loadAccountSpy = jest
+        .spyOn(Horizon.Server.prototype, 'loadAccount')
+        .mockResolvedValue({
+          balances: [{ asset_type: 'native', balance: '2.0000000' }],
+        } as never);
+
+      await expect(service.getWalletBalance(address)).resolves.toEqual({
+        balance: 2,
+        warning: false,
+      });
+    });
+
+    it('rejects invalid addresses without querying Horizon', async () => {
+      loadAccountSpy = jest.spyOn(Horizon.Server.prototype, 'loadAccount');
+
+      await expect(service.getWalletBalance('not-a-wallet')).rejects.toThrow(
+        'Invalid Stellar address format',
+      );
+      expect(loadAccountSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('circuit breaker state transitions', () => {
     it('should track circuit state changes', async () => {
       // Mock to fail initially then succeed
@@ -257,6 +303,7 @@ describe('StellarService', () => {
 
   describe('network configuration via env', () => {
     let originalEnv: string | undefined;
+    let originalHorizonUrl: string | undefined;
 
     const restoreEnv = () => {
       if (originalEnv === undefined) {
@@ -264,10 +311,16 @@ describe('StellarService', () => {
       } else {
         process.env.STELLAR_NETWORK = originalEnv;
       }
+      if (originalHorizonUrl === undefined) {
+        delete process.env.STELLAR_HORIZON_URL;
+      } else {
+        process.env.STELLAR_HORIZON_URL = originalHorizonUrl;
+      }
     };
 
     beforeAll(() => {
       originalEnv = process.env.STELLAR_NETWORK;
+      originalHorizonUrl = process.env.STELLAR_HORIZON_URL;
     });
 
     afterEach(restoreEnv);
@@ -276,6 +329,7 @@ describe('StellarService', () => {
 
     it('should configure public mainnet when STELLAR_NETWORK is public', () => {
       process.env.STELLAR_NETWORK = 'public';
+      delete process.env.STELLAR_HORIZON_URL;
       const testService = new StellarService(circuitBreakerService);
       expect(testService.network).toBe('public');
       expect(testService.horizonUrl).toBe('https://horizon.stellar.org');
@@ -287,6 +341,7 @@ describe('StellarService', () => {
 
     it('should configure testnet when STELLAR_NETWORK is testnet', () => {
       process.env.STELLAR_NETWORK = 'testnet';
+      delete process.env.STELLAR_HORIZON_URL;
       const testService = new StellarService(circuitBreakerService);
       expect(testService.network).toBe('testnet');
       expect(testService.horizonUrl).toBe('https://horizon-testnet.stellar.org');
@@ -294,6 +349,15 @@ describe('StellarService', () => {
       expect(testService.networkPassphrase).toBe('Test SDF Network ; September 2015');
       expect(testService.isMainnet()).toBe(false);
       expect(testService.isTestnet()).toBe(true);
+    });
+
+    it('should use STELLAR_HORIZON_URL when configured', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      process.env.STELLAR_HORIZON_URL = 'https://custom-horizon.example';
+
+      expect(new StellarService(circuitBreakerService).horizonUrl).toBe(
+        'https://custom-horizon.example',
+      );
     });
 
     it('should accept STELLAR_NETWORK case-insensitively', () => {
@@ -321,4 +385,3 @@ describe('StellarService', () => {
     );
   });
 });
-

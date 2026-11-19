@@ -7,7 +7,7 @@ import {
 import * as nodemailer from 'nodemailer';
 import * as PDFDocument from 'pdfkit';
 import { PrismaService } from '../prisma/prisma.service';
-import { maskAddress } from '../shared/address';
+import { maskAddress } from '@clipcash/shared';
 
 export interface PayoutReceiptData {
   payoutId: number;

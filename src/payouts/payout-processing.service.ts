@@ -148,6 +148,10 @@ export class PayoutProcessingService {
 
     const sourceKeyPair = this.getPlatformKeypair();
     const server = new StellarSdk.Horizon.Server(this.stellarService.horizonUrl);
+    let submittedTxHash: string | undefined;
+    let internalTransactionId: string | undefined;
+    let trackingPersisted = false;
+    let onChainFailure = false;
 
     try {
       await this.prisma.payout.update({
@@ -167,9 +171,22 @@ export class PayoutProcessingService {
       );
 
       transaction.sign(sourceKeyPair);
+      internalTransactionId = transaction.hash().toString('hex');
 
       const submitResult = await server.submitTransaction(transaction);
       const txHash = submitResult.hash;
+      submittedTxHash = txHash;
+
+      await this.prisma.payout.update({
+        where: { id: payoutId },
+        data: {
+          status: PAYOUT_STATUSES.PROCESSING,
+          transactionId: internalTransactionId,
+          externalTransactionId: txHash,
+          onChainTxHash: txHash,
+        },
+      });
+      trackingPersisted = true;
 
       this.logger.log(`Verifying transaction ${txHash} for payout ${payoutId}`);
       const verification = await this.verifyTransaction(
@@ -178,7 +195,12 @@ export class PayoutProcessingService {
         payout.finalAmount ?? payout.amount,
       );
 
+      if (!verification.found) {
+        throw new Error(`Transaction ${txHash} is not yet available on Horizon`);
+      }
+
       if (!verification.successful) {
+        onChainFailure = true;
         await this.prisma.earningsAuditLog.create({
           data: {
             userId: payout.user.id,
@@ -202,11 +224,12 @@ export class PayoutProcessingService {
         where: { id: payoutId },
         data: {
           status: PAYOUT_STATUSES.COMPLETED,
-          transactionId: transaction.hash().toString('hex'),
+          transactionId: internalTransactionId,
           externalTransactionId: txHash,
           onChainTxHash: txHash,
           confirmedAt: confirmedTime,
           paidAt: confirmedTime,
+          failureReason: null,
         },
       });
 
@@ -220,7 +243,7 @@ export class PayoutProcessingService {
         feeAmount: completePayoutData.feeAmount ?? undefined,
         feePercentage: completePayoutData.feePercentage ?? undefined,
         finalAmount: completePayoutData.finalAmount ?? undefined,
-        transactionId: transaction.hash().toString('hex'),
+        transactionId: internalTransactionId,
         onChainTxHash: txHash,
         confirmedAt: confirmedTime,
         paidAt: confirmedTime,
@@ -232,12 +255,37 @@ export class PayoutProcessingService {
       return {
         id: payout.id,
         status: PAYOUT_STATUSES.COMPLETED,
-        transactionId: transaction.hash().toString('hex'),
+        transactionId: internalTransactionId,
         externalTransactionId: txHash,
         onChainTxHash: txHash,
       };
     } catch (error) {
       this.logger.error(`Stellar payout failed for ${payoutId}:`, error);
+
+      if (submittedTxHash && internalTransactionId && !onChainFailure) {
+        if (!trackingPersisted) {
+          await this.prisma.payout.update({
+            where: { id: payoutId },
+            data: {
+              status: PAYOUT_STATUSES.PROCESSING,
+              transactionId: internalTransactionId,
+              externalTransactionId: submittedTxHash,
+              onChainTxHash: submittedTxHash,
+            },
+          });
+        }
+
+        this.logger.warn(
+          `Payout ${payoutId} was submitted to Stellar and remains processing until Horizon confirms it (tx: ${submittedTxHash})`,
+        );
+        return {
+          id: payoutId,
+          status: PAYOUT_STATUSES.PROCESSING,
+          transactionId: internalTransactionId,
+          externalTransactionId: submittedTxHash,
+          onChainTxHash: submittedTxHash,
+        };
+      }
 
       const newRetryCount = payout.retryCount + 1;
       const failureReason = error instanceof Error ? error.message : String(error);
@@ -349,8 +397,10 @@ export class PayoutProcessingService {
     );
 
     for (const payoutId of uniqueIds) {
+      let submittedTxHash: string | undefined;
+      let internalTransactionId: string | undefined;
       try {
-        await this.prisma.$transaction(async (tx) => {
+        const payoutResult = await this.prisma.$transaction(async (tx) => {
           const payout = await tx.payout.findUnique({
             where: { id: payoutId },
             include: { wallet: true, user: true },
@@ -385,9 +435,21 @@ export class PayoutProcessingService {
           );
 
           transaction.sign(sourceKeyPair);
+          internalTransactionId = transaction.hash().toString('hex');
 
           const submitResult = await server.submitTransaction(transaction);
           const txHash = submitResult.hash;
+          submittedTxHash = txHash;
+
+          await tx.payout.update({
+            where: { id: payoutId },
+            data: {
+              status: PAYOUT_STATUSES.PROCESSING,
+              transactionId: internalTransactionId,
+              externalTransactionId: txHash,
+              onChainTxHash: txHash,
+            },
+          });
 
           this.logger.log(`Verifying transaction ${txHash} for batch payout ${payoutId}`);
           const verification = await this.verifyTransaction(
@@ -395,6 +457,10 @@ export class PayoutProcessingService {
             payout.wallet.address,
             payout.finalAmount ?? payout.amount,
           );
+
+          if (!verification.found) {
+            return { status: PAYOUT_STATUSES.PROCESSING };
+          }
 
           if (!verification.successful) {
             await tx.earningsAuditLog.create({
@@ -404,7 +470,15 @@ export class PayoutProcessingService {
                 actionType: 'payout_verification_failed',
               },
             });
-            throw new Error(`Transaction verification failed for hash ${txHash}`);
+            const failureReason = `Transaction verification failed for hash ${txHash}`;
+            await tx.payout.update({
+              where: { id: payoutId },
+              data: {
+                status: PAYOUT_STATUSES.FAILED,
+                failureReason,
+              },
+            });
+            return { status: PAYOUT_STATUSES.FAILED, error: failureReason };
           }
 
           await tx.earningsAuditLog.create({
@@ -421,9 +495,12 @@ export class PayoutProcessingService {
             where: { id: payoutId },
             data: {
               status: PAYOUT_STATUSES.COMPLETED,
-              transactionId: transaction.hash().toString('hex'),
+              transactionId: internalTransactionId,
+              externalTransactionId: txHash,
               onChainTxHash: txHash,
               confirmedAt: confirmedTime,
+              paidAt: confirmedTime,
+              failureReason: null,
             },
           });
 
@@ -437,7 +514,7 @@ export class PayoutProcessingService {
             feeAmount: payout.feeAmount ?? undefined,
             feePercentage: payout.feePercentage ?? undefined,
             finalAmount: payout.finalAmount ?? undefined,
-            transactionId: transaction.hash().toString('hex'),
+            transactionId: internalTransactionId,
             onChainTxHash: txHash,
             confirmedAt: confirmedTime,
             paidAt: confirmedTime,
@@ -445,12 +522,36 @@ export class PayoutProcessingService {
             recipientEmail: payout.user.email,
             walletAddress: wallet.address,
           });
+
+          return { status: PAYOUT_STATUSES.COMPLETED };
         });
 
-        results.push({ id: payoutId, status: PAYOUT_STATUSES.COMPLETED });
-        processed++;
+        results.push({ id: payoutId, ...payoutResult });
+        if (payoutResult.status === PAYOUT_STATUSES.FAILED) {
+          failed++;
+        } else {
+          processed++;
+        }
       } catch (error) {
         this.logger.error(`Batch payout failed for ${payoutId}:`, error);
+        if (submittedTxHash && internalTransactionId) {
+          await this.prisma.payout.update({
+            where: { id: payoutId },
+            data: {
+              status: PAYOUT_STATUSES.PROCESSING,
+              transactionId: internalTransactionId,
+              externalTransactionId: submittedTxHash,
+              onChainTxHash: submittedTxHash,
+            },
+          });
+          results.push({
+            id: payoutId,
+            status: PAYOUT_STATUSES.PROCESSING,
+          });
+          processed++;
+          continue;
+        }
+
         results.push({
           id: payoutId,
           status: PAYOUT_STATUSES.FAILED,
@@ -480,7 +581,21 @@ export class PayoutProcessingService {
         onChainTxHash: { not: null },
         confirmedAt: null,
       },
-      select: { id: true, onChainTxHash: true, retryCount: true, userId: true, amount: true },
+      select: {
+        id: true,
+        onChainTxHash: true,
+        confirmationPollCount: true,
+        userId: true,
+        amount: true,
+        finalAmount: true,
+        currency: true,
+        method: true,
+        feeAmount: true,
+        feePercentage: true,
+        transactionId: true,
+        user: { select: { email: true } },
+        wallet: { select: { address: true } },
+      },
     });
 
     if (pending.length === 0) return;
@@ -489,7 +604,24 @@ export class PayoutProcessingService {
 
     for (const payout of pending) {
       try {
-        await this.confirmOneStellarPayout(payout.id, payout.onChainTxHash!, payout.retryCount, payout.userId, payout.amount);
+        await this.confirmOneStellarPayout(
+          payout.id,
+          payout.onChainTxHash!,
+          payout.confirmationPollCount,
+          payout.userId,
+          payout.amount,
+          payout.wallet?.address,
+          payout.finalAmount ?? payout.amount,
+          {
+            currency: payout.currency,
+            method: payout.method,
+            feeAmount: payout.feeAmount,
+            feePercentage: payout.feePercentage,
+            transactionId: payout.transactionId,
+            recipientEmail: payout.user?.email ?? '',
+            walletAddress: payout.wallet?.address,
+          },
+        );
       } catch (error) {
         this.logger.error(
           `Confirmation poll failed for payout ${payout.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -504,11 +636,40 @@ export class PayoutProcessingService {
     currentPollCount: number,
     userId: number,
     amount: number,
+    expectedDestination?: string,
+    expectedAmount?: number,
+    receiptData?: {
+      currency: string;
+      method: string;
+      feeAmount: number | null;
+      feePercentage: number | null;
+      transactionId: string | null;
+      recipientEmail: string;
+      walletAddress?: string;
+    },
   ): Promise<void> {
-    const result = await this.stellarService.getTransactionStatus(txHash);
+    const result = await this.stellarPayoutVerification.verifyPayoutTransaction(
+      txHash,
+      {
+        expectedDestination,
+        expectedAmount,
+        throwOnNotFound: false,
+        throwOnConflict: false,
+      },
+    );
+    if (result.outcome === 'unavailable') {
+      this.logger.warn(
+        `Horizon confirmation check unavailable for payout ${payoutId} (tx: ${txHash}); will retry on the next poll`,
+      );
+      return;
+    }
 
-    if (result.found) {
-      if (result.successful) {
+    const checkedAt = new Date();
+    const newPollCount = currentPollCount + 1;
+
+    if (result.outcome !== 'unknown') {
+      if (result.outcome === 'confirmed') {
+        const confirmedAt = result.confirmedAt ?? checkedAt;
         const updated = await this.prisma.payout.updateMany({
           where: {
             id: payoutId,
@@ -517,7 +678,11 @@ export class PayoutProcessingService {
           },
           data: {
             status: PAYOUT_STATUSES.COMPLETED,
-            confirmedAt: result.confirmedAt ?? new Date(),
+            confirmedAt,
+            paidAt: confirmedAt,
+            confirmationPollCount: newPollCount,
+            lastConfirmationCheckAt: checkedAt,
+            failureReason: null,
           },
         });
 
@@ -530,11 +695,46 @@ export class PayoutProcessingService {
               actionType: 'payout_verification_success',
             },
           });
+
+          if (receiptData?.walletAddress && receiptData.recipientEmail) {
+            void this.payoutReceiptService.generateAndSendReceipt({
+              payoutId,
+              amount,
+              currency: receiptData.currency,
+              method: receiptData.method,
+              feeAmount: receiptData.feeAmount ?? undefined,
+              feePercentage: receiptData.feePercentage ?? undefined,
+              finalAmount: expectedAmount,
+              transactionId: receiptData.transactionId ?? txHash,
+              onChainTxHash: txHash,
+              confirmedAt,
+              paidAt: confirmedAt,
+              status: PAYOUT_STATUSES.COMPLETED,
+              recipientEmail: receiptData.recipientEmail,
+              walletAddress: receiptData.walletAddress,
+            });
+          } else {
+            this.logger.warn(
+              `Receipt not generated for payout ${payoutId}: recipient details are unavailable`,
+            );
+          }
         }
       } else {
         const updated = await this.prisma.payout.updateMany({
-          where: { id: payoutId, status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] } },
-          data: { status: PAYOUT_STATUSES.FAILED },
+          where: {
+            id: payoutId,
+            status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] },
+            confirmedAt: null,
+          },
+          data: {
+            status: PAYOUT_STATUSES.FAILED,
+            failureReason:
+              result.outcome === 'conflict'
+                ? result.conflictReason ?? 'Stellar payout verification conflict'
+                : 'Stellar transaction failed on Horizon',
+            confirmationPollCount: newPollCount,
+            lastConfirmationCheckAt: checkedAt,
+          },
         });
 
         if (updated.count > 0) {
@@ -551,11 +751,19 @@ export class PayoutProcessingService {
       return;
     }
 
-    const newPollCount = currentPollCount + 1;
     if (newPollCount >= STELLAR_CONFIRMATION_MAX_POLLS) {
       const updated = await this.prisma.payout.updateMany({
-        where: { id: payoutId, status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] } },
-        data: { status: PAYOUT_STATUSES.FAILED, retryCount: newPollCount },
+        where: {
+          id: payoutId,
+          status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] },
+          confirmedAt: null,
+        },
+        data: {
+          status: PAYOUT_STATUSES.FAILED,
+          failureReason: `Stellar transaction was not found after ${newPollCount} confirmation checks`,
+          confirmationPollCount: newPollCount,
+          lastConfirmationCheckAt: checkedAt,
+        },
       });
 
       if (updated.count > 0) {
@@ -571,9 +779,16 @@ export class PayoutProcessingService {
         });
       }
     } else {
-      await this.prisma.payout.update({
-        where: { id: payoutId },
-        data: { retryCount: newPollCount, lastAttemptAt: new Date() },
+      await this.prisma.payout.updateMany({
+        where: {
+          id: payoutId,
+          status: { in: [...UNCONFIRMED_STELLAR_PAYOUT_STATUSES] },
+          confirmedAt: null,
+        },
+        data: {
+          confirmationPollCount: newPollCount,
+          lastConfirmationCheckAt: checkedAt,
+        },
       });
     }
   }
@@ -613,7 +828,11 @@ export class PayoutProcessingService {
     txHash: string,
     expectedDestination?: string,
     expectedAmount?: number,
-  ): Promise<{ successful: boolean; confirmedAt?: Date }> {
+  ): Promise<{
+    successful: boolean;
+    found: boolean;
+    confirmedAt?: Date;
+  }> {
     const maxPolls = 3;
     const pollIntervalMs = 1000;
 
@@ -632,6 +851,7 @@ export class PayoutProcessingService {
         if (result.found) {
           return {
             successful: result.outcome === 'confirmed',
+            found: result.found,
             confirmedAt: result.confirmedAt,
           };
         }
@@ -646,6 +866,6 @@ export class PayoutProcessingService {
       }
     }
 
-    return { successful: false };
+    return { successful: false, found: false };
   }
 }

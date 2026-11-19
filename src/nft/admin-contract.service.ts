@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import StellarSdk from '@stellar/stellar-sdk';
 import { StellarService } from '../stellar/stellar.service';
+import { ContractInfoDto } from './dto/contract-info.dto';
 import {
   CircuitBreakerService,
   CircuitBreakerConfig,
@@ -384,6 +385,58 @@ export class AdminContractService {
       name: String(name),
       symbol: String(symbol),
       contractId: this.CONTRACT_ID,
+    };
+  }
+
+  /** Read the contract's single structured metadata view. */
+  async getContractMetadata(): Promise<ContractInfoDto> {
+    const value = await this.callViewFunction('contract_info');
+    const readField = (field: string): unknown => {
+      if (value instanceof Map) {
+        if (value.has(field)) {
+          return value.get(field);
+        }
+        return [...value.entries()].find(([key]) => String(key) === field)?.[1];
+      }
+
+      if (typeof value === 'object' && value !== null) {
+        return (value as Record<string, unknown>)[field];
+      }
+
+      return undefined;
+    };
+
+    const name = readField('name');
+    const symbol = readField('symbol');
+    const version = readField('version');
+    const owner = readField('owner');
+    const platformFee = readField('platform_fee');
+    const fee = typeof platformFee === 'bigint' ? Number(platformFee) : platformFee;
+    const ownerAddress =
+      typeof owner === 'string' ? owner : owner === undefined ? undefined : String(owner);
+
+    if (
+      typeof name !== 'string' ||
+      typeof symbol !== 'string' ||
+      typeof version !== 'string' ||
+      !ownerAddress ||
+      ownerAddress === '[object Object]' ||
+      typeof fee !== 'number' ||
+      !Number.isInteger(fee) ||
+      fee < 0 ||
+      fee > 10_000
+    ) {
+      throw new InternalServerErrorException(
+        'Contract returned invalid contract_info() metadata',
+      );
+    }
+
+    return {
+      name,
+      symbol,
+      version,
+      owner: ownerAddress,
+      platform_fee: fee,
     };
   }
 

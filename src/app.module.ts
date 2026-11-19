@@ -42,6 +42,7 @@ import { QueueModule } from './queue/queue.module';
 import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.module';
 import { CommonModule } from './common/common.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
+import { SharedModule } from './shared/shared.module';
 
 @Module({
   imports: [
@@ -202,6 +203,7 @@ import { BlockchainModule } from './blockchain/blockchain.module';
     GracefulShutdownModule,
     CommonModule,
     BlockchainModule,
+    SharedModule,
   ],
   controllers: [AppController],
   providers: [

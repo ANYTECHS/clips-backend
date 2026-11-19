@@ -264,6 +264,8 @@ model Payout {
   finalAmount      Float?
   retryCount       Int           @default(0)
   lastAttemptAt    DateTime?
+  confirmationPollCount Int       @default(0)
+  lastConfirmationCheckAt DateTime?
   nextRetryAt      DateTime?
   failureReason    String?
   createdAt        DateTime      @default(now())
@@ -276,6 +278,7 @@ model Payout {
 
   @@index([payoutMethodId])
   @@index([status])
+  @@index([method, status, onChainTxHash])
   @@index([userId])
   @@index([nextRetryAt])
   @@index([deletedAt])

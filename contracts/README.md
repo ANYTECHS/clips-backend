@@ -88,7 +88,14 @@ pub fn get_creator_royalty_bps(env: Env) -> u32
 
 // Get platform royalty percentage (basis points)
 pub fn get_platform_royalty_bps(env: Env) -> u32
+
+// Return the contract name, symbol, version, owner, and platform fee (BPS)
+pub fn contract_info(env: Env) -> ContractInfo
 ```
+
+`ContractInfo` reports the platform royalty configuration as `platform_fee` in
+basis points. The name and symbol are `ClipCash NFT` and `CLIP`; the version is
+the Cargo package version.
 
 ### Admin Operations
 

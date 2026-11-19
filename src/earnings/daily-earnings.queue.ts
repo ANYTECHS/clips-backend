@@ -35,3 +35,20 @@ export interface DailyEarningsJobData {
    */
   date?: string;
 }
+
+/**
+ * Retry policy for the daily aggregation job (Issue #1235).
+ * Validation failures (e.g. invalid date) are thrown as `UnrecoverableError`
+ * and skip retries; transient DB failures retry with exponential backoff.
+ * Failed jobs are retained for inspection (`removeOnFail: 500` on the
+ * repeatable schedule entry).
+ */
+export const DAILY_EARNINGS_JOB_OPTIONS = {
+  attempts: 3,
+  backoff: {
+    type: 'exponential' as const,
+    delay: 5000,
+  },
+  removeOnComplete: 100,
+  removeOnFail: 500,
+} as const;
