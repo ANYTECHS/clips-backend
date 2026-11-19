@@ -53,6 +53,23 @@ pub enum DataKey {
     TokenURI(u128),
     TokenRoyalty(u128),
     TotalSupply,
+    Admin,
+    Paused,
+    PauseReason,
+    Balance(Address),
+    Approved(u128),
+    /// Unclaimed royalty escrow: (payment token, amount)
+    UnclaimedRoyalty(u128),
+}
+
+/// Event emitted when unclaimed royalties are refunded on burn
+#[contracttype]
+#[derive(Clone)]
+pub struct Refunded {
+    pub token_id: u128,
+    pub recipient: Address,
+    pub payment_token: Address,
+    pub amount: i128,
 }
 
 /// Event emitted when platform fees are collected
@@ -78,6 +95,11 @@ impl NFTContract {
         royalty_bps: u32,
     ) {
         to.require_auth();
+        Self::require_not_paused(&env);
+        assert!(
+            !env.storage().instance().has(&DataKey::TokenOwner(token_id)),
+            "Token already exists"
+        );
         
         // Validate royalty BPS (max 15%)
         assert!(royalty_bps <= 1500, "Royalty BPS cannot exceed 1500 (15%)");
@@ -101,6 +123,7 @@ impl NFTContract {
             .get(&DataKey::TotalSupply)
             .unwrap_or(0);
         env.storage().instance().set(&DataKey::TotalSupply, &(total_supply + 1));
+        Self::adjust_balance(&env, &to, 1);
     }
 
     /// Get the owner of a token
@@ -302,18 +325,167 @@ impl NFTContract {
             .unwrap_or(0)
     }
 
-    /// Transfer token ownership (standard ERC-721 transfer)
+    /// Transfer token ownership (standard ERC-721 / SEP-0050 transfer)
     pub fn transfer(env: Env, from: Address, to: Address, token_id: u128) {
         from.require_auth();
-        
-        let current_owner: Address = env.storage()
+        Self::do_transfer(&env, &from, &to, token_id);
+    }
+
+    /// Transfer on behalf of the owner by an approved spender
+    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, token_id: u128) {
+        spender.require_auth();
+        let approved: Option<Address> = env.storage().instance().get(&DataKey::Approved(token_id));
+        assert!(approved == Some(spender), "Spender not approved");
+        Self::do_transfer(&env, &from, &to, token_id);
+    }
+
+    /// Approve an address to transfer a single token
+    pub fn approve(env: Env, owner: Address, approved: Address, token_id: u128) {
+        owner.require_auth();
+        assert!(Self::owner_of(env.clone(), token_id) == owner, "Not the token owner");
+        env.storage().instance().set(&DataKey::Approved(token_id), &approved);
+    }
+
+    /// Get the approved address for a token, if any
+    pub fn get_approved(env: Env, token_id: u128) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Approved(token_id))
+    }
+
+    /// Number of tokens owned by an address
+    pub fn balance_of(env: Env, owner: Address) -> u32 {
+        env.storage().instance().get(&DataKey::Balance(owner)).unwrap_or(0)
+    }
+
+    /// Collection name
+    pub fn name(env: Env) -> String {
+        String::from_str(&env, "ClipCash Clips")
+    }
+
+    /// Collection symbol
+    pub fn symbol(env: Env) -> String {
+        String::from_str(&env, "CLIP")
+    }
+
+    // ---------------------------------------------------------------
+    // Admin / pause
+    // ---------------------------------------------------------------
+
+    /// One-time initialization of the contract administrator
+    pub fn initialize(env: Env, admin: Address) {
+        assert!(!env.storage().instance().has(&DataKey::Admin), "Already initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &admin);
+    }
+
+    /// Pause the contract with an optional human-readable reason (admin only)
+    pub fn pause(env: Env, reason: Option<String>) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &true);
+        match reason {
+            Some(r) => env.storage().instance().set(&DataKey::PauseReason, &r),
+            None => env.storage().instance().remove(&DataKey::PauseReason),
+        }
+        env.events().publish((String::from_str(&env, "Paused"),), Self::pause_reason(env.clone()));
+    }
+
+    /// Update the pause reason while paused (admin only)
+    pub fn set_pause_reason(env: Env, reason: String) {
+        Self::require_admin(&env);
+        assert!(Self::is_paused(env.clone()), "Contract is not paused");
+        env.storage().instance().set(&DataKey::PauseReason, &reason);
+    }
+
+    /// Unpause the contract and clear the reason (admin only)
+    pub fn unpause(env: Env) {
+        Self::require_admin(&env);
+        env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().remove(&DataKey::PauseReason);
+        env.events().publish((String::from_str(&env, "Unpaused"),), ());
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+    }
+
+    /// Current pause reason (empty string when none is set)
+    pub fn pause_reason(env: Env) -> String {
+        env.storage()
             .instance()
-            .get(&DataKey::TokenOwner(token_id))
+            .get(&DataKey::PauseReason)
+            .unwrap_or(String::from_str(&env, ""))
+    }
+
+    // ---------------------------------------------------------------
+    // Royalty escrow + burn
+    // ---------------------------------------------------------------
+
+    /// Deposit royalties into escrow for a token (claimable by the royalty recipient)
+    pub fn deposit_royalty(env: Env, from: Address, token_id: u128, payment_token: Address, amount: i128) {
+        from.require_auth();
+        assert!(amount > 0, "Amount must be positive");
+        let key = DataKey::UnclaimedRoyalty(token_id);
+        let current: Option<(Address, i128)> = env.storage().instance().get(&key);
+        let balance = match current {
+            Some((t, b)) => {
+                assert!(t == payment_token, "Payment token mismatch");
+                b.checked_add(amount).expect("Overflow")
+            }
+            None => amount,
+        };
+        token::Client::new(&env, &payment_token).transfer(&from, &env.current_contract_address(), &amount);
+        env.storage().instance().set(&key, &(payment_token, balance));
+    }
+
+    /// Unclaimed royalty balance held in escrow for a token
+    pub fn unclaimed_royalty(env: Env, token_id: u128) -> i128 {
+        let v: Option<(Address, i128)> = env.storage().instance().get(&DataKey::UnclaimedRoyalty(token_id));
+        v.map(|(_, b)| b).unwrap_or(0)
+    }
+
+    /// Burn a token. If `refund_royalties` is true, any unclaimed royalty
+    /// escrow is returned to the configured royalty recipient and a
+    /// `Refunded` event is emitted. Returns the refunded amount.
+    pub fn burn(env: Env, owner: Address, token_id: u128, refund_royalties: bool) -> i128 {
+        owner.require_auth();
+        Self::require_not_paused(&env);
+        assert!(Self::owner_of(env.clone(), token_id) == owner, "Not the token owner");
+
+        let royalty: RoyaltyInfo = env.storage()
+            .instance()
+            .get(&DataKey::TokenRoyalty(token_id))
             .expect("Token does not exist");
-        
-        assert!(current_owner == from, "Not the token owner");
-        
-        env.storage().instance().set(&DataKey::TokenOwner(token_id), &to);
+
+        let mut refunded: i128 = 0;
+        let escrow_key = DataKey::UnclaimedRoyalty(token_id);
+        let escrow: Option<(Address, i128)> = env.storage().instance().get(&escrow_key);
+        if refund_royalties {
+            if let Some((payment_token, amount)) = escrow {
+                // Clear first to prevent double refunds
+                env.storage().instance().remove(&escrow_key);
+                if amount > 0 {
+                    token::Client::new(&env, &payment_token)
+                        .transfer(&env.current_contract_address(), &royalty.recipient, &amount);
+                    refunded = amount;
+                    env.events().publish(
+                        (String::from_str(&env, "Refunded"),),
+                        Refunded { token_id, recipient: royalty.recipient.clone(), payment_token, amount },
+                    );
+                }
+            }
+        } else {
+            assert!(escrow.map(|(_, b)| b).unwrap_or(0) == 0, "Unclaimed royalties exist; burn with refund");
+        }
+
+        let s = env.storage().instance();
+        s.remove(&DataKey::TokenOwner(token_id));
+        s.remove(&DataKey::TokenURI(token_id));
+        s.remove(&DataKey::TokenRoyalty(token_id));
+        s.remove(&DataKey::Approved(token_id));
+        let supply: u128 = s.get(&DataKey::TotalSupply).unwrap_or(0);
+        s.set(&DataKey::TotalSupply, &supply.saturating_sub(1));
+        Self::adjust_balance(&env, &owner, -1);
+        env.events().publish((String::from_str(&env, "Burned"),), token_id);
+        refunded
     }
 
     /// Get token URI
@@ -330,6 +502,38 @@ impl NFTContract {
             .instance()
             .get(&DataKey::TotalSupply)
             .unwrap_or(0)
+    }
+}
+
+impl NFTContract {
+    fn require_admin(env: &Env) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("Not initialized");
+        admin.require_auth();
+    }
+
+    fn require_not_paused(env: &Env) {
+        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        assert!(!paused, "Contract is paused");
+    }
+
+    fn adjust_balance(env: &Env, owner: &Address, delta: i32) {
+        let key = DataKey::Balance(owner.clone());
+        let bal: u32 = env.storage().instance().get(&key).unwrap_or(0);
+        let new_bal = if delta < 0 { bal.saturating_sub(1) } else { bal + 1 };
+        env.storage().instance().set(&key, &new_bal);
+    }
+
+    fn do_transfer(env: &Env, from: &Address, to: &Address, token_id: u128) {
+        Self::require_not_paused(env);
+        let current_owner: Address = env.storage()
+            .instance()
+            .get(&DataKey::TokenOwner(token_id))
+            .expect("Token does not exist");
+        assert!(&current_owner == from, "Not the token owner");
+        env.storage().instance().set(&DataKey::TokenOwner(token_id), to);
+        env.storage().instance().remove(&DataKey::Approved(token_id));
+        Self::adjust_balance(env, from, -1);
+        Self::adjust_balance(env, to, 1);
     }
 }
 
@@ -615,5 +819,89 @@ mod test {
         assert_eq!(info.recipient, creator);
         assert_eq!(info.fee_numerator, 850);
         assert_eq!(info.fee_denominator, 10000);
+    }
+
+    fn setup(env: &Env) -> (NFTContractClient<'_>, Address) {
+        env.mock_all_auths();
+        let id = env.register_contract(None, NFTContract);
+        let client = NFTContractClient::new(env, &id);
+        let admin = Address::generate(env);
+        client.initialize(&admin);
+        (client, admin)
+    }
+
+    #[test]
+    fn test_pause_with_reason() {
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        client.pause(&Some(String::from_str(&env, "Scheduled contract maintenance")));
+        assert!(client.is_paused());
+        assert_eq!(client.pause_reason(), String::from_str(&env, "Scheduled contract maintenance"));
+        client.unpause();
+        assert!(!client.is_paused());
+        assert_eq!(client.pause_reason(), String::from_str(&env, ""));
+    }
+
+    #[test]
+    fn test_pause_without_reason() {
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        client.pause(&None);
+        assert!(client.is_paused());
+        assert_eq!(client.pause_reason(), String::from_str(&env, ""));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_unauthorized_pause_reason_update() {
+        let env = Env::default();
+        let id = env.register_contract(None, NFTContract);
+        let client = NFTContractClient::new(&env, &id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin);
+        client.pause(&None);
+        env.set_auths(&[]);
+        client.set_pause_reason(&String::from_str(&env, "hijack"));
+    }
+
+    #[test]
+    fn test_burn_without_refund_and_standards() {
+        let env = Env::default();
+        let (client, _) = setup(&env);
+        let owner = Address::generate(&env);
+        let other = Address::generate(&env);
+        client.mint(&owner, &1, &String::from_str(&env, "ipfs://1"), &owner, &500);
+        assert_eq!(client.balance_of(&owner), 1);
+        client.approve(&owner, &other, &1);
+        client.transfer_from(&other, &owner, &other, &1);
+        assert_eq!(client.owner_of(&1), other);
+        assert_eq!(client.balance_of(&owner), 0);
+        assert_eq!(client.get_approved(&1), None);
+        assert_eq!(client.burn(&other, &1, &false), 0);
+        assert_eq!(client.total_supply(), 0);
+        assert_eq!(client.balance_of(&other), 0);
+    }
+
+    #[test]
+    fn test_burn_with_refund_and_zero_balance() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let owner = Address::generate(&env);
+        let creator = Address::generate(&env);
+        let sac = env.register_stellar_asset_contract(admin.clone());
+        let token = soroban_sdk::token::Client::new(&env, &sac);
+        soroban_sdk::token::StellarAssetClient::new(&env, &sac).mint(&owner, &1_000);
+
+        client.mint(&owner, &1, &String::from_str(&env, "ipfs://1"), &creator, &500);
+        client.deposit_royalty(&owner, &1, &sac, &300);
+        assert_eq!(client.unclaimed_royalty(&1), 300);
+        assert_eq!(client.burn(&owner, &1, &true), 300);
+        assert_eq!(token.balance(&creator), 300);
+        assert_eq!(client.unclaimed_royalty(&1), 0);
+
+        // zero royalty balance
+        client.mint(&owner, &2, &String::from_str(&env, "ipfs://2"), &creator, &500);
+        assert_eq!(client.burn(&owner, &2, &true), 0);
     }
 }

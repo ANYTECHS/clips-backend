@@ -9,6 +9,8 @@ import { BatchRoyaltyService } from './batch-royalty.service';
 import { BatchRoyaltyController } from './batch-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
 import { NftOwnershipService } from './nft-ownership.service';
+import { SorobanContractService } from './soroban-contract.service';
+import { SorobanPauseController } from './soroban-pause.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
@@ -23,11 +25,13 @@ import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.
     NftOwnershipService,
     PlatformRevenueService,
     BatchRoyaltyService,
+    SorobanContractService,
   ],
   controllers: [
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,
+    SorobanPauseController,
   ],
   exports: [
     NftService,
