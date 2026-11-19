@@ -2,6 +2,8 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
+  Body,
   Req,
   HttpCode,
   HttpStatus,
@@ -21,6 +23,7 @@ import {
 import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
 import { UserResponseDto } from './dto/user-responses.dto';
+import { UpdateUsernameDto } from './dto/update-username.dto';
 
 @ApiTags('Users')
 @ApiBearerAuth('access-token')
@@ -69,5 +72,13 @@ export class UsersController {
   @HttpCode(HttpStatus.OK)
   async createWallet(@Req() req: any) {
     return this.usersService.createWallet(req.user.userId);
+  }
+
+  @Patch('me/username')
+  @ApiOperation({ summary: 'Set or update the authenticated user\'s username' })
+  @ApiResponse({ status: 200, description: 'Username updated' })
+  @ApiConflictResponse({ description: 'Username is already taken (409)' })
+  async updateUsername(@Req() req: any, @Body() dto: UpdateUsernameDto) {
+    return this.usersService.updateUsername(req.user.userId, dto.username);
   }
 }
