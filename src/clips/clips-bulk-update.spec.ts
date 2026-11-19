@@ -3,25 +3,12 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClipsService } from './clips.service';
 import { Clip } from './clip.entity';
 import { ALL_CLIPS_PROCESSED_EVENT } from './clips.events';
+import { buildClip } from '../../test/fixtures/clip.fixture';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeClip(overrides: Partial<Clip> = {}): any {
-  return {
-    id: 1,
-    videoId: 1,
-    userId: 1,
-    startTime: 0,
-    endTime: 30,
-    duration: 30,
-    positionRatio: 0.5,
-    viralityScore: 80,
-    selected: false,
-    postStatus: null,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    ...overrides,
-  };
+  return buildClip(overrides);
 }
 
 function makeService() {

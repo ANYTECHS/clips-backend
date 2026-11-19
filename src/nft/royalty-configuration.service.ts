@@ -5,6 +5,10 @@ import {
   CLIP_ROYALTY_BPS_MAX,
   DEFAULT_ROYALTY_BPS_MAX,
 } from '../common/validators/is-valid-royalty-bps.validator';
+import {
+  checkedRoyaltyAmount,
+  checkedBpsAdd,
+} from '../common/helpers/safe-math.helper';
 
 export const ROYALTY_PROTOCOL_MAX_BPS = DEFAULT_ROYALTY_BPS_MAX;
 
@@ -43,6 +47,45 @@ export class RoyaltyConfigurationService {
     return wallet;
   }
 
+  /**
+   * The Stellar asset royalties are paid in: `"native"` (XLM) or a Stellar
+   * Asset Contract (SAC) address (e.g. USDC) configured via
+   * `ROYALTY_ASSET_CODE` / `ROYALTY_ASSET_CONTRACT_ID`.
+   */
+  getRoyaltyAsset(): { code: string; contractId?: string } {
+    const code = this.config.royaltyAssetCode;
+    const contractId = this.config.royaltyAssetContractId || undefined;
+    return code === 'native' ? { code } : { code, contractId };
+  }
+
+  /**
+   * Calculate the royalty amount owed on `salePrice` at `royaltyBps` basis
+   * points (Issue #680). Mirrors the Soroban contract's `calculate_royalty`
+   * helper so estimates returned by the API match what the chain will
+   * actually pay out.
+   *
+   * Rounding: truncates toward zero (`Math.floor`), matching the contract's
+   * integer-division semantics — any fractional stroop is rounded down.
+   *
+   * Overflow protection: the intermediate product `salePrice × royaltyBps` is
+   * computed with `BigInt` arithmetic to prevent IEEE-754 precision loss for
+   * large sale prices (see `checkedRoyaltyAmount` in safe-math.helper.ts).
+   * A `BadRequestException` is thrown if the result exceeds
+   * `Number.MAX_SAFE_INTEGER`.
+   */
+  calculateRoyalty(salePrice: number, royaltyBps: number): number {
+    this.validateRoyaltyBps(royaltyBps);
+    if (!Number.isInteger(salePrice) || salePrice < 0) {
+      throw new BadRequestException(
+        `Invalid salePrice: ${salePrice}. Must be a non-negative integer.`,
+      );
+    }
+    if (salePrice === 0 || royaltyBps === 0) {
+      return 0;
+    }
+    return checkedRoyaltyAmount(salePrice, royaltyBps);
+  }
+
   validateRoyaltyBps(bps: number): void {
     if (!Number.isInteger(bps) || bps < 0 || bps > CLIP_ROYALTY_BPS_MAX) {
       throw new BadRequestException(
@@ -60,7 +103,9 @@ export class RoyaltyConfigurationService {
   }
 
   validateCombinedRoyaltyBps(creatorBps: number, platformBps: number): void {
-    const total = creatorBps + platformBps;
+    // checkedBpsAdd validates both operands are non-negative integers and that
+    // the sum fits within Number.MAX_SAFE_INTEGER before comparing to the cap.
+    const total = checkedBpsAdd(creatorBps, platformBps);
     if (total > ROYALTY_PROTOCOL_MAX_BPS) {
       throw new BadRequestException(
         `Combined royalty (${total} bps = ${creatorBps} creator + ${platformBps} platform) exceeds protocol maximum of ${ROYALTY_PROTOCOL_MAX_BPS} bps.`,
@@ -101,7 +146,7 @@ export class RoyaltyConfigurationService {
       );
     }
 
-    const total = creatorBps + platformBps;
+    const total = checkedBpsAdd(creatorBps, platformBps);
     if (total > ROYALTY_PROTOCOL_MAX_BPS) {
       throw new Error(
         `Combined royalty (${total} bps = ${creatorBps} creator + ${platformBps} platform) exceeds protocol maximum of ${ROYALTY_PROTOCOL_MAX_BPS} bps`,

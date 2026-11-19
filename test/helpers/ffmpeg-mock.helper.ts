@@ -23,7 +23,7 @@ export function mockFFmpegSuccess(options: {
       'frame=   30 fps= 60 q=-1.0 Lsize=N/A time=00:00:30.00 bitrate=N/A speed=2.0x',
       'frame=   60 fps= 60 q=-1.0 Lsize=N/A time=01:00:00.00 bitrate=N/A speed=2.0x',
     ],
-    createOutputFile: options.createOutputFile ?? false,
+    createOutputFile: options.createOutputFile ?? true,
     fileContent: options.fileContent,
   });
 }

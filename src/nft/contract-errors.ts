@@ -9,17 +9,17 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 
-/** Mirrors `Error` in contracts/nft-contract/src/lib.rs. Keep codes in sync. */
+/** Mirrors `ContractError` in contracts/src/error.rs. Keep codes in sync. */
 export enum NftContractError {
-  Unauthorized = 1,
-  TokenNotFound = 2,
-  AlreadyInitialized = 3,
-  NotInitialized = 4,
-  SoulboundTokenNotTransferable = 5,
-  InvalidTokenId = 6,
-  InvalidRoyaltyBps = 7,
-  ClipAlreadyMinted = 8,
-  InsufficientBalance = 9,
+  NotInitialized = 1,
+  AlreadyInitialized = 2,
+  InvalidRoyaltyBps = 3,
+  RoyaltyExceedsCap = 4,
+  Unauthorized = 5,
+  NotFound = 6,
+  AlreadyExists = 7,
+  InsufficientBalance = 8,
+  ClipAlreadyMinted = 9,
   ContractPaused = 10,
   TokenFrozen = 11,
   CooldownActive = 12,
@@ -27,18 +27,19 @@ export enum NftContractError {
   SignatureExpired = 14,
   NonceAlreadyUsed = 15,
   ApprovalNotFound = 16,
+  TokenNotFound = 17,
 }
 
 const STATUS: Record<NftContractError, HttpStatus> = {
-  [NftContractError.Unauthorized]: HttpStatus.FORBIDDEN,
-  [NftContractError.TokenNotFound]: HttpStatus.NOT_FOUND,
-  [NftContractError.AlreadyInitialized]: HttpStatus.CONFLICT,
   [NftContractError.NotInitialized]: HttpStatus.INTERNAL_SERVER_ERROR,
-  [NftContractError.SoulboundTokenNotTransferable]: HttpStatus.CONFLICT,
-  [NftContractError.InvalidTokenId]: HttpStatus.CONFLICT,
+  [NftContractError.AlreadyInitialized]: HttpStatus.CONFLICT,
   [NftContractError.InvalidRoyaltyBps]: HttpStatus.BAD_REQUEST,
-  [NftContractError.ClipAlreadyMinted]: HttpStatus.CONFLICT,
+  [NftContractError.RoyaltyExceedsCap]: HttpStatus.BAD_REQUEST,
+  [NftContractError.Unauthorized]: HttpStatus.FORBIDDEN,
+  [NftContractError.NotFound]: HttpStatus.NOT_FOUND,
+  [NftContractError.AlreadyExists]: HttpStatus.CONFLICT,
   [NftContractError.InsufficientBalance]: HttpStatus.BAD_REQUEST,
+  [NftContractError.ClipAlreadyMinted]: HttpStatus.CONFLICT,
   [NftContractError.ContractPaused]: HttpStatus.CONFLICT,
   [NftContractError.TokenFrozen]: HttpStatus.CONFLICT,
   [NftContractError.CooldownActive]: HttpStatus.TOO_MANY_REQUESTS,
@@ -46,6 +47,7 @@ const STATUS: Record<NftContractError, HttpStatus> = {
   [NftContractError.SignatureExpired]: HttpStatus.UNAUTHORIZED,
   [NftContractError.NonceAlreadyUsed]: HttpStatus.CONFLICT,
   [NftContractError.ApprovalNotFound]: HttpStatus.NOT_FOUND,
+  [NftContractError.TokenNotFound]: HttpStatus.NOT_FOUND,
 };
 
 /** Extracts the contract error code from a Soroban error string like `Error(Contract, #12)`. */

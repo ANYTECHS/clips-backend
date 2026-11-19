@@ -1,4 +1,0 @@
-Contact: security@clipcash.io
-Expires: 2027-07-28T11:40:10+00:00
-Encryption: https://clipcash.io/pgp-key.txt
-Acknowledgments: https://clipcash.io/security

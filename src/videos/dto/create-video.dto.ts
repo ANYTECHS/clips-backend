@@ -2,6 +2,7 @@ import { IsString, IsOptional, IsInt, IsArray } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsValidPlatforms } from '../../common/validators/decorators';
+import { TrimString } from '../../common/decorators/trim-string.decorator';
 import type { SupportedPlatform } from '../../common/validators/is-valid-platform.validator';
 
 export class CreateVideoDto {
@@ -14,6 +15,7 @@ export class CreateVideoDto {
     example: 'My highlight reel',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   title?: string;
 
@@ -22,6 +24,7 @@ export class CreateVideoDto {
     example: 'Best moments from last week',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   description?: string;
 
@@ -31,6 +34,7 @@ export class CreateVideoDto {
     enum: ['upload', 'url', 'stream'],
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   sourceType?: string;
 
@@ -39,6 +43,7 @@ export class CreateVideoDto {
     example: 'https://cdn.example.com/videos/abc.mp4',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   sourceUrl?: string;
 
@@ -47,6 +52,7 @@ export class CreateVideoDto {
     example: 'https://cdn.example.com/thumbs/abc.jpg',
   })
   @IsOptional()
+  @TrimString()
   @IsString()
   thumbnail?: string;
 

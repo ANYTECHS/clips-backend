@@ -11,7 +11,10 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiConflictResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
@@ -19,9 +22,13 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
 import { UserResponseDto } from './dto/user-responses.dto';
 
-@ApiTags('users')
+@ApiTags('Users')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiBadRequestResponse({ description: 'Invalid request parameters' })
+@ApiUnauthorizedResponse({ description: 'JWT token required' })
+@ApiForbiddenResponse({ description: 'Insufficient permissions' })
+@ApiNotFoundResponse({ description: 'User not found' })
+@ApiConflictResponse({ description: 'Resource already exists' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('users')
 @Auth()
@@ -52,7 +59,7 @@ export class UsersController {
     description: 'Wallet created, returns a masked stellarPublicKey',
     schema: {
       example: {
-        stellarPublicKey: 'GC6X********UTZF3',
+        stellarPublicKey: 'GABF...KJ93XD',
         walletType: 'custodial',
       },
     },

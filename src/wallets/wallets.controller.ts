@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   Controller,
   Delete,
   Get,
   Param,
   ParseIntPipe,
+  Query,
   Req,
   UseGuards,
   HttpCode,
@@ -17,34 +19,42 @@ import {
   ApiResponse,
   ApiBearerAuth,
   ApiParam,
+  ApiQuery,
   ApiBadRequestResponse,
   ApiUnauthorizedResponse,
   ApiNotFoundResponse,
   ApiInternalServerErrorResponse,
   ApiConflictResponse,
+  ApiOkResponse,
+  ApiBody,
 } from '@nestjs/swagger';
+import { API_ERROR_SCHEMA } from '../common/dtos';
 import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
 import { WalletBalanceService } from './wallet-balance.service';
 import { CreateWalletConnectionDto } from './dto/connect-wallet.dto';
+import { SUPPORTED_CHAINS } from './chain.constants';
+import { WalletNftsQueryDto } from './dto/wallet-nfts-query.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
 import { WalletBalanceResult } from '../stellar/stellar.service';
+import { NftOwnershipService } from '../nft/nft-ownership.service';
 
 interface AuthRequest extends Request {
   user: { userId: number; email: string | null };
 }
 
-@ApiTags('wallets')
+@ApiTags('Wallets')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
-@ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
+@ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })
 @Controller('wallets')
 @Auth()
 export class WalletsController {
   constructor(
     private readonly walletsService: WalletsService,
     private readonly walletBalanceService: WalletBalanceService,
+    private readonly nftOwnershipService: NftOwnershipService,
   ) {}
 
   @Get()
@@ -65,8 +75,8 @@ export class WalletsController {
         type: 'object',
         properties: {
           id: { type: 'number' },
-          address: { type: 'string', example: '******KPRQ6A' },
-          chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+          address: { type: 'string', example: 'GABF...KJ93XD' },
+          chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
           type: { type: 'string', example: 'freighter' },
           connectedAt: { type: 'string', format: 'date-time' },
         },
@@ -95,8 +105,8 @@ export class WalletsController {
       type: 'object',
       properties: {
         id: { type: 'number' },
-        address: { type: 'string', example: '******KPRQ6A' },
-        chain: { type: 'string', enum: ['stellar', 'solana', 'base'] },
+        address: { type: 'string', example: 'GABF...KJ93XD' },
+        chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
         type: { type: 'string', example: 'freighter' },
         connectedAt: { type: 'string', format: 'date-time' },
       },
@@ -217,18 +227,183 @@ export class WalletsController {
       'Connect or update a wallet for the authenticated user. ' +
       'Supports Stellar (freighter, lobstr, albedo), Solana (phantom, solflare, backpack), ' +
       'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
-      'If a wallet with the same address+chain already exists it is re-activated.',
+      'If a wallet with the same address+chain already exists it is re-activated. ' +
+      'Wallet authentication: the client signs `signedMessage` with the wallet key and the server ' +
+      'verifies `signature` against `publicKey` before linking. EVM wallets (MetaMask, Coinbase, ' +
+      'WalletConnect — including BNB Smart Chain accounts) use the `base` chain value. ' +
+      'Requires a Bearer JWT.',
+  })
+  @ApiBody({
+    type: CreateWalletConnectionDto,
+    examples: {
+      stellar: {
+        summary: 'Stellar wallet (Freighter)',
+        value: {
+          address: 'GC6XJ3NVJ3Q5ZZQF2Y7J7JQ3WJ5KX4Y2JQ3Y7Z5Q3WJ5KX4Y2JQ3Y7Z5',
+          chain: 'stellar',
+          type: 'freighter',
+          publicKey: 'GC6XJ3NVJ3Q5ZZQF2Y7J7JQ3WJ5KX4Y2JQ3Y7Z5Q3WJ5KX4Y2JQ3Y7Z5',
+          signature: 'base64-encoded-ed25519-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
+        },
+      },
+      evm: {
+        summary: 'EVM / BNB wallet (MetaMask)',
+        value: {
+          address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          chain: 'base',
+          type: 'metamask',
+          publicKey: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          signature: '0x-hex-encoded-personal-sign-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
+        },
+      },
+    },
+  })
+  @ApiBody({
+    type: CreateWalletConnectionDto,
+    examples: {
+      stellar: {
+        summary: 'Connect a Stellar wallet',
+        value: {
+          address: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          chain: 'stellar',
+          type: 'freighter',
+        },
+      },
+      solana: {
+        summary: 'Connect a Solana wallet',
+        value: {
+          address: '7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV1',
+          chain: 'solana',
+          type: 'phantom',
+        },
+      },
+    },
   })
   @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
   @ApiBadRequestResponse({
     description: 'Invalid wallet data or signature verification failed',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed',
+        error: 'Bad Request',
+        details: [
+          {
+            field: 'type',
+            errors: [
+              'type must be one of the following values: freighter, lobstr, albedo, ...',
+            ],
+          },
+        ],
+      },
+    },
   })
-  @ApiUnauthorizedResponse({ description: 'Unauthorized' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
   @HttpCode(HttpStatus.OK)
   async connect(
     @Req() req: AuthRequest,
     @Body() dto: CreateWalletConnectionDto,
   ) {
     return this.walletsService.connect(req.user.userId, dto);
+  }
+
+  /**
+   * GET /wallets/:address/nfts
+   * Returns all token IDs owned by the given Stellar wallet address,
+   * with optional pagination (Issue #673).
+   */
+  @Get(':address/nfts')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'List NFT token IDs owned by a Stellar wallet address (Issue #673)',
+    description:
+      'Returns all token IDs currently owned by the specified Stellar wallet address. ' +
+      'Supports pagination via `page` and `limit` query parameters. ' +
+      'Large collections are handled safely via result-size limits (max 100 per page). ' +
+      'Authentication is not required — the address is the lookup key.',
+  })
+  @ApiParam({
+    name: 'address',
+    description: 'Stellar wallet address (56-character G... address)',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (1-based, default: 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Results per page (max 100, default: 20)',
+    example: 20,
+  })
+  @ApiOkResponse({
+    description: 'Paginated list of NFT token IDs owned by the wallet',
+    schema: {
+      type: 'object',
+      properties: {
+        address: {
+          type: 'string',
+          example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+        tokenIds: {
+          type: 'array',
+          items: { type: 'number' },
+          example: [42, 51, 99],
+        },
+        total: {
+          type: 'number',
+          description: 'Total number of tokens owned by this wallet',
+          example: 3,
+        },
+        page: { type: 'number', example: 1 },
+        limit: { type: 'number', example: 20 },
+        hasNextPage: {
+          type: 'boolean',
+          description: 'True when there are more pages available',
+          example: false,
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid Stellar wallet address format' })
+  async getWalletNfts(
+    @Param('address') address: string,
+    @Query() query: WalletNftsQueryDto,
+  ) {
+    if (!address || address.length !== 56 || !address.startsWith('G')) {
+      throw new BadRequestException(
+        'Invalid Stellar wallet address: must be a 56-character G... address',
+      );
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+
+    const allTokenIds = await this.nftOwnershipService.getWalletTokenIds(address);
+    const total = allTokenIds.length;
+
+    // Apply pagination
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const tokenIds = allTokenIds.slice(start, end);
+    const hasNextPage = end < total;
+
+    return {
+      address,
+      tokenIds,
+      total,
+      page,
+      limit,
+      hasNextPage,
+    };
   }
 }

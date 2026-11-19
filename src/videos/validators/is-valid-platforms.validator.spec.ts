@@ -38,8 +38,9 @@ describe('IsValidPlatformsConstraint', () => {
     it('should return false for array with invalid platform', () => {
       expect(validator.validate(['tiktok', 'invalid-platform'])).toBe(false);
       expect(validator.validate(['reddit'])).toBe(false);
+      // linkedin is now a supported platform (Issue #856 — sync with ConfigService)
       expect(validator.validate(['tiktok', 'instagram', 'linkedin'])).toBe(
-        false,
+        true,
       );
     });
 

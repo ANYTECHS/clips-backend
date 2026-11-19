@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClipsService } from './clips.service';
+import { buildClipRecordList } from '../../test/fixtures/clip.fixture';
 
 function makeService(clips: any[] = [], total?: number) {
   const prisma = {
@@ -21,7 +22,7 @@ function makeService(clips: any[] = [], total?: number) {
 
 describe('ClipsService.listClips pagination', () => {
   it('returns paginated data with correct meta', async () => {
-    const clips = [{ id: 1 }, { id: 2 }];
+    const clips = buildClipRecordList(2);
     const { service } = makeService(clips, 50);
 
     const result = await service.listClips({ page: 3, limit: 2 });
@@ -34,7 +35,42 @@ describe('ClipsService.listClips pagination', () => {
     const { service, prisma } = makeService([], 0);
     await service.listClips();
     expect(prisma.clip.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 0, take: 20 }),
+      expect.objectContaining({
+        orderBy: [{ createdAt: 'desc' }],
+        skip: 0,
+        take: 20,
+      }),
+    );
+  });
+
+  it('sorts by viralityScore descending with null scores last', async () => {
+    const { service, prisma } = makeService([], 0);
+
+    await service.listClips({ videoId: '42', sortBy: 'viralityScore', order: 'desc' });
+
+    expect(prisma.clip.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { videoId: 42 },
+        orderBy: [
+          { viralityScore: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ],
+      }),
+    );
+  });
+
+  it('uses createdAt descending as the virality sort tie-breaker', async () => {
+    const { service, prisma } = makeService([], 0);
+
+    await service.listClips({ sortBy: 'viralityScore', order: 'desc' });
+
+    expect(prisma.clip.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderBy: [
+          { viralityScore: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ],
+      }),
     );
   });
 

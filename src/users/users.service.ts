@@ -2,7 +2,7 @@ import { Injectable, ConflictException } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from '../encryption/encryption.service';
-import { maskAddress } from '../wallets/wallet.utils';
+import { maskAddress } from '@clipcash/shared';
 
 @Injectable()
 export class UsersService {
@@ -47,6 +47,7 @@ export class UsersService {
         emailVerified: true,
         stellarPublicKey: true,
         walletType: true,
+        showOnLeaderboard: true,
         createdAt: true,
       },
     });

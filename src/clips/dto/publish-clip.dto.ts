@@ -1,4 +1,4 @@
-import { IsArray, ArrayNotEmpty, IsString } from 'class-validator';
+import { IsArray, ArrayNotEmpty, IsIn } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export const SUPPORTED_PLATFORMS = [
@@ -21,8 +21,11 @@ export class PublishClipDto {
     enum: SUPPORTED_PLATFORMS,
     isArray: true,
   })
-  @IsArray()
-  @ArrayNotEmpty()
-  @IsString({ each: true })
+  @IsArray({ message: 'targetPlatforms must be an array of platform names' })
+  @ArrayNotEmpty({ message: 'Select at least one platform to publish to' })
+  @IsIn(SUPPORTED_PLATFORMS, {
+    each: true,
+    message: `Each platform must be one of: ${SUPPORTED_PLATFORMS.join(', ')}`,
+  })
   targetPlatforms: string[];
 }

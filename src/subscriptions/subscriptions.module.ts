@@ -6,10 +6,11 @@ import { StellarWebhookService } from './stellar-webhook.service';
 import { SubscriptionsController } from './subscriptions.controller';
 import { StellarWebhookController } from './stellar-webhook.controller';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
+import { StellarModule } from '../stellar/stellar.module';
 import { raw } from 'body-parser';
 
 @Module({
-  imports: [PrismaModule, ConfigModule, CircuitBreakerModule],
+  imports: [PrismaModule, ConfigModule, CircuitBreakerModule, StellarModule],
   controllers: [SubscriptionsController, StellarWebhookController],
   providers: [StellarPaymentService, StellarWebhookService],
   exports: [StellarPaymentService, StellarWebhookService],

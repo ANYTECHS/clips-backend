@@ -1,541 +1,772 @@
 # Testing Strategy
 
-This document defines how testing is conducted across ClipCash to ensure correctness, reliability, and maintainability.
+This document defines the full testing strategy for the ClipCash backend.  It
+covers the testing pyramid, tooling, what to test at each layer, coverage goals,
+and CI requirements.
 
 ---
 
-## Test Types
+## Table of Contents
 
-### 1. Unit Tests
-
-**Purpose:** Verify individual functions and classes in isolation
-
-**Scope:**
-- Pure functions (no side effects)
-- Single responsibility logic
-- Error handling within a module
-
-**Tools:**
-- Jest (framework)
-- Mocking: `jest.mock()` for dependencies
-
-**Example:**
-
-```typescript
-describe('CurrencyConversionService', () => {
-  let service: CurrencyConversionService;
-
-  beforeEach(() => {
-    service = new CurrencyConversionService();
-  });
-
-  it('should convert USD to EUR', () => {
-    const result = service.convert(100, Currency.USD, Currency.EUR);
-    expect(result).toBeGreaterThan(0);
-  });
-
-  it('should throw on invalid currency', () => {
-    expect(() => {
-      service.convert(100, 'INVALID' as any, Currency.USD);
-    }).toThrow();
-  });
-});
-```
-
-**Coverage Goals:**
-- Minimum 80% line coverage per file
-- 100% coverage for critical paths (auth, payments, data validation)
-- All error branches tested
-
-**Run:**
-```bash
-npm run test                    # Run all unit tests
-npm run test -- --coverage     # With coverage report
-npm run test -- --watch        # Watch mode during development
-```
-
-**File location:** `src/**/*.spec.ts`
+1. [Testing Philosophy](#testing-philosophy)
+2. [Test Pyramid](#test-pyramid)
+3. [Unit Testing](#1-unit-testing)
+4. [Integration Testing](#2-integration-testing)
+5. [End-to-End (E2E) Testing](#3-end-to-end-e2e-testing)
+6. [API Testing](#4-api-testing)
+7. [Soroban Contract Testing](#5-soroban-contract-testing)
+8. [Coverage Goals](#coverage-goals)
+9. [CI Testing Requirements](#ci-testing-requirements)
+10. [Swagger / OpenAPI Contract Validation](#swagger--openapi-contract-validation)
+11. [Test Helpers and Fixtures](#test-helpers-and-fixtures)
 
 ---
 
-### 2. Integration Tests
+## Testing Philosophy
 
-**Purpose:** Verify multiple components work together with real dependencies (database, Redis, external services)
-
-**Scope:**
-- Service-to-service communication
-- Database queries (Prisma)
-- Redis cache operations
-- API endpoints with full middleware chain
-- Queue processing (BullMQ)
-
-**Tools:**
-- Jest
-- Testcontainers (optional, for database/Redis containers)
-- Real database instance or in-memory test DB (Prisma)
-
-**Example:**
-
-```typescript
-describe('EarningsService Integration', () => {
-  let service: EarningsService;
-  let prisma: PrismaService;
-  let redis: RedisService;
-
-  beforeAll(async () => {
-    const module = await Test.createTestingModule({
-      providers: [EarningsService, PrismaService, RedisService],
-    }).compile();
-    
-    service = module.get(EarningsService);
-    prisma = module.get(PrismaService);
-    redis = module.get(RedisService);
-  });
-
-  beforeEach(async () => {
-    await prisma.earning.deleteMany({}); // Clean DB before each test
-    await redis.flushdb();                 // Clear cache
-  });
-
-  it('should aggregate earnings from database and cache', async () => {
-    const userId = 1;
-    
-    await prisma.earning.create({
-      data: { userId, amount: 100, currency: 'USD', source: 'royalty' },
-    });
-
-    const result = await service.getUserTotalEarnings(userId);
-    expect(result.total).toBe(100);
-    expect(result.currency).toBe('USD');
-
-    const cached = await redis.get(service.getCacheKey(userId, 'USD'));
-    expect(cached).toBeDefined();
-  });
-});
-```
-
-**Coverage Goals:**
-- Core workflows: 100%
-- Happy path: 100%
-- Alternate paths (retries, failures): 80%
-
-**Run:**
-```bash
-npm run test:integration       # Run all integration tests
-npm run test -- --testPathPattern=integration
-```
-
-**File location:** `test/**/*integration*.ts`
-
-**Database Setup:**
-- Use `.env.test` for test configuration
-- Run `npx prisma migrate deploy --skip-generate` before tests
-- Transactions or truncation between tests for isolation
+- **Test behaviour, not implementation.** Tests should survive refactors that
+  do not change observable behaviour.
+- **Fast feedback first.** Unit tests are run on every commit; slow integration
+  and E2E tests run on every PR and main branch push.
+- **Isolation by default.** Unit tests mock all I/O (DB, Redis, HTTP). Only
+  integration tests talk to real infrastructure.
+- **One assertion per concept.** A failing test should pinpoint exactly what
+  broke.
+- **No flaky tests in CI.** Intermittent failures are treated as bugs and fixed
+  before merging.
 
 ---
 
-### 3. End-to-End (E2E) Tests
+## Test Pyramid
 
-**Purpose:** Verify complete user workflows from HTTP request to database and external effects
-
-**Scope:**
-- Full request-response cycle
-- Authentication and authorization
-- Error responses (4xx, 5xx)
-- State changes (database, cache, queue)
-- Webhook handling
-- Rate limiting
-
-**Tools:**
-- Jest + Supertest (for HTTP testing)
-- Real or test instance of the application
-
-**Example:**
-
-```typescript
-describe('Clip Generation E2E', () => {
-  let app: INestApplication;
-
-  beforeAll(async () => {
-    const module = await Test.createTestingModule({
-      imports: [AppModule],
-    }).compile();
-
-    app = module.createNestApplication();
-    await app.init();
-  });
-
-  afterAll(async () => {
-    await app.close();
-  });
-
-  it('should generate clip and emit WebSocket event', async () => {
-    const userId = 1;
-    const videoId = 'video-001';
-
-    const response = await request(app.getHttpServer())
-      .post('/clips/generate')
-      .set('Authorization', `Bearer token-${userId}`)
-      .send({
-        videoId,
-        startTime: 0,
-        endTime: 5000,
-      })
-      .expect(201);
-
-    expect(response.body).toHaveProperty('jobId');
-    expect(response.body.status).toBe('queued');
-
-    const clip = await prisma.clip.findFirst({ where: { videoId } });
-    expect(clip).toBeDefined();
-    expect(clip.status).toBe('generating');
-  });
-
-  it('should return 429 when rate limit exceeded', async () => {
-    const userId = 2;
-
-    for (let i = 0; i < 5; i++) {
-      await request(app.getHttpServer())
-        .post('/clips/generate')
-        .set('Authorization', `Bearer token-${userId}`)
-        .send({ videoId: `v-${i}`, startTime: 0, endTime: 1000 })
-        .expect(201);
-    }
-
-    await request(app.getHttpServer())
-      .post('/clips/generate')
-      .set('Authorization', `Bearer token-${userId}`)
-      .send({ videoId: 'v-5', startTime: 0, endTime: 1000 })
-      .expect(429);
-  });
-});
+```
+         ╔═══════════════════╗
+         ║  E2E / Contract   ║  ← slow, few, high-confidence
+         ║  (real services)  ║
+         ╠═══════════════════╣
+         ║  Integration      ║  ← medium speed, covers service wiring
+         ║  (mock DB / Redis)║
+         ╠═══════════════════╣
+         ║  Unit Tests       ║  ← fast, many, isolated
+         ║  (all mocked)     ║
+         ╚═══════════════════╝
 ```
 
-**Coverage Goals:**
-- Happy path: 100%
-- Error paths (auth failures, validation, rate limits): 100%
-- Alternate workflows: 90%
-
-**Run:**
-```bash
-npm run test:e2e                # Run all E2E tests
-npm run test:e2e -- --watch    # Watch mode
-```
-
-**Configuration:**
-- `jest-e2e.json` in project root
-- Separate `.env.test.e2e` for E2E database
-
-**File location:** `test/**/*.e2e-spec.ts`
+| Layer        | Framework  | Location                     | Speed  |
+|--------------|------------|------------------------------|--------|
+| Unit         | Jest       | `src/**/*.spec.ts`           | < 5 ms |
+| Integration  | Jest       | `test/*.integration-spec.ts` | < 1 s  |
+| E2E          | Jest + Supertest | `test/*.e2e-spec.ts`   | 2–10 s |
+| Contract     | Jest       | `test/*.api-spec.ts`         | < 1 s  |
+| Soroban      | Jest (sandbox) | `test/*.contract-spec.ts`| 10–60 s|
 
 ---
 
-### 4. Contract Testing (Soroban)
+## 1. Unit Testing
 
-**Purpose:** Verify Soroban smart contract logic for minting, royalties, and escrow
+### What to test
+- Service methods in isolation (all dependencies mocked).
+- Utility functions and helpers (`virality-score.util`, `ffmpeg.util`, etc.).
+- DTO validation rules — verify that invalid payloads produce the expected error messages.
+- Guard and decorator logic.
+- State machines, strategy patterns, and finite automata.
 
-**Scope:**
-- Contract function calls with valid inputs
-- Invalid input rejection
-- State mutations
-- Cross-contract calls
+### Framework and configuration
 
-**Tools:**
-- Soroban SDK test utilities (`#[cfg(test)]`)
-- Rust test framework
-
-**Example:**
-
-```rust
-#[cfg(test)]
-mod tests {
-  use super::*;
-
-  #[test]
-  fn test_mint_with_royalty() {
-    let env = Env::default();
-    let contract_id = env.register_contract(None, Contract);
-    let client = ContractClient::new(&env, &contract_id);
-
-    let creator = Address::generate(&env);
-    let platform = Address::generate(&env);
-
-    let tx = client.mint(
-      &creator,
-      &platform,
-      &BytesN::random(&env), // token URI hash
-      &1000,                 // creator royalty: 10%
-      &100,                  // platform royalty: 1%
-    );
-
-    assert_eq!(tx.status, TxStatus::Ok);
-    assert_eq!(client.get_balance(&creator), expected_amount);
+```json
+// package.json → jest config
+{
+  "jest": {
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": { "^.+\\.(t|j)s$": "ts-jest" },
+    "moduleFileExtensions": ["js","json","ts"],
+    "collectCoverageFrom": ["**/*.(t|j)s"],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node",
+    "setupFilesAfterFramework": ["<rootDir>/test-setup.ts"]
   }
 }
 ```
 
-**Run:**
+Run unit tests:
 ```bash
-cd contracts/nft-royalty
-cargo test --lib
-cargo test --all --all-targets
+npm test
+# With coverage:
+npm test -- --coverage
 ```
 
-**File location:** `contracts/**/*.rs` with `#[cfg(test)]` modules
+### Conventions
 
-**Coverage Goals:**
-- All public functions: 100%
-- All error paths: 100%
-- State invariants: validated in tests
+- **File naming:** `<name>.spec.ts` co-located with the source file.
+- **Module setup:** use `Test.createTestingModule({ providers: [...] })` with
+  mock providers for every external dependency.
+- **Mocking:** prefer `jest.fn()` over class mocks; reset with `jest.clearAllMocks()` in `beforeEach`.
+- **Async tests:** always `await` promises; use `resolves`/`rejects` matchers.
+
+### Example: service unit test
+
+```typescript
+// earnings.service.spec.ts
+describe('EarningsService', () => {
+  let service: EarningsService;
+  let prisma: jest.Mocked<PrismaService>;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        EarningsService,
+        { provide: PrismaService, useValue: { earning: { aggregate: jest.fn() } } },
+        { provide: RedisService, useValue: { get: jest.fn(), setex: jest.fn() } },
+        { provide: ConfigService, useValue: { earningsCacheTtlSeconds: 3600 } },
+      ],
+    }).compile();
+    service = module.get(EarningsService);
+    prisma = module.get(PrismaService);
+  });
+
+  it('returns cached value on cache hit', async () => {
+    // ...
+  });
+});
+```
+
+### DTO validation tests
+
+DTO tests live in `test/dto-validation.spec.ts`.  They use `class-validator`
+directly (no HTTP layer needed):
+
+```typescript
+import { validate } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
+
+async function validateDto<T>(cls: new () => T, plain: Record<string, unknown>) {
+  const instance = plainToInstance(cls, plain);
+  const errors = await validate(instance as object);
+  return errors.flatMap((e) => Object.values(e.constraints ?? {}));
+}
+
+it('fails when email is invalid', async () => {
+  const errs = await validateDto(LoginDto, { email: 'not-an-email', password: 'pass1234' });
+  expect(errs.some((e) => /valid email/i.test(e))).toBe(true);
+});
+```
 
 ---
 
-## Test Fixtures and Mocks
+## 2. Integration Testing
 
-### Database Fixtures
+### What to test
+- Multiple services wired together with mock external infrastructure (DB, Redis,
+  Stellar SDK, Cloudinary).
+- Repository layer — verifies Prisma queries produce the expected results against
+  the real query builder (tested against an in-memory SQLite or Postgres test DB).
+- BullMQ job enqueue / processor execution wiring.
+- Event emitter chains (`EventEmitter2`).
 
-Use Prisma seeding for test data:
+### Location
 
-```typescript
-// test/fixtures/earnings.fixture.ts
-export async function seedEarnings(prisma: PrismaService) {
-  return await prisma.earning.createMany({
-    data: [
-      { userId: 1, amount: 100, currency: 'USD', source: 'royalty' },
-      { userId: 1, amount: 50, currency: 'EUR', source: 'subscription' },
-    ],
-  });
+`test/*.integration-spec.ts` — run via the shared `jest-e2e.json` configuration:
+
+```bash
+npm run test:e2e
+```
+
+> **Note:** Integration specs that need a database require `DATABASE_URL` to point
+> to a dedicated test database.  Use `docker compose up -d` to start one locally.
+
+### Framework and configuration
+
+```json
+// test/jest-e2e.json
+{
+  "moduleFileExtensions": ["js","json","ts"],
+  "rootDir": "../",
+  "testRegex": ".integration-spec\\.ts$",
+  "transform": { "^.+\\.(t|j)s$": "ts-jest" },
+  "testEnvironment": "node"
 }
 ```
 
-Use in tests:
+### Example: earnings integration test
 
 ```typescript
-beforeEach(async () => {
-  await seedEarnings(prisma);
+// test/earnings.integration-spec.ts
+describe('EarningsAggregationService (integration)', () => {
+  it('calculates total earnings across multiple clips', async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        EarningsAggregationService,
+        CurrencyConversionService,
+        { provide: PrismaService, useValue: mockPrisma },
+        { provide: RedisService, useValue: mockRedis },
+        { provide: ConfigService, useValue: { earningsCacheTtlSeconds: 3600 } },
+      ],
+    }).compile();
+
+    const service = module.get(EarningsAggregationService);
+    const result = await service.getUserTotalEarnings(1, Currency.USD);
+    expect(result.total).toBe(60);
+  });
 });
 ```
 
-### Service Mocks
+### BullMQ processor integration
+
+Processor tests spin up a real `TestingModule` with a mock `Job` object:
 
 ```typescript
-const mockCurrencyConversionService = {
-  convert: jest.fn().mockReturnValue(100),
-};
-
-const module = await Test.createTestingModule({
-  providers: [
-    EarningsService,
-    {
-      provide: CurrencyConversionService,
-      useValue: mockCurrencyConversionService,
-    },
-  ],
-}).compile();
-```
-
-### API Mock Responses
-
-```typescript
-// test/mocks/soroban.mock.ts
-export const mockSorobanRpc = {
-  getTransaction: jest.fn().mockResolvedValue({
-    status: 'SUCCESS',
-    result: { ... },
-  }),
-};
-```
-
----
-
-## Test Isolation
-
-### Database Isolation
-
-- Use transactions: `prisma.$transaction()`
-- Wrap in `beforeEach`: Delete all records before each test
-- Use test database separate from dev/prod
-
-```typescript
-beforeEach(async () => {
-  await prisma.$transaction([
-    prisma.earning.deleteMany({}),
-    prisma.clip.deleteMany({}),
-    prisma.user.deleteMany({}),
-  ]);
-});
-```
-
-### Queue Isolation
-
-- Use test Redis instance or in-memory mock
-- Clear Redis between tests:
-
-```typescript
-beforeEach(async () => {
-  await redis.flushdb();
-});
-```
-
-### Async Isolation
-
-- Always `await` async operations
-- Use Jest hooks: `beforeEach`, `beforeAll`, `afterEach`, `afterAll`
-- Avoid time-dependent assertions (use fake timers if needed)
-
-```typescript
-jest.useFakeTimers();
-
-it('should retry after 2 seconds', () => {
-  service.retryAfter(2000);
-  jest.advanceTimersByTime(2000);
-  expect(service.isRetried()).toBe(true);
+it('processes clip generation job', async () => {
+  const job = { id: '1', data: { videoId: 'v1', ... }, updateProgress: jest.fn() } as any;
+  await processor.process(job);
+  expect(mockClipsService.updateClipStatus).toHaveBeenCalledWith('v1', 'ready');
 });
 ```
 
 ---
 
-## Coverage Requirements
+## 3. End-to-End (E2E) Testing
 
-### Minimum Coverage
+### What to test
+- Full HTTP request → service → database → HTTP response cycles.
+- Authentication flows (signup, login, token refresh, MFA).
+- Wallet connection and disconnection flows.
+- Subscription activation via Stellar webhook.
+- Rate limiting behaviour (429 responses).
+- Error response shapes (validation errors, 401, 403, 404, 500).
 
-| Metric | Target |
-|--------|--------|
-| Line coverage | 80% |
-| Branch coverage | 75% |
-| Function coverage | 80% |
-| Statement coverage | 80% |
+### Location
 
-### Coverage by Category
+`test/*.e2e-spec.ts`
 
-| Category | Target | Notes |
-|----------|--------|-------|
-| Authentication | 100% | Security-critical |
-| Authorization | 100% | Security-critical |
-| Data validation | 100% | Prevents invalid state |
-| Error handling | 90% | All error paths |
-| Business logic | 85% | Earnings, royalties, minting |
-| API endpoints | 85% | Happy + error paths |
-| Utilities | 80% | Helper functions |
+### Framework
 
-### Exempt from Coverage
+**Supertest** drives requests against a real NestJS application instance.  The
+database is a dedicated test schema that is migrated and seeded before the suite
+and torn down after.
 
-- Main application entrypoint (`main.ts`)
-- Configuration loaders
-- Generated code (Prisma, GraphQL)
-- External library re-exports
-- Mock implementations used only in tests
+```typescript
+// app.e2e-spec.ts
+describe('AppController (e2e)', () => {
+  let app: INestApplication;
 
----
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = module.createNestApplication();
+    await app.init();
+  });
 
-## Running Tests
+  afterAll(() => app.close());
 
-### Commands
+  it('GET /health → 200', () => {
+    return request(app.getHttpServer()).get('/health').expect(200);
+  });
+});
+```
+
+### Test database setup
 
 ```bash
-# All tests
-npm test
+# Start test containers
+docker compose -f docker-compose.test.yml up -d
 
-# Unit tests only
-npm run test -- --testPathPattern="\.spec\.ts$"
+# Run migrations against test DB
+DATABASE_URL="postgresql://postgres:password@localhost:5432/clipscash_test" \
+  npx prisma migrate deploy
 
-# Integration tests
-npm run test:integration
-
-# E2E tests
+# Run E2E suite
 npm run test:e2e
-
-# With coverage report
-npm run test -- --coverage
-
-# Watch mode
-npm run test -- --watch
-
-# Single file
-npm run test -- earnings.spec.ts
-
-# Match pattern
-npm run test -- --testNamePattern="should aggregate earnings"
 ```
 
-### CI/CD
+### Validation error shape test
 
-Tests run in GitHub Actions on every push:
+```typescript
+it('POST /auth/signup with invalid body → 400 with details array', async () => {
+  const res = await request(app.getHttpServer())
+    .post('/auth/signup')
+    .send({ name: 'J', email: 'not-an-email', password: 'weak' })
+    .expect(400);
 
+  expect(res.body.message).toBe('Validation failed');
+  expect(res.body.error).toBe('Bad Request');
+  expect(Array.isArray(res.body.details)).toBe(true);
+  expect(res.body.details.some((d: any) => d.field === 'email')).toBe(true);
+});
+```
+
+---
+
+## 4. API Testing
+
+### What to test
+- That controller handlers map to correct routes and HTTP methods.
+- That Swagger/OpenAPI decorator metadata matches the handler signature.
+- That response DTOs match the documented response schema.
+- That `@Auth()` guards are applied to authenticated routes.
+
+### Location
+
+`test/*.api-spec.ts`
+
+### Swagger / OpenAPI contract testing
+
+The OpenAPI document is generated at startup and exported to `openapi.json`.
+API contract tests load this JSON and assert specific paths and schemas:
+
+```typescript
+// test/contract.api-spec.ts
+import openapi from '../openapi.json';
+
+it('POST /auth/signup is documented', () => {
+  expect(openapi.paths['/auth/signup']).toBeDefined();
+  expect(openapi.paths['/auth/signup'].post).toBeDefined();
+});
+
+it('POST /auth/signup documents 400 Bad Request', () => {
+  const responses = openapi.paths['/auth/signup'].post.responses;
+  expect(responses['400']).toBeDefined();
+});
+```
+
+### Validating controllers against API spec
+
+For each controller handler, verify:
+1. The route and method match the OpenAPI spec.
+2. The `@ApiResponse` status codes are consistent with what the handler can
+   actually return.
+3. Response DTOs have `@ApiProperty` on every field.
+
+Run with:
+```bash
+npx jest --testPathPattern="api-spec"
+```
+
+### Example: validating 400 response structure
+
+```typescript
+it('validation errors include "details" array', async () => {
+  const res = await request(app.getHttpServer())
+    .post('/earnings/export')
+    .set('Authorization', `Bearer ${token}`)
+    .query({ format: 'pdf' })
+    .expect(400);
+
+  expect(res.body).toMatchObject({
+    statusCode: 400,
+    message: expect.any(String),
+    error: 'Bad Request',
+  });
+});
+```
+
+---
+
+## 5. Soroban Contract Testing
+
+### What to test
+- That `NftMintService.prepareMintTx()` builds a valid XDR transaction.
+- That royalty parameters are correctly encoded in the contract call.
+- That the `soroban-indexer` correctly parses on-chain events.
+- Contract invocation on Stellar Testnet (CI runs against testnet, not mainnet).
+
+### Framework
+
+Uses the `stellar-sdk` test utilities and a local Soroban sandbox (or testnet
+when `STELLAR_NETWORK=testnet`):
+
+Reusable invocation helpers live in `test/helpers/soroban-test.helper.ts`. Pass a
+`SorobanTestContext` containing a Soroban RPC server, contract ID, source account,
+and network passphrase. The helpers build and simulate calls without submitting
+or signing transactions; use an isolated sandbox or testnet contract with the
+required authorization and setup when asserting successful simulations.
+
+```typescript
+import StellarSdk from '@stellar/stellar-sdk';
+import {
+  mint_test_clip,
+  set_test_royalty,
+  simulate_test_sale,
+} from './helpers/soroban-test.helper';
+
+const context = {
+  server,
+  contractId: process.env.SOROBAN_NFT_CONTRACT_ID!,
+  sourceAccount,
+  networkPassphrase: StellarSdk.Networks.TESTNET,
+};
+
+const mint = await mint_test_clip(context, {
+  tokenId: 42,
+  owner: creatorAddress,
+  metadata: 'ipfs://test-metadata',
+  royaltyBps: 1000,
+});
+const royalties = await set_test_royalty(context, {
+  tokenId: 42,
+  shares: [{ recipient: creatorAddress, bps: 9000 }, { recipient: platformAddress, bps: 1000 }],
+});
+const sale = await simulate_test_sale(context, {
+  tokenId: 42,
+  seller: creatorAddress,
+  buyer: buyerAddress,
+  salePrice: 1_000_000_000n,
+  royaltyBps: 1000,
+});
+```
+
+Token IDs, metadata, royalty shares, sale price, and royalty basis points are
+configurable. Each helper returns the built transaction, simulation response,
+and invoked function name. `set_test_royalty` encodes recipient keys as Soroban
+addresses rather than symbols. Simulations are independent and do not commit
+ledger state: the example demonstrates call construction, not a stateful mint-
+then-set-royalty-then-sale sequence. For state-dependent assertions, submit
+signed calls to an isolated Soroban sandbox or test deployment and wait for each
+transaction to commit.
+
+```typescript
+// test/soroban-bindings.integration-spec.ts
+describe('SorobanBindings (integration)', () => {
+  it('builds a valid mint XDR', async () => {
+    const xdr = await nftMintService.prepareMintTx(clipId, walletAddress);
+    expect(xdr).toMatch(/^[A-Za-z0-9+/]+=*$/); // base64-encoded XDR
+  });
+});
+```
+
+### Test configuration
+
+```json
+// test/jest-contract.json
+{
+  "testRegex": "\\.contract-spec\\.ts$",
+  "testEnvironment": "node",
+  "testTimeout": 60000
+}
+```
+
+Run with:
+```bash
+npm run test:contract
+# or for CI
+STELLAR_NETWORK=testnet npm run test:contract
+```
+
+### Environment requirements
+
+| Variable | Required for contract tests | Value |
+|---|---|---|
+| `STELLAR_NETWORK` | ✅ | `testnet` |
+| `SOROBAN_NFT_CONTRACT_ID` | ✅ | Deployed testnet contract ID |
+| `SOROBAN_RPC_URL` | ✅ | `https://soroban-testnet.stellar.org` |
+
+---
+
+## Coverage Goals
+
+| Module           | Line Coverage | Branch Coverage |
+|------------------|--------------|-----------------|
+| `src/auth`       | ≥ 80%        | ≥ 70%           |
+| `src/clips`      | ≥ 80%        | ≥ 70%           |
+| `src/earnings`   | ≥ 85%        | ≥ 75%           |
+| `src/payouts`    | ≥ 85%        | ≥ 75%           |
+| `src/nft`        | ≥ 75%        | ≥ 65%           |
+| `src/wallets`    | ≥ 80%        | ≥ 70%           |
+| `src/stellar`    | ≥ 75%        | ≥ 65%           |
+| **Overall**      | **≥ 80%**    | **≥ 70%**       |
+
+Check coverage:
+```bash
+npm test -- --coverage --coverageReporters=text-summary
+```
+
+Enforce in CI with `--coverageThreshold`:
+```json
+// jest.config.js
+coverageThreshold: {
+  global: {
+    lines: 80,
+    branches: 70,
+  }
+}
+```
+
+---
+
+## CI Testing Requirements
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs the following
+stages on every push and PR:
+
+### Stage 1: Lint and type-check (always runs)
 ```yaml
-- name: Run tests
-  run: npm test -- --coverage
-
-- name: Upload coverage
-  uses: codecov/codecov-action@v3
+- run: npm run lint
+- run: npx tsc --noEmit
 ```
 
+### Stage 2: Unit tests
+```yaml
+- run: npm test -- --coverage --ci
+- uses: actions/upload-artifact@v4
+  with:
+    name: coverage-report
+    path: coverage/
+```
+
+### Stage 3: Integration and E2E tests
+```yaml
+services:
+  postgres:
+    image: postgres:14
+    env: { POSTGRES_PASSWORD: password }
+  redis:
+    image: redis:7
+- run: npm run test:e2e
+```
+
+### Stage 4: Build verification
+```yaml
+- run: npm run build
+```
+
+### Stage 5: Contract tests (only on `main` and release PRs)
+```yaml
+- run: npm run test:contract
+  env:
+    STELLAR_NETWORK: testnet
+    SOROBAN_NFT_CONTRACT_ID: ${{ secrets.TESTNET_CONTRACT_ID }}
+```
+
+### Failing CI gates
+A PR cannot be merged if any of these fail:
+- Any unit test fails.
+- Global line coverage drops below 80%.
+- Any E2E test fails.
+- TypeScript compilation fails.
+- ESLint reports errors.
+
 ---
 
-## Best Practices
+## Swagger / OpenAPI Contract Validation
 
-1. **Test behavior, not implementation**
-   - Bad: `expect(mockService.convert).toHaveBeenCalled()`
-   - Good: `expect(result.currency).toBe('USD')`
+### How the spec is generated
 
-2. **Use descriptive test names**
-   - Bad: `it('works')`
-   - Good: `it('should convert earnings to target currency when conversion rate exists')`
+The OpenAPI JSON is auto-generated at server startup from `@ApiTags`,
+`@ApiOperation`, `@ApiResponse`, and `@ApiProperty` decorators, then written
+to `openapi.json`.  The spec is committed to the repo so diffs are visible in
+PRs.
 
-3. **One assertion per test** (preferred)
-   - Bad: Multiple unrelated assertions
-   - Good: One logical operation and verify result
-
-4. **Avoid test interdependencies**
-   - Bad: Test A sets up data for Test B
-   - Good: Each test is self-contained via `beforeEach`
-
-5. **Use factory functions for test data**
-   - Bad: Hardcoded test objects scattered in tests
-   - Good: Centralized factory: `createTestEarning({ amount: 100 })`
-
-6. **Fail tests intentionally during development**
-   - Red -> Green -> Refactor (TDD)
-   - Write test first, watch it fail, implement fix
-
----
-
-## Troubleshooting
-
-### Tests timing out
-
-- Increase Jest timeout: `jest.setTimeout(10000)`
-- Check for missing `await`
-- Verify database/Redis connectivity
-
-### Flaky tests
-
-- Avoid `Date.now()` without mocking time
-- Don't rely on timing (`setTimeout` assertions)
-- Ensure proper cleanup in `afterEach`
-
-### Database migrations not applied
+### Validating the spec in CI
 
 ```bash
-npx prisma migrate deploy --skip-generate
-npx prisma db seed
+# Regenerate and diff
+npm run start:dev &
+sleep 5
+curl http://localhost:3000/api/docs-json > openapi.json
+git diff --exit-code openapi.json
 ```
 
-### Redis connection refused
+A changed `openapi.json` without a corresponding PR description update is a
+signal that API contracts changed unintentionally.
 
-```bash
-# Start Redis
-redis-server
+### API contract tests
 
-# Or use Docker
-docker run -d -p 6379:6379 redis:7-alpine
+`test/contract.api-spec.ts` imports `openapi.json` directly and asserts:
+
+```typescript
+import spec from '../openapi.json';
+
+it('every protected endpoint documents 401 Unauthorized', () => {
+  for (const [path, methods] of Object.entries(spec.paths)) {
+    for (const [method, op] of Object.entries(methods as any)) {
+      if ((op as any).security?.length) {
+        expect((op as any).responses?.['401']).toBeDefined();
+      }
+    }
+  }
+});
 ```
+
+### Controller ↔ spec alignment checklist
+
+For every new controller endpoint, verify:
+- [ ] `@ApiOperation({ summary, description })` is present.
+- [ ] `@ApiResponse` covers at least the happy-path status code.
+- [ ] `@ApiBadRequestResponse` is present when the handler can throw `BadRequestException`.
+- [ ] `@ApiUnauthorizedResponse` is present when `@Auth()` is applied.
+- [ ] Response DTO has `@ApiProperty` on every field.
+- [ ] Query params have `@ApiQuery` with `required`, `type`, `description`, and `example`.
 
 ---
 
-## Continuous Improvement
+## Core Module Coverage Gate (#1026)
 
-- Review coverage reports monthly
-- Add tests for new bugs (regression prevention)
-- Refactor flaky tests
-- Measure test execution time and optimize slow ones
+`npm run test:cov:core` runs a **focused** coverage gate over the critical
+backend modules. The repository-wide `npm run test:cov` threshold is
+unchanged (35%); this gate enforces **80%+** on the modules themselves so a
+regression in Clips, Videos, Web3, Earnings, Payouts or queue-processor code is
+caught without waiting for the global report.
+
+```bash
+npm run test:cov:core
+```
+
+Configuration lives in `jest.core-coverage.config.js` (report written to
+`coverage/core-modules/`). Current baseline — **99.55% statements, 93.33%
+branches, 100% functions, 99.51% lines** across 10 modules:
+
+| Module | Area | % Stmts | % Branch | % Funcs |
+|--------|------|---------|----------|---------|
+| `payouts/payout-state-machine.service.ts` | Payouts | 100 | 97.36 | 100 |
+| `payouts/payout-retry-strategy.service.ts` | Payouts / queue | 96.87 | 94.44 | 100 |
+| `queue/retry-backoff-config.service.ts` | Queue processors | 100 | 75 | 100 |
+| `common/helpers/queue-registration.helper.ts` | Queue processors | 100 | 100 | 100 |
+| `videos/helpers/video-stats.helper.ts` | Videos | 100 | 100 | 100 |
+| `videos/helpers/video-validation.helper.ts` | Videos | 100 | 100 | 100 |
+| `videos/helpers/video-metadata.helper.ts` | Videos | 100 | 90 | 100 |
+| `clips/caption.util.ts` | Clips | 100 | 100 | 100 |
+| `nft/gas-metrics.service.ts` | Web3 / Stellar | 100 | 100 | 100 |
+| `earnings/currency-conversion.service.ts` | Earnings | 100 | 100 | 100 |
+
+To add a module to the gate, append its path to
+`CORE_MODULE_COVERAGE_PATTERNS` and its spec basename to `CORE_SUITE_PATTERN`
+in `jest.core-coverage.config.js`.
+
+---
+
+## Test Helpers and Fixtures
+
+### `src/testing/`
+- `authenticated-request.util.ts` — `createAuthenticatedRequest(user)` builds a
+  supertest factory that signs a real JWT and attaches it as
+  `Authorization: Bearer <token>`, the same security scheme documented by
+  Swagger (`@Auth()` → `ApiBearerAuth('access-token')`) and read back by
+  `JwtStrategy` via `ExtractJwt.fromAuthHeaderAsBearerToken()`.
+  Covered by `authenticated-request.util.spec.ts` in `npm test`.
+- `test/helpers/authenticated-request.helper.ts` — re-export so specs under
+  `test/` have a stable import path.
+
+#### `createAuthenticatedRequest(user, options?)`
+
+```typescript
+import { createAuthenticatedRequest, TEST_USERS } from '../src/testing';
+
+// The app only needs to be listening when supertest drives a real socket.
+const http = createAuthenticatedRequest(TEST_USERS.user, {
+  app: app.getHttpServer(),
+});
+
+await http.get('/payouts').expect(200);
+await http.post('/payouts/request').send({ amount: 50, currency: 'USD' });
+```
+
+The app can also be bound later (`createAuthenticatedRequest(user).forApp(app)`)
+or passed per call (`http.get(app, '/payouts')`).
+
+| Option | Purpose |
+|--------|---------|
+| `app` / `agent` | supertest target — a Nest app, `app.getHttpServer()`, or `request(app)` |
+| `cookie` | also send `access_token=<jwt>`, mirroring `CookieService.setTokenCookies` |
+| `headers` | extra headers merged on every request |
+| `anonymous` | omit the `Authorization` header (assert `401`) |
+| `expiresIn`, `emailVerified`, `extraClaims` | per-token overrides |
+
+The returned factory also exposes:
+
+- `token` / `headers` / `user` — what was used to build the request.
+- `with(extraHeaders)` — derive a factory with more headers (CSRF, idempotency keys).
+- `unauthenticated()` — same request with the credentials stripped.
+
+Ready-made users live in `TEST_USERS` (`user`, `otherUser`, `editor`, `admin`,
+`unverified`). Roles are **not** JWT claims (see `SECURITY.md`), so
+`@Roles` / `@Admin` specs pair the helper with `overrideJwtAuthGuard`:
+
+```typescript
+import { Test } from '@nestjs/testing';
+import { overrideJwtAuthGuard, TEST_USERS } from '../src/testing';
+
+const moduleRef = await overrideJwtAuthGuard(
+  Test.createTestingModule({ controllers: [PayoutsController], providers }),
+  TEST_USERS.admin,
+).compile();
+```
+
+Lower-level helpers (`signTestAccessToken`, `authHeadersFor`, `authCookieFor`,
+`buildTestJwtPayload`) are exported for specs that need the token without
+supertest.
+
+### `test/helpers/`
+- `ffmpeg-mock.helper.ts` — fluent-ffmpeg mock for clip-generation tests.
+- `authenticated-request.helper.ts` — re-export of `src/testing/authenticated-request.util`.
+
+### `src/videos/helpers/mocks/`
+- `claude.mock.ts` — reusable Claude (Anthropic) API mock for AI tests (#1027).
+
+#### Claude API mock
+
+`detectMomentsWithClaude()` loads `@anthropic-ai/sdk` through an indirect
+dynamic import so the SDK stays an optional runtime dependency. That import
+always throws inside a Jest run, which meant every AI test silently exercised
+the "API unavailable" fallback. The mock plugs a fake SDK into the
+`setAnthropicSdkLoader` seam, so the success, empty, malformed, API-failure,
+rate-limit and timeout paths are all exercised without a real API call.
+
+```typescript
+import { claude, defaultMockMoments } from './helpers/mocks/claude.mock';
+
+beforeEach(() => claude.install());
+afterEach(() => claude.restore());
+
+it('uses the AI moments', async () => {
+  claude.mockSuccess({ clipCount: 12, clipDuration: 30 });
+  const result = await service.detectViralTimestamps(1);
+  expect(result).toHaveLength(12);
+});
+```
+
+| Scenario helper | Simulates |
+|------------------|-----------|
+| `mockSuccess()` | 200 with a JSON `clips` array (defaults to 12 clips, clearing `minClips`) |
+| `mockEmptyResponse()` | 200 with an empty / refusal body |
+| `mockMalformedResponse()` | 200 with a non-JSON or unusable-JSON body |
+| `mockTooFewClips()` / `mockUnexpectedShape()` | Valid JSON below `minClips`, or a `clips` key of the wrong type |
+| `mockApiFailure()` / `mockNetworkError()` | HTTP 500 and a transport-level failure |
+| `mockRateLimit()` / `mockTimeout()` / `mockOverloaded()` | 429, 408 and 529 |
+| `mockFailure(kind, message?)` | any of the above, with a custom message |
+
+The mock also records every request (`claude.lastRequest`, `claude.callCount`),
+so specs can assert the model, `max_tokens`, temperature and the media content
+sent to Claude. `claude.reset()` clears recorded requests between tests, and
+`restore()` puts the production lazy import back.
+
+### `test/mocks/`
+- `cloudinary.mock.ts` — Cloudinary SDK upload stub.
+- `stellar-sdk.mock.ts` — Stellar SDK mock for wallet/transaction tests.
+
+### `test/fixtures/`
+- `video.fixture.ts` — creates Video DB records with default fields.
+- `clip.fixture.ts` — creates Clip DB records linked to video fixtures.
+
+### `src/__mocks__/`
+- `cockatiel.ts` — circuit-breaker stub (prevents real network calls in unit tests).
+- `cloudinary.ts` — Cloudinary auto-mock.
+
+### `test/__mocks__/`
+- `fluent-ffmpeg.ts` — complete fluent-ffmpeg module mock.
+- `cockatiel.js` — CJS version of the circuit-breaker stub.
+
+### Creating a new fixture
+
+```typescript
+// test/fixtures/earning.fixture.ts
+import { PrismaService } from '../../src/prisma/prisma.service';
+
+export async function createEarningFixture(
+  prisma: PrismaService,
+  clipId: number,
+  amount = 50,
+) {
+  return prisma.earning.create({
+    data: { clipId, amount, currency: 'USD', date: new Date(), source: 'royalty' },
+  });
+}
+```

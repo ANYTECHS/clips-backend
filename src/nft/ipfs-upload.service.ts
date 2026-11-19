@@ -14,6 +14,10 @@ export interface NftRoyaltyInfo {
   bps: number;
   percent: number;
   recipient?: string;
+  /** Asset royalties are paid in: "native" (XLM) or a custom asset code (e.g. "USDC"). */
+  asset?: string;
+  /** Stellar Asset Contract (SAC) address, present when `asset` is not "native". */
+  assetContractId?: string;
 }
 
 export interface NftMetadata {
@@ -23,12 +27,25 @@ export interface NftMetadata {
   animation_url: string;
   external_url?: string;
   attributes: NftMetadataAttribute[];
+  collection?: {
+    name: string;
+    family: string;
+    collectionId: string;
+    type: string;
+    metadata: Record<string, unknown>;
+  };
   /** OpenSea-compatible creator royalty in basis points (e.g. 1000 = 10%). */
   seller_fee_basis_points: number;
   /** Optional royalty recipient (Stellar G... address when known). */
   fee_recipient?: string;
   /** Explicit royalty block for marketplaces / mint clients. */
   royalty: NftRoyaltyInfo;
+  viralityScore: number;
+  originalDuration?: number;
+  createdAt: string;
+  duration: number;
+  platforms: string[];
+  thumbnail: string;
 }
 
 export type IpfsProvider = 'pinata' | 'nftstorage';
@@ -84,6 +101,46 @@ export class IpfsUploadService {
     if (!metadata.animation_url?.trim()) {
       throw new BadRequestException(
         'NFT metadata is missing required field: animation_url',
+      );
+    }
+    if (typeof metadata.thumbnail !== 'string' || !metadata.thumbnail.trim()) {
+      throw new BadRequestException(
+        'NFT metadata is missing required field: thumbnail',
+      );
+    }
+    if (
+      typeof metadata.duration !== 'number' ||
+      !Number.isFinite(metadata.duration) ||
+      metadata.duration < 0
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing required field: duration',
+      );
+    }
+    if (
+      typeof metadata.viralityScore !== 'number' ||
+      !Number.isFinite(metadata.viralityScore)
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing required field: viralityScore',
+      );
+    }
+    if (
+      typeof metadata.createdAt !== 'string' ||
+      !Number.isFinite(Date.parse(metadata.createdAt))
+    ) {
+      throw new BadRequestException(
+        'NFT metadata is missing a valid createdAt timestamp',
+      );
+    }
+    if (
+      !Array.isArray(metadata.platforms) ||
+      metadata.platforms.some(
+        (platform) => typeof platform !== 'string' || !platform.trim(),
+      )
+    ) {
+      throw new BadRequestException(
+        'NFT metadata platforms must be an array of non-empty strings',
       );
     }
     if (!Array.isArray(metadata.attributes)) {

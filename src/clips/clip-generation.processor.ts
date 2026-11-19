@@ -23,6 +23,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto';
+import {
+  computeBackoffDelayMs,
+  isFinalAttempt as isJobFinalAttempt,
+} from '../queue/processor-error.handler';
 
 export interface ClipGenerationJob {
   videoId: string;
@@ -47,6 +51,8 @@ export interface ClipGenerationJob {
   existingViralityScore?: number;
   /** Existing clip URL to replace/delete during regeneration */
   existingClipUrl?: string;
+  /** Creator royalty in BPS (0–1500). Defaults to 1000 when omitted. */
+  royaltyBps?: number;
 }
 
 export interface ClipProcessingResult {
@@ -66,6 +72,8 @@ const PROGRESS = {
 
 /** Job timeout: 30 minutes */
 const JOB_TIMEOUT_MS = 30 * 60 * 1000;
+const UPLOAD_MAX_ATTEMPTS = 3;
+const UPLOAD_RETRY_BASE_DELAY_MS = 1000;
 
 /**
  * BullMQ processor for clip-generation jobs.
@@ -155,13 +163,19 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       await this.clipsService.refreshQueueDepth();
 
       // ── Step 1: video_download ─────────────────────────────────────────
-      await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.VIDEO_DOWNLOAD,
+        step: 'video_download',
+      });
 
-      // ── Step 2: ffmpeg_cut ─────────────────────────────────────────────
+      // ── Step 2: ffmpeg_processing ───────────────────────────────────────
       const { actualDuration, viralityScore } = await this.cutAndAnalyze(job, data, controller);
 
       // ── Step 3: upload ─────────────────────────────────────────────────
-      await job.updateProgress({ percent: PROGRESS.UPLOAD, step: 'upload' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.UPLOAD,
+        step: 'upload',
+      });
 
       // Clean up existing Cloudinary asset if we are regenerating
       if (data.existingClipUrl) {
@@ -178,18 +192,26 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       const uploadResult = await this.uploadWithAbort(data.outputPath, clipId, controller);
 
       if (uploadResult.error) {
+        // Don't delete local file on upload failure - keep it as fallback
+        this.logger.warn(
+          `Upload failed for ${clipId}, keeping local file: ${data.outputPath}`
+        );
         return this.buildUploadFailedClip(data, clipId, actualDuration, viralityScore, uploadResult.error);
       }
 
-      // ── Step 4: done ───────────────────────────────────────────────────
+      // ── Step 4: cleanup and completion ─────────────────────────────────
+      // Only delete local file after successful Cloudinary upload
       await this.cloudinaryService.deleteLocalFile(data.outputPath);
-      await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
+      await this.safeUpdateProgress(job, { percent: PROGRESS.DONE, step: 'done' });
 
       this.metricsService.incrementClipsGenerated('success');
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_GENERATION_QUEUE, 'success');
       this.clearJobResources(data.videoId, String(job.id ?? ''), timeout);
 
-      this.logger.log(`Clip processing complete: ${clipId} → ${uploadResult.secure_url}`);
+      this.logger.log(
+        `Clip processing complete: ${clipId} → video: ${uploadResult.secure_url}, ` +
+        `thumbnail: ${uploadResult.thumbnail_url || 'fallback'}`
+      );
 
       return this.buildSuccessClip(data, clipId, actualDuration, viralityScore, uploadResult);
     } catch (error) {
@@ -220,10 +242,16 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
     try {
       // ── Step 1: video_download ─────────────────────────────────────────
-      await job.updateProgress({ percent: PROGRESS.VIDEO_DOWNLOAD, step: 'video_download' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.VIDEO_DOWNLOAD,
+        step: 'video_download',
+      });
 
       // ── Step 2: ai_analysis — detect viral timestamps ──────────────────
-      await job.updateProgress({ percent: PROGRESS.AI_ANALYSIS, step: 'ai_analysis' });
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.AI_ANALYSIS,
+        step: 'ai_analysis',
+      });
 
       if (controller.signal.aborted) {
         throw new Error('Aborted');
@@ -235,7 +263,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
       // ── Step 3: cleanup temp file ──────────────────────────────────────
       await this.safeDeleteLocalFile(inputPath);
-      await job.updateProgress({ percent: PROGRESS.DONE, step: 'done' });
+      await this.safeUpdateProgress(job, { percent: PROGRESS.DONE, step: 'done' });
 
       this.clearJobResources(String(videoId), String(job.id ?? ''), timeout);
       return this.buildUploadProcessedClip(videoId, userId);
@@ -265,9 +293,10 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ClipGenerationJob>, error: Error): void {
     const maxAttempts = job.opts.attempts ?? 1;
-    const isFinalAttempt = job.attemptsMade >= maxAttempts;
+    // Standardized final-attempt check (Issue #1235).
+    const isFinal = isJobFinalAttempt(job);
 
-    if (!isFinalAttempt) {
+    if (!isFinal) {
       this.logRetryWarning(job, error, maxAttempts);
       return;
     }
@@ -379,7 +408,10 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       videoDuration: data.videoDuration,
       signal: controller.signal,
     });
-    await job.updateProgress({ percent: PROGRESS.FFMPEG_CUT, step: 'ffmpeg_cut' });
+    await this.safeUpdateProgress(job, {
+      percent: PROGRESS.FFMPEG_CUT,
+      step: 'ffmpeg_processing',
+    });
 
     const metadata = await getVideoMetadata(data.outputPath);
     const actualDuration = parseFloat(metadata.duration.toFixed(3));
@@ -416,29 +448,88 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   }
 
   /**
-   * Upload clip buffer to Cloudinary with 2 retries (3 total attempts).
+   * Upload clip buffer to Cloudinary with retry logic.
+   * Issue #727: Enhanced with proper error handling and logging.
    * Returns an object with `error` set on failure instead of throwing.
    */
-private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
-  const maxAttempts = 3;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const buffer = await this.cloudinaryService.readFileToBuffer(filePath);
-      const result = await this.cloudinaryService.uploadVideoFromBuffer(buffer, clipId, {}, 2);
-      if (!result.error) {
-        return result;
+  private async uploadToCloudinary(filePath: string, clipId: string): Promise<any> {
+    this.logger.log(`Starting Cloudinary upload for ${clipId} from ${filePath}`);
+    
+    for (let attempt = 1; attempt <= UPLOAD_MAX_ATTEMPTS; attempt++) {
+      try {
+        // Read the FFmpeg output file to buffer
+        const buffer = await this.cloudinaryService.readFileToBuffer(filePath);
+        
+        this.logger.log(
+          `Upload attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} for ${clipId} ` +
+          `(buffer size: ${Math.round(buffer.length / 1024)}KB)`
+        );
+
+        // Upload to Cloudinary with automatic thumbnail generation
+        const result = await this.cloudinaryService.uploadVideoFromBuffer(
+          buffer, 
+          clipId, 
+          {
+            folder: 'clips',
+            resourceType: 'video'
+          },
+          attempt
+        );
+
+        if (!result.error && result.secure_url) {
+          this.logger.log(
+            `Cloudinary upload successful for ${clipId} on attempt ${attempt}: ` +
+            `video=${result.secure_url}, thumbnail=${result.thumbnail_url}`
+          );
+          return result;
+        }
+
+        // Log the specific error from Cloudinary
+        const errorMsg = result.error || 'No secure_url in response';
+        this.logger.warn(
+          `Cloudinary upload attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} failed for ${clipId}: ${errorMsg}`
+        );
+
+        // Don't retry if it's the last attempt
+        if (attempt >= UPLOAD_MAX_ATTEMPTS) {
+          return { 
+            error: `Upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts: ${errorMsg}`, 
+            secure_url: '', 
+            public_id: clipId 
+          };
+        }
+
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        this.logger.error(
+          `Upload to Cloudinary attempt ${attempt}/${UPLOAD_MAX_ATTEMPTS} threw error for ${clipId}: ${errorMsg}`
+        );
+
+        // Don't retry if it's the last attempt
+        if (attempt >= UPLOAD_MAX_ATTEMPTS) {
+          return { 
+            error: `Upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts: ${errorMsg}`, 
+            secure_url: '', 
+            public_id: clipId 
+          };
+        }
       }
-      this.logger.warn(`Cloudinary upload attempt ${attempt} failed for ${clipId}: ${result.error}`);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Upload to Cloudinary attempt ${attempt} failed for ${clipId}: ${msg}`);
+
+      // Wait before retrying (exponential backoff)
+      if (attempt < UPLOAD_MAX_ATTEMPTS) {
+        const delayMs = UPLOAD_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        this.logger.log(`Waiting ${delayMs}ms before retry attempt ${attempt + 1} for ${clipId}`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
     }
-    if (attempt < maxAttempts) {
-      await new Promise(res => setTimeout(res, 1000 * attempt));
-    }
+
+    // This should never be reached, but just in case
+    return { 
+      error: `Upload failed after retries`, 
+      secure_url: '', 
+      public_id: clipId 
+    };
   }
-  return { error: 'Upload failed after retries', secure_url: '', public_id: clipId };
-}
 
   /**
    * Handle errors from the main clip processing try/catch.
@@ -520,11 +611,8 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
 
   /** Log a warning for intermediate (non-final) job failures. */
   private logRetryWarning(job: Job<ClipGenerationJob>, error: Error, maxAttempts: number): void {
-    const backoffDelay = job.opts.backoff
-      ? typeof job.opts.backoff === 'number'
-        ? job.opts.backoff
-        : (job.opts.backoff.delay ?? 1000) * Math.pow(2, job.attemptsMade - 1)
-      : 0;
+    // Standardized backoff computation (Issue #1235).
+    const backoffDelay = computeBackoffDelayMs(job, 1000);
 
     this.logger.warn(
       `[RETRY] Clip job ${job.id} failed on attempt ${job.attemptsMade}/${maxAttempts} — ` +
@@ -564,12 +652,38 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       typeof progress === 'object' && progress !== null
         ? (progress as any).percent
         : progress;
-    const step: ClipProgressStep =
+    const stepRaw =
       typeof progress === 'object' && progress !== null
-        ? ((progress as any).step ?? 'ffmpeg_cut')
-        : this.stepFromPercent(Number(rawPercent));
+        ? ((progress as any).step ?? 'ffmpeg_processing')
+        : undefined;
+    const normalizedStep = this.normalizeStep(stepRaw ?? this.stepFromPercent(Number(rawPercent)));
     const percent = Math.max(0, Math.min(100, Math.round(Number(rawPercent) || 0)));
-    return { percent, step };
+    return { percent, step: normalizedStep };
+  }
+
+  /** Normalizes legacy step values to the canonical progression names used by the API and WS clients. */
+  private normalizeStep(step: ClipProgressStep | string | undefined): ClipProgressStep {
+    switch (step) {
+      case 'ffmpeg_cut':
+        return 'ffmpeg_processing';
+      default:
+        return (step as ClipProgressStep) ?? 'video_download';
+    }
+  }
+
+  /** Safely report progress without failing the BullMQ job if reporting itself errors. */
+  private async safeUpdateProgress(
+    job: Job<ClipGenerationJob>,
+    payload: { percent: number; step: ClipProgressStep },
+  ): Promise<void> {
+    try {
+      await job.updateProgress(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Failed to update BullMQ progress for job ${job.id}: ${message}`,
+      );
+    }
   }
 
   /**
@@ -595,14 +709,14 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
   private stepFromPercent(percent: number): ClipProgressStep {
     if (percent <= 10) return 'video_download';
     if (percent <= 30) return 'ai_analysis';
-    if (percent <= 60) return 'ffmpeg_cut';
+    if (percent <= 60) return 'ffmpeg_processing';
     if (percent <= 90) return 'upload';
     return 'done';
   }
 
   // ── Clip builder helpers ───────────────────────────────────────────────────
 
-  /** Build a Clip object for a successful generation. */
+  /** Build a Clip object for a successful generation with enhanced Cloudinary result. */
   private buildSuccessClip(
     data: ClipGenerationJob,
     clipId: string,
@@ -610,6 +724,15 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
     viralityScore: number,
     uploadResult: any,
   ): Clip {
+    const thumbnailUrl = uploadResult.thumbnail_url || 
+                        this.cloudinaryService.generateThumbnailUrl(uploadResult.public_id || clipId, 0.5);
+    
+    this.logger.log(
+      `Built success clip: ${clipId}, duration=${actualDuration}s, ` +
+      `viralityScore=${viralityScore}, video=${uploadResult.secure_url}, ` +
+      `thumbnail=${thumbnailUrl}`
+    );
+
     return {
       id: clipId,
       videoId: data.videoId,
@@ -621,12 +744,12 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       transcript: data.transcript,
       viralityScore,
       clipUrl: uploadResult.secure_url,
-      thumbnail: uploadResult.thumbnail_url,
+      thumbnail: thumbnailUrl,
       status: 'success',
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
-      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      royaltyBps: data.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
       nftStatus: 'none',
       mintAddress: null,
       mintedAt: null,
@@ -645,9 +768,10 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
   ): Clip {
     this.metricsService.incrementClipsGenerated('failure');
     this.logger.error(
-      `Cloudinary upload failed after retries for ${clipId}: ${errorMessage}. ` +
-        `Keeping local file as fallback: ${data.outputPath}`,
+      `Cloudinary upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts for ${clipId}: ${errorMessage}. ` +
+        `Keeping local file as fallback: ${data.outputPath}`
     );
+    
     return {
       id: clipId,
       videoId: data.videoId,
@@ -658,14 +782,18 @@ private async uploadToCloudinary(filePath: string, clipId: string): Promise<any>
       positionRatio: data.positionRatio,
       transcript: data.transcript,
       viralityScore,
-      clipUrl: '',
-      thumbnail: undefined,
+      clipUrl: '', // Empty since Cloudinary upload failed
+      thumbnail: null, // No thumbnail available
       status: 'upload_failed',
-      localFilePath: data.outputPath,
-      error: `Cloudinary upload failed: ${errorMessage}`,
+      localFilePath: data.outputPath, // Keep local file as fallback
+      error: `Cloudinary upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts: ${errorMessage}`,
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
+      royaltyBps: data.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
+      nftStatus: 'none',
+      mintAddress: null,
+      mintedAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };

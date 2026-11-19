@@ -1,11 +1,13 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
+import { Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { PayoutsService } from './payouts.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { handleFailedEvent, handleProcessingError } from '../queue/processor-error.handler';
 
 interface PayoutRetryJob {
   payoutId: number;
@@ -14,14 +16,19 @@ interface PayoutRetryJob {
 @Processor(PAYOUT_RETRY_QUEUE, {
   concurrency: getBullMQWorkerConfig(new ConfigService()).payoutRetryConcurrency,
 })
-export class PayoutRetryProcessor extends WorkerHost {
+export class PayoutRetryProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(PayoutRetryProcessor.name);
 
   constructor(
     private payoutsService: PayoutsService,
     private metricsService: MetricsService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
+  }
+
+  onModuleInit(): void {
+    this.shutdownService.register(this.worker);
   }
 
   async process(job: Job<PayoutRetryJob>): Promise<void> {
@@ -40,20 +47,20 @@ export class PayoutRetryProcessor extends WorkerHost {
         'success',
       );
     } catch (error) {
-      this.logger.error(
-        `Payout retry failed for payout ${payoutId}:`,
+      handleProcessingError(
+        this.logger,
+        this.metricsService,
+        PAYOUT_RETRY_QUEUE,
+        job,
+        jobMetricId,
         error,
       );
-      this.metricsService.recordJobCompletion(
-        jobMetricId,
-        PAYOUT_RETRY_QUEUE,
-        'failure',
-      );
-      this.metricsService.recordJobFailure(
-        PAYOUT_RETRY_QUEUE,
-        error instanceof Error ? error.message : String(error),
-      );
-      throw error;
     }
+  }
+
+  @OnWorkerEvent('failed')
+  onFailed(job: Job<PayoutRetryJob>, error: Error): void {
+    // Standardized retry vs final logging + final_failure metric (Issue #1235).
+    handleFailedEvent(this.logger, this.metricsService, PAYOUT_RETRY_QUEUE, job, error, 5000);
   }
 }

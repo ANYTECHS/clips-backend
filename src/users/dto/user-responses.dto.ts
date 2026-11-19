@@ -17,13 +17,19 @@ export class UserResponseDto {
   @ApiPropertyOptional({ example: '2026-07-26T12:00:00.000Z' })
   emailVerified?: Date | null;
 
-  @ApiPropertyOptional({ example: 'GC6X********UTZF3' })
+  @ApiPropertyOptional({ example: 'GABF...KJ93XD' })
   stellarPublicKey?: string | null;
 
   @ApiPropertyOptional({ example: 'custodial' })
   walletType?: string | null;
 
-  @ApiProperty()
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether user is visible on the leaderboard',
+  })
+  showOnLeaderboard?: boolean;
+
+  @ApiProperty({ example: '2026-07-26T12:00:00.000Z' })
   createdAt: Date;
 
   @Exclude()

@@ -1,35 +1,32 @@
-/** BullMQ queue name for social-media posting jobs */
+/**
+ * BullMQ queue name and priority constants for the clip-posting queue.
+ * Jobs on this queue post clips to social media platforms via Ayrshare.
+ */
 export const CLIP_POSTING_QUEUE = 'clip-posting';
+export const CLIP_POSTING_JOB = 'post-clip';
 
 /**
- * Posting jobs are I/O bound and lower priority than clip generation.
+ * Clip-posting jobs are medium priority — slightly below clip-generation
+ * because generation must complete before posting is possible.
  */
-export const CLIP_POSTING_QUEUE_PRIORITY = 10;
+export const CLIP_POSTING_QUEUE_PRIORITY = 3;
 
-/**
- * Job data shape for a posting job.
- */
-export interface ClipPostingJob {
+export interface ClipPostingJobData {
   clipId: number;
-  userId: number;
-  mediaUrl: string;
-  caption: string;
   platforms: string[];
+  userId: number;
+  caption?: string;
+  hashtags?: string[];
+  scheduledAt?: string;
 }
 
-/**
- * Default job options for the clip-posting queue.
- *
- * removeOnComplete: keep the last 200 completed posting jobs (higher volume).
- * removeOnFail:     never auto-delete — failed social posts need auditing.
- */
 export const CLIP_POSTING_JOB_OPTIONS = {
-  attempts: 5,
+  attempts: 3,
   backoff: {
     type: 'exponential' as const,
-    delay: 2000,
+    delay: 5000,
   },
-  priority: CLIP_POSTING_QUEUE_PRIORITY,
-  removeOnComplete: { count: 200 },
+  removeOnComplete: false,
   removeOnFail: false,
+  priority: CLIP_POSTING_QUEUE_PRIORITY,
 } as const;

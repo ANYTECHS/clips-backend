@@ -27,6 +27,7 @@ const mockPrisma: any = {
     aggregate: jest.fn(),
     findUnique: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
   },
   earning: {
     aggregate: jest.fn(),
@@ -250,11 +251,7 @@ describe('Payouts E2E', () => {
       .mockResolvedValueOnce(null);
 
     mockStellarService.getAccountBalance.mockResolvedValue(200);
-    mockPrisma.payout.update.mockResolvedValue({
-      id: 101,
-      amount: 100,
-      status: 'pending',
-    });
+    mockPrisma.payout.updateMany.mockResolvedValue({ count: 1 });
 
     jest
       .spyOn(StellarSdk.Horizon.Server.prototype, 'loadAccount')
@@ -297,6 +294,31 @@ describe('Payouts E2E', () => {
     expect(res.body.stellarXdr).toBe('mock-stellar-xdr');
     expect(res.body.transactionId).toBe('abcd');
     expect(signSpy).not.toHaveBeenCalled();
+    expect(mockPrisma.payout.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 101,
+          userId: USER_ID,
+          transactionId: null,
+          stellarXdr: null,
+        }),
+        data: expect.objectContaining({
+          status: 'pending',
+          transactionId: 'abcd',
+          stellarXdr: 'mock-stellar-xdr',
+        }),
+      }),
+    );
+    const preparedData = mockPrisma.payout.updateMany.mock.calls[0][0].data;
+    expect(preparedData).not.toHaveProperty('externalTransactionId');
+    expect(preparedData).not.toHaveProperty('onChainTxHash');
+  });
+
+  it('rejects Stellar payout amounts that cannot be represented on-chain', async () => {
+    await request(app.getHttpServer())
+      .post('/payouts/initiate-stellar')
+      .send({ payoutId: 101, amount: 100.00000001 })
+      .expect(400);
   });
 
   it('rejects unexpected properties on initiate-stellar payloads', async () => {

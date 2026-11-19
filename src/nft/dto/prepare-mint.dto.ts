@@ -1,4 +1,4 @@
-import { IsInt, IsString, IsNotEmpty, IsOptional, Min } from 'class-validator';
+import { IsInt, IsString, IsNotEmpty, IsOptional, Min, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -6,6 +6,15 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export type PrepareMintDto = CreateMintPreparationDto;
 
 export class CreateMintPreparationDto {
+  @ApiPropertyOptional({
+    description: 'NFT collection slug. Defaults to viral-clips.',
+    example: 'viral-clips',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  collectionId?: string;
+
   @ApiProperty({
     description: 'Clip ID to prepare for minting',
     example: 42,
@@ -48,4 +57,16 @@ export class CreateMintPreparationDto {
   @IsOptional()
   @IsString()
   walletSignature?: string;
+}
+
+/** Request body for POST /nfts/admin/pause and /nfts/admin/unpause. */
+export class PrepareContractPauseDto {
+  @ApiProperty({
+    description:
+      'Stellar wallet address of the contract admin that will sign the pause/unpause transaction',
+    example: 'GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @IsString()
+  @IsNotEmpty()
+  adminAddress: string;
 }

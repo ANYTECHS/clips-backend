@@ -1,7 +1,7 @@
 import { Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Job, UnrecoverableError } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { AyrshareService } from './ayrshare.service';
 import { UserPlatformService } from '../user-platform/user-platform.service';
@@ -9,6 +9,7 @@ import { MetricsService } from '../metrics/metrics.service';
 import { CLIP_POSTING_QUEUE, type ClipPostingJob } from './clip-posting.queue';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import { handleFailedEvent } from '../queue/processor-error.handler';
 
 /**
  * BullMQ processor for clip-posting jobs.
@@ -118,42 +119,64 @@ export class ClipPostingProcessor extends WorkerHost implements OnModuleInit {
       if (failedPlatforms.length > 0) {
         const remainingAttempts =
           (job.opts.attempts ?? 1) - (job.attemptsMade + 1);
+        const retryMessage =
+          `Posting failed for platforms: [${failedPlatforms.join(', ')}]. ` +
+          `Will retry (${remainingAttempts} attempt(s) left).`;
+
         if (remainingAttempts > 0) {
           // Re-enqueue only the failed platforms via job data mutation isn't possible;
           // instead we throw so BullMQ retries. The next run re-checks DB-stored
           // status to avoid re-posting already published platforms.
-          throw new Error(
-            `Posting failed for platforms: [${failedPlatforms.join(', ')}]. ` +
-              `Will retry (${remainingAttempts} attempt(s) left).`,
-          );
+          throw new Error(retryMessage);
         }
+
+        const permanentFailure = new UnrecoverableError(
+          `Posting failed for platforms: [${failedPlatforms.join(', ')}]. ` +
+            `No retries remain for this job; marking it failed permanently.`,
+        );
+
+        this.logger.error(
+          `[posting] job ${job.id} exhausted retries for clipId=${clipId} — ` +
+            `platforms=[${failedPlatforms.join(', ')}]`,
+          JSON.stringify({
+            jobId: job.id,
+            clipId,
+            userId,
+            platforms: failedPlatforms,
+            attemptsMade: job.attemptsMade,
+            maxAttempts: job.opts.attempts ?? 1,
+          }),
+        );
+
+        throw permanentFailure;
       }
 
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_POSTING_QUEUE, 'success');
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       this.metricsService.recordJobCompletion(jobMetricId, CLIP_POSTING_QUEUE, 'failure');
-      this.metricsService.recordJobFailure(CLIP_POSTING_QUEUE, error instanceof Error ? error.message : String(error));
+      this.metricsService.recordJobFailure(CLIP_POSTING_QUEUE, errorMessage);
+      this.logger.error(
+        `[posting] job ${job.id} failed processing clipId=${clipId} — ` +
+          `reason: ${errorMessage}`,
+        JSON.stringify({
+          jobId: job.id,
+          clipId,
+          userId,
+          platforms,
+          attemptsMade: job.attemptsMade,
+          maxAttempts: job.opts.attempts ?? 1,
+          error: errorMessage,
+        }),
+      );
       throw error;
     }
   }
 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ClipPostingJob>, error: Error): void {
-    const isFinalAttempt = job.attemptsMade >= (job.opts.attempts ?? 1);
-
-    if (isFinalAttempt) {
-      this.logger.error(
-        `[posting] job ${job.id} exhausted all attempts — ` +
-          `clipId=${job.data.clipId} reason: ${error.message}`,
-      );
-      this.metricsService.recordJobFailure(CLIP_POSTING_QUEUE, 'final_failure');
-    } else {
-      this.logger.warn(
-        `[posting] job ${job.id} will be retried — ` +
-          `attempt ${job.attemptsMade}/${job.opts.attempts ?? 1} ` +
-          `reason: ${error.message}`,
-      );
-    }
+    // Standardized retry vs final logging + final_failure metric (Issue #1235).
+    handleFailedEvent(this.logger, this.metricsService, CLIP_POSTING_QUEUE, job, error, 5000);
   }
 
   @OnWorkerEvent('completed')

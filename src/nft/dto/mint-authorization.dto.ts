@@ -44,9 +44,3 @@ export class CooldownErrorDto {
   @ApiProperty({ example: 12 }) code: number;
   @ApiProperty({ example: 240, description: 'Seconds until the wallet may mint again' }) retryAfter: number;
 }
-
-export class RevokeApprovalResponseDto {
-  @ApiProperty({ example: 'CAAA...EU4' }) contractId: string;
-  @ApiProperty({ example: 'revoke_approval', enum: ['revoke_approval', 'revoke_all_approvals'] }) method: string;
-  @ApiProperty({ example: ['GOWNER...', 1001], description: 'Contract call args; the owner signs and submits' }) args: (string | number)[];
-}

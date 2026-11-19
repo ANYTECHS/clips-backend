@@ -2,15 +2,18 @@ import {
   IsString,
   IsNotEmpty,
   IsIn,
-  Matches,
-  Length,
   IsOptional,
+  Validate,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DEFAULT_CHAIN, SUPPORTED_CHAINS } from '../chain.constants';
-
-/** Stellar ED25519 public key: starts with G, exactly 56 Base32 characters */
-const STELLAR_PUBLIC_KEY_REGEX = /^G[A-Z2-7]{55}$/;
+import { DEFAULT_CHAIN, SUPPORTED_CHAINS, SupportedChain } from '../chain.constants';
+import {
+  chainDisplayName,
+  validateAddressForChain,
+} from '@clipcash/shared';
 
 /**
  * Wallet provider types supported per chain:
@@ -38,6 +41,25 @@ export type SupportedWalletType = (typeof SUPPORTED_WALLET_TYPES)[number];
 /** @deprecated Use CreateWalletConnectionDto */
 export type ConnectWalletDto = CreateWalletConnectionDto;
 
+/**
+ * Custom class-validator constraint that validates the `publicKey` field
+ * against the format expected for the selected `chain`.
+ */
+@ValidatorConstraint({ name: 'publicKeyForChain', async: false })
+export class PublicKeyForChainValidator implements ValidatorConstraintInterface {
+  validate(publicKey: string, args: ValidationArguments): boolean {
+    const object = args.object as CreateWalletConnectionDto;
+    const chain = (object.chain ?? DEFAULT_CHAIN) as SupportedChain;
+    return validateAddressForChain(publicKey, chain);
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    const object = args.object as CreateWalletConnectionDto;
+    const chain = (object.chain ?? DEFAULT_CHAIN) as SupportedChain;
+    return `publicKey must be a valid ${chainDisplayName(chain)} address`;
+  }
+}
+
 export class CreateWalletConnectionDto {
   @ApiProperty({
     description:
@@ -52,6 +74,7 @@ export class CreateWalletConnectionDto {
     description: `The blockchain network. Defaults to "${DEFAULT_CHAIN}" when omitted.`,
     enum: SUPPORTED_CHAINS,
     default: DEFAULT_CHAIN,
+    example: DEFAULT_CHAIN,
   })
   @IsOptional()
   @IsString()
@@ -74,16 +97,13 @@ export class CreateWalletConnectionDto {
 
   @ApiProperty({
     description:
-      'Stellar ED25519 public key — must start with G and be exactly 56 Base32 characters',
+      'Public key for the wallet — format depends on chain: ' +
+      'Stellar G-prefix Base32 (56 chars), Solana base58 (32–44 chars), or 0x hex (42 chars)',
     example: 'GABC...XYZ',
   })
   @IsString()
   @IsNotEmpty({ message: 'publicKey must not be empty' })
-  @Length(56, 56, { message: 'publicKey must be exactly 56 characters' })
-  @Matches(STELLAR_PUBLIC_KEY_REGEX, {
-    message:
-      'publicKey must be a valid Stellar address (G-prefix, Base32, 56 chars)',
-  })
+  @Validate(PublicKeyForChainValidator)
   publicKey: string;
 
   @ApiProperty({

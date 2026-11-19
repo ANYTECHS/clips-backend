@@ -92,6 +92,141 @@ export class NftOwnershipService {
       return { isOwner: false, error: message };
     }
   }
+
+  /**
+   * Verify ownership directly from Soroban and return standard { owner, message } response.
+   */
+  async verifyOwnership(
+    tokenId: string,
+    walletAddress: string,
+    contractId?: string,
+  ): Promise<{ owner: boolean; message: string }> {
+    const result = await this.verifyNFTOwnership(tokenId, walletAddress, contractId);
+    if (result.isOwner) {
+      return {
+        owner: true,
+        message: 'Wallet owns NFT',
+      };
+    }
+    return {
+      owner: false,
+      message: result.ownerAddress
+        ? 'Wallet does not own NFT'
+        : (result.error ?? 'Wallet does not own NFT'),
+    };
+  }
+
+  /**
+   * Get the current owner of an NFT.
+   */
+
+  async getOwner(
+    tokenId: string,
+    contractId?: string,
+  ): Promise<string | null> {
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        () => this.strategy.getOwner(contractId ?? this.contractId, tokenId),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to get owner for token ${tokenId}`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get the token IDs owned by a wallet address.
+   */
+  async getWalletTokenIds(
+    walletAddress: string,
+    contractId?: string,
+  ): Promise<number[]> {
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        () => this.strategy.getWalletTokenIds(contractId ?? this.contractId, walletAddress),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to get token IDs for wallet ${walletAddress}`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Lightweight check: returns true when the token has been minted on-chain,
+   * false when it has not (Issue #688). Uses an efficient storage lookup via
+   * owner_of — no ownership transfer is involved.
+   */
+  async tokenExists(
+    tokenId: string,
+    contractId?: string,
+  ): Promise<boolean> {
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        () => this.strategy.tokenExists(contractId ?? this.contractId, tokenId),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to check token existence for token ${tokenId}`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Get a paginated slice of token IDs owned by a wallet address (Issue #838).
+   *
+   * Prefers on-chain `get_user_tokens(owner, limit, cursor)` when the strategy
+   * supports it, so large collections do not require loading the full token
+   * vector into memory. Falls back to ledger iteration + local pagination.
+   *
+   * @returns Paginated result with tokenIds, nextCursor (null when exhausted), and total count.
+   */
+  async getUserTokensPaginated(
+    walletAddress: string,
+    limit: number = 20,
+    cursor: number = 0,
+    contractId?: string,
+  ): Promise<{ tokenIds: number[]; nextCursor: number | null; total: number }> {
+    const effectiveLimit = Math.min(Math.max(limit, 1), 100);
+    const effectiveCursor = Math.max(cursor, 0);
+    const cid = contractId ?? this.contractId;
+
+    try {
+      return await this.circuitBreakerService.execute(
+        this.circuitBreakerConfig,
+        async () => {
+          if (typeof this.strategy.getUserTokens === 'function') {
+            return this.strategy.getUserTokens(
+              cid,
+              walletAddress,
+              effectiveLimit,
+              effectiveCursor,
+            );
+          }
+
+          const allTokens = await this.strategy.getWalletTokenIds(
+            cid,
+            walletAddress,
+          );
+          const total = allTokens.length;
+          const start = Math.min(effectiveCursor, total);
+          const end = Math.min(start + effectiveLimit, total);
+          return {
+            tokenIds: allTokens.slice(start, end),
+            nextCursor: end < total ? end : null,
+            total,
+          };
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to paginate tokens for wallet ${walletAddress}`,
+        error,
+      );
+      return { tokenIds: [], nextCursor: null, total: 0 };
+    }
+  }
 }
 
 export { NFT_OWNERSHIP_STRATEGY };

@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { Keypair } from '@stellar/stellar-sdk';
+import { validateAddressForChain } from '@clipcash/shared';
 import { StellarService } from '../stellar/stellar.service';
 import { SupportedChain } from './chain.constants';
 
@@ -71,15 +72,16 @@ export class WalletValidationService {
 
   private validateSolanaAddress(address: string): void {
     // Solana public keys are base58-encoded 32-byte Ed25519 keys (32–44 chars)
-    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
+    if (!validateAddressForChain(address, 'solana')) {
       throw new BadRequestException('Invalid Solana address format');
     }
   }
 
   private validateEvmAddress(address: string): void {
     // Base (and all EVM chains) use 0x-prefixed 40-character hex addresses
-    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    if (!validateAddressForChain(address, 'base')) {
       throw new BadRequestException('Invalid Base address format');
     }
   }
 }
+

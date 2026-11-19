@@ -4,9 +4,29 @@ import {
   ValidationArguments,
 } from 'class-validator';
 
+/**
+ * Canonical platform list used for validation.
+ *
+ * Issue #856 — centralise hardcoded configuration.
+ *
+ * These values mirror `ConfigService.supportedPlatforms`. This file keeps a
+ * static copy so that class-validator decorators (which cannot inject services)
+ * remain synchronous and dependency-free.  If you need to change the list,
+ * update BOTH this constant AND `ConfigService.supportedPlatforms`.
+ *
+ * Do not read `process.env` here — all env-derived configuration lives in
+ * `ConfigService`. Class-validator constraints must be synchronous and cannot
+ * receive injected services, so we define the canonical list in one place and
+ * re-export it.
+ */
 export const SUPPORTED_PLATFORMS = [
   'tiktok',
   'instagram',
+  'youtube',
+  'facebook',
+  'snapchat',
+  'pinterest',
+  'linkedin',
   'youtube-shorts',
 ] as const;
 
