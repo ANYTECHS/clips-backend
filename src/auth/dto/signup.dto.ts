@@ -1,4 +1,10 @@
-import { IsEmail, IsString, MinLength, MaxLength } from 'class-validator';
+import {
+  IsEmail,
+  IsStrongPassword,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class SignupDto {
@@ -24,9 +30,6 @@ export class SignupDto {
   email: string;
 
   @ApiProperty({
-    description: 'User password (minimum 8 characters, maximum 32 characters)',
-    example: 'SecurePass123!',
-    minLength: 8,
     description:
       'User password meeting strength requirements:\n' +
       '- Minimum 10 characters long\n' +

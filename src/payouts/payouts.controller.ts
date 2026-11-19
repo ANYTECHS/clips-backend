@@ -42,6 +42,7 @@ import {
   PayoutRequestResponseDto,
   SplitPayoutRequestResponseDto,
 } from './dto/payout-request-response.dto';
+import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';

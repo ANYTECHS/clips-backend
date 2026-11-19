@@ -362,35 +362,6 @@ export class PayoutsService {
       page,
       limit,
     );
-    const payouts = await this.prisma.payout.findMany({
-      where: {
-        userId,
-        ...(filterStatus ? { status: filterStatus } : {}),
-      },
-      select: {
-        id: true,
-        amount: true,
-        currency: true,
-        method: true,
-        status: true,
-        transactionId: true,
-        onChainTxHash: true,
-        confirmedAt: true,
-        lastConfirmationCheckAt: true,
-        confirmationPollCount: true,
-        retryCount: true,
-        stellarXdr: true,
-        feeAmount: true,
-        feePercentage: true,
-        finalAmount: true,
-        paidAt: true,
-        approvedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
     const items = result.items.map((p) => ({
       ...p,
       fee: (p as { feeAmount?: number }).feeAmount,
@@ -398,49 +369,6 @@ export class PayoutsService {
     }));
 
     return new PaginatedResponseDto(items, result.total, result.page, result.limit);
-    const select = {
-      id: true,
-      amount: true,
-      currency: true,
-      method: true,
-      status: true,
-      transactionId: true,
-      onChainTxHash: true,
-      confirmedAt: true,
-      lastConfirmationCheckAt: true,
-      confirmationPollCount: true,
-      retryCount: true,
-      stellarXdr: true,
-      feeAmount: true,
-      feePercentage: true,
-      finalAmount: true,
-      paidAt: true,
-      approvedAt: true,
-      approvedBy: true,
-      rejectedAt: true,
-      rejectionReason: true,
-      createdAt: true,
-      updatedAt: true,
-    };
-
-    const [items, total] = await Promise.all([
-      this.prisma.payout.findMany({
-        where,
-        select,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take,
-      }),
-      this.prisma.payout.count({ where }),
-    ]);
-
-    const mapped = items.map((p) => ({
-      ...p,
-      fee: p.feeAmount,
-      netAmount: p.finalAmount,
-    }));
-
-    return new PaginatedResponseDto(mapped, total, normalizedPage, normalizedLimit);
   }
 
   async getPayoutById(userId: number, payoutId: number): Promise<any> {
