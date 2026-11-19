@@ -1,8 +1,8 @@
+import { IsStellarAddress } from '../../common/validators/decorators';
 import {
   IsString,
   IsNotEmpty,
   MaxLength,
-  Matches,
   registerDecorator,
   ValidationOptions,
   ValidationArguments,
@@ -49,7 +49,7 @@ export class CreateTransactionDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(56)
-  @Matches(/^G[A-Z2-7]{55}$/, { message: 'destination must be a valid Stellar public key (G...)' })
+  @IsStellarAddress()
   destination: string;
 
   @ApiProperty({

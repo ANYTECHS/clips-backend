@@ -8,6 +8,8 @@ import {
 } from './is-valid-royalty-bps.validator';
 
 export { CLIP_ROYALTY_BPS_MAX };
+export { IsStellarAddress } from './is-stellar-address.validator';
+export { IsValidSchedule } from './is-valid-schedule.validator';
 
 export function IsValidPlatform(
   validationOptions?: ValidationOptions,
