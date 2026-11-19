@@ -12,6 +12,14 @@ pub enum ContractError {
     NotFound = 6,
     AlreadyExists = 7,
     InsufficientBalance = 8,
+    /// Mint or transfer attempted while the contract is paused.
+    ContractPaused = 9,
+    /// pause() called when a pause is already active or pending.
+    AlreadyPaused = 10,
+    /// unpause() called when the contract is not currently paused.
+    NotPaused = 11,
+    /// pause() invoked before the 24-hour timelock has elapsed.
+    TimelockNotElapsed = 12,
 }
 
 impl core::fmt::Display for ContractError {
@@ -25,6 +33,10 @@ impl core::fmt::Display for ContractError {
             ContractError::NotFound => write!(f, "Not found"),
             ContractError::AlreadyExists => write!(f, "Already exists"),
             ContractError::InsufficientBalance => write!(f, "Insufficient balance"),
+            ContractError::ContractPaused => write!(f, "Contract is paused"),
+            ContractError::AlreadyPaused => write!(f, "Contract is already paused"),
+            ContractError::NotPaused => write!(f, "Contract is not paused"),
+            ContractError::TimelockNotElapsed => write!(f, "24-hour timelock has not elapsed"),
         }
     }
 }
