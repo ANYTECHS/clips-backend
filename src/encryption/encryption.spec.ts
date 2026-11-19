@@ -79,6 +79,35 @@ describe('EncryptionService', () => {
     it('should throw error for invalid encrypted data', () => {
       expect(() => service.decrypt('invalid-base64')).toThrow('Failed to decrypt sensitive data');
     });
+
+    it('should throw error when decrypting with a different key', () => {
+      const plaintext = 'sensitive-access-token';
+      const encrypted = service.encrypt(plaintext);
+      const wrongConfigService = { get: jest.fn().mockReturnValue('different-test-encryption-secret') };
+      const wrongService = new EncryptionService(wrongConfigService as any);
+
+      expect(() => wrongService.decrypt(encrypted)).toThrow('Failed to decrypt sensitive data');
+    });
+  });
+
+  describe('constructor', () => {
+    it('should throw if ENCRYPTION_SECRET is missing', async () => {
+      const mockConfigService = {
+        get: jest.fn().mockReturnValue(undefined),
+      };
+
+      await expect(
+        Test.createTestingModule({
+          providers: [
+            EncryptionService,
+            {
+              provide: ConfigService,
+              useValue: mockConfigService,
+            },
+          ],
+        }).compile(),
+      ).rejects.toThrow('ENCRYPTION_SECRET environment variable is required');
+    });
   });
 
   describe('encryptObjectFields', () => {

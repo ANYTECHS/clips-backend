@@ -1,0 +1,574 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
+import StellarSdk from '@stellar/stellar-sdk';
+import { StellarService } from '../stellar/stellar.service';
+import { ContractInfoDto } from './dto/contract-info.dto';
+import {
+  CircuitBreakerService,
+  CircuitBreakerConfig,
+} from '../common/circuit-breaker/circuit-breaker.service';
+
+/**
+ * Builds unsigned admin transactions (pause/unpause) for the ClipCash NFT
+ * Soroban contract, and reads the contract's current pause state.
+ *
+ * The contract admin key is never held server-side: callers sign the
+ * returned XDR with their own wallet, matching the prepare-mint flow.
+ */
+@Injectable()
+export class AdminContractService {
+  private readonly logger = new Logger(AdminContractService.name);
+
+  private readonly sorobanCircuitBreakerConfig: CircuitBreakerConfig = {
+    name: 'soroban-admin-contract',
+    failureThreshold: 5,
+    recoveryTimeout: 30000,
+    samplingDuration: 60000,
+  };
+
+  constructor(
+    private readonly stellarService: StellarService,
+    private readonly circuitBreakerService: CircuitBreakerService,
+  ) {}
+
+  private get CONTRACT_ID(): string {
+    return (
+      process.env.SOROBAN_NFT_CONTRACT_ID ||
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4'
+    );
+  }
+
+  async preparePauseTx(adminAddress: string, paused: boolean) {
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(paused ? 'pause' : 'unpause');
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action: paused ? 'pause' : 'unpause',
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  /**
+   * Prepare `set_name(value)` / `set_symbol(value)` admin transactions
+   * (Issue #1188).
+   *
+   * Lets the collection be renamed or re-symbolled without redeploying the
+   * contract. Returns unsigned XDR — only the contract admin wallet can
+   * sign and submit it.
+   */
+  async prepareSetNameOrSymbolTx(
+    adminAddress: string,
+    field: 'name' | 'symbol',
+    value: string,
+  ) {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new BadRequestException(`${field} must not be empty`);
+    }
+    if (trimmed.length > 64) {
+      throw new BadRequestException(`${field} must be 64 characters or fewer`);
+    }
+
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const action = field === 'name' ? 'set_name' : 'set_symbol';
+    const op = contract.call(
+      action,
+      StellarSdk.nativeToScVal(trimmed, { type: 'string' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action,
+      value: trimmed,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  async prepareTokenFreezeTx(
+    tokenId: number,
+    adminAddress: string,
+    frozen: boolean,
+  ) {
+    this.validateTokenId(tokenId);
+    const status = await this.getFreezeStatus(tokenId);
+    if (status.frozen === frozen) {
+      throw new ConflictException(
+        `Token ${tokenId} is already ${frozen ? 'frozen' : 'unfrozen'}`,
+      );
+    }
+
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const action = frozen ? 'freeze' : 'unfreeze';
+    const op = contract.call(
+      action,
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    );
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action,
+      tokenId: tokenId.toString(),
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  async getFreezeStatus(
+    tokenId: number,
+  ): Promise<{ tokenId: number; frozen: boolean }> {
+    this.validateTokenId(tokenId);
+    const token = await this.getClipId(tokenId);
+    if (token.clipId === null) {
+      throw new NotFoundException(`NFT ${tokenId} was not found`);
+    }
+
+    const frozen = await this.callViewFunction('is_frozen', [
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    ]);
+    return { tokenId, frozen: Boolean(frozen) };
+  }
+
+  private validateTokenId(tokenId: number): void {
+    if (!Number.isInteger(tokenId) || tokenId < 0 || tokenId > 0xffffffff) {
+      throw new BadRequestException('Token ID must be a valid u32');
+    }
+  }
+
+  async prepareRefreshMetadataTx(
+    tokenId: number,
+    adminAddress: string,
+    metadata: Record<string, string | number | boolean>,
+  ) {
+    const addressCheck = this.stellarService.validateAddress(adminAddress);
+    if (!addressCheck.valid) {
+      throw new InternalServerErrorException(
+        `Invalid admin wallet address: ${addressCheck.message}`,
+      );
+    }
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(adminAddress),
+    );
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(
+      'refresh_metadata',
+      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(metadata, { type: 'map' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action: 'refresh_metadata',
+      tokenId: tokenId.toString(),
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  /**
+   * Query the on-chain `get_clip_id(token_id)` view function (Issue #674).
+   *
+   * Every NFT stores the ClipCash database Clip ID passed at mint time, so
+   * this call lets any back-end service verify the NFT ↔ database link
+   * without trusting off-chain metadata.
+   *
+   * Returns `null` when the token does not exist on-chain.
+   */
+  async getClipId(
+    tokenId: number,
+  ): Promise<{ tokenId: number; clipId: string | null }> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(
+      'get_clip_id',
+      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+    );
+
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
+    try {
+      simulation = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.simulateTransaction(tx),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `Failed to query get_clip_id for token ${tokenId}: ${msg}`,
+      );
+      throw new InternalServerErrorException(
+        `Failed to query clip ID for token ${tokenId}: ${msg}`,
+      );
+    }
+
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
+    if (!results?.[0]?.xdr) {
+      return { tokenId, clipId: null };
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+    const native = StellarSdk.scValToNative(returnValue);
+    // Soroban Option<String> is either a string value or null/undefined
+    const clipId = native != null ? String(native) : null;
+
+    return { tokenId, clipId };
+  }
+
+  async getPauseStatus(): Promise<{ paused: boolean }> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call('is_paused');
+
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
+    try {
+      simulation = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.simulateTransaction(tx),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to query pause status: ${msg}`);
+      throw new InternalServerErrorException(
+        `Failed to query contract pause status: ${msg}`,
+      );
+    }
+
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
+    if (!results?.[0]?.xdr) {
+      throw new InternalServerErrorException(
+        'No return value from is_paused contract call',
+      );
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+    return { paused: Boolean(StellarSdk.scValToNative(returnValue)) };
+  }
+
+  async getPauseReason(): Promise<string> {
+    const reason = await this.callViewFunction('pause_reason');
+    return String(reason ?? '');
+  }
+
+  async getPauseInfo(): Promise<{ paused: boolean; reason: string }> {
+    const [status, reason] = await Promise.all([
+      this.getPauseStatus(),
+      this.getPauseReason(),
+    ]);
+    return { ...status, reason };
+  }
+
+  /**
+   * Query the on-chain `name()` and `symbol()` view functions (Issue #679).
+   *
+   * Both are admin-configurable via `set_name`/`set_symbol` on the
+   * contract, so this always reflects the current collection branding
+   * rather than a hardcoded value.
+   */
+  async getCollectionInfo(): Promise<{
+    name: string;
+    symbol: string;
+    contractId: string;
+  }> {
+    const [name, symbol] = await Promise.all([
+      this.callViewFunction('name'),
+      this.callViewFunction('symbol'),
+    ]);
+
+    return {
+      name: String(name),
+      symbol: String(symbol),
+      contractId: this.CONTRACT_ID,
+    };
+  }
+
+  /** Read the contract's single structured metadata view. */
+  async getContractMetadata(): Promise<ContractInfoDto> {
+    const value = await this.callViewFunction('contract_info');
+    const readField = (field: string): unknown => {
+      if (value instanceof Map) {
+        if (value.has(field)) {
+          return value.get(field);
+        }
+        return [...value.entries()].find(([key]) => String(key) === field)?.[1];
+      }
+
+      if (typeof value === 'object' && value !== null) {
+        return (value as Record<string, unknown>)[field];
+      }
+
+      return undefined;
+    };
+
+    const name = readField('name');
+    const symbol = readField('symbol');
+    const version = readField('version');
+    const owner = readField('owner');
+    const platformFee = readField('platform_fee');
+    const fee = typeof platformFee === 'bigint' ? Number(platformFee) : platformFee;
+    const ownerAddress =
+      typeof owner === 'string' ? owner : owner === undefined ? undefined : String(owner);
+
+    if (
+      typeof name !== 'string' ||
+      typeof symbol !== 'string' ||
+      typeof version !== 'string' ||
+      !ownerAddress ||
+      ownerAddress === '[object Object]' ||
+      typeof fee !== 'number' ||
+      !Number.isInteger(fee) ||
+      fee < 0 ||
+      fee > 10_000
+    ) {
+      throw new InternalServerErrorException(
+        'Contract returned invalid contract_info() metadata',
+      );
+    }
+
+    return {
+      name,
+      symbol,
+      version,
+      owner: ownerAddress,
+      platform_fee: fee,
+    };
+  }
+
+  async getTotalSupply(): Promise<{
+    totalSupply: number;
+    contractId: string;
+    network: string;
+  }> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call('total_supply');
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
+    try {
+      simulation = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.simulateTransaction(tx),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to query total_supply: ${msg}`);
+      throw new InternalServerErrorException(
+        `Failed to query total NFT supply: ${msg}`,
+      );
+    }
+
+    const result = simulation as {
+      error?: string;
+      results?: Array<{ xdr: string }>;
+    };
+    if (result.error || !result.results?.[0]?.xdr) {
+      throw new InternalServerErrorException(
+        result.error || 'No return value from total_supply contract call',
+      );
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(
+      result.results[0].xdr,
+      'base64',
+    );
+    const supply = StellarSdk.scValToNative(returnValue);
+    const totalSupply = typeof supply === 'bigint' ? Number(supply) : supply;
+    if (
+      typeof totalSupply !== 'number' ||
+      !Number.isInteger(totalSupply) ||
+      totalSupply < 0 ||
+      totalSupply > 0xffffffff
+    ) {
+      throw new InternalServerErrorException(
+        'Contract returned an invalid u32 total_supply value',
+      );
+    }
+
+    return {
+      totalSupply,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+    };
+  }
+
+  /**
+   * Simulate a no-argument, no-auth contract view call and return its
+   * decoded native value.
+   */
+  private async callViewFunction(
+    fnName: string,
+    args: StellarSdk.xdr.ScVal[] = [],
+  ): Promise<unknown> {
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(fnName, ...args);
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    let simulation: Awaited<ReturnType<typeof server.simulateTransaction>>;
+    try {
+      simulation = await this.circuitBreakerService.execute(
+        this.sorobanCircuitBreakerConfig,
+        async () => server.simulateTransaction(tx),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`Failed to query contract ${fnName}(): ${msg}`);
+      throw new InternalServerErrorException(
+        `Failed to query contract ${fnName}(): ${msg}`,
+      );
+    }
+
+    const result = simulation as {
+      error?: string;
+      results?: Array<{ xdr: string }>;
+    };
+    if (result.error || !result.results?.[0]?.xdr) {
+      throw new InternalServerErrorException(
+        result.error || `No return value from ${fnName}() contract call`,
+      );
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(
+      result.results[0].xdr,
+      'base64',
+    );
+    return StellarSdk.scValToNative(returnValue);
+  }
+
+  /** Read the deployed contract's semantic version via the read-only version() call. */
+  async getContractVersion(): Promise<{ contractId: string; version: string }> {
+    const version = await this.callViewFunction('version');
+    return {
+      contractId: this.CONTRACT_ID,
+      version: String(version),
+    };
+  }
+}

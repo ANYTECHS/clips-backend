@@ -32,7 +32,7 @@ describe('VideoUploadController', () => {
       mimetype: 'video/mp4',
       size: 50 * 1024 * 1024, // 50 MB
       filename: 'upload-123456789-123456789.mp4',
-    } as Express.Multer.File;
+    } as any;
 
     const mockRequest = (userId: number) =>
       ({

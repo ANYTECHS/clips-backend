@@ -1,45 +1,118 @@
 import { Module } from '@nestjs/common';
+import { IpfsUploadModule } from './ipfs-upload.module';
+import { NftOwnershipModule } from './nft-ownership.module';
+import { RedisModule } from '../redis/redis.module';
 import { NftConfig } from './nft.config';
 import { NftService } from './nft.service';
 import { NftController } from './nft.controller';
+import { NftMetadataService } from './nft-metadata.service';
 import { RoyaltyQueryService } from './royalty-query.service';
 import { PlatformRevenueService } from './platform-revenue.service';
 import { PlatformRevenueController } from './platform-revenue.controller';
 import { BatchRoyaltyService } from './batch-royalty.service';
 import { BatchRoyaltyController } from './batch-royalty.controller';
+import { ClipRoyaltyService } from './clip-royalty.service';
+import { ClipRoyaltyController } from './clip-royalty.controller';
 import { NftMintService } from '../clips/nft-mint.service';
-import { NftOwnershipService } from './nft-ownership.service';
-import { SorobanContractService } from './soroban-contract.service';
-import { SorobanPauseController } from './soroban-pause.controller';
+import { RoyaltyConfigurationService } from './royalty-configuration.service';
+import { NftMintGuard } from './guards/nft-mint.guard';
+import { MintSignatureVerificationService } from './mint-signature-verification.service';
+import { AdminContractService } from './admin-contract.service';
+import { AdminConfigService } from './admin-config.service';
+import { NftApprovalService } from './nft-approval.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StellarModule } from '../stellar/stellar.module';
 import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
+import { ConfigModule } from '../config/config.module';
+import { GasMetricsService } from './gas-metrics.service';
+import { NftTransferService } from './nft-transfer.service';
+import { NftTransferHistoryService } from './nft-transfer-history.service';
+import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
+import { ClaimRoyaltyService } from './claim-royalty.service';
+import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
+import { SorobanContractController } from './soroban-contract.controller';
+import { AdminNftController } from './admin-nft.controller';
+import { NftFreezeAdminGuard } from './guards/nft-freeze-admin.guard';
+import { NftCollectionService } from './nft-collection.service';
+import { NftCollectionController } from './nft-collection.controller';
+import { NftMintStatusService } from './nft-mint-status.service';
+import { NftStandardQueriesService } from './nft-standard-queries.service';
+import { NftStandardQueriesController } from './nft-standard-queries.controller';
+import { SorobanFeeEstimationService } from './soroban-fee-estimation.service';
+import { ClipsModule } from '../clips/clips.module';
 
 @Module({
-  imports: [PrismaModule, StellarModule, CircuitBreakerModule],
+  imports: [
+    PrismaModule,
+    StellarModule,
+    CircuitBreakerModule,
+    IpfsUploadModule,
+    NftOwnershipModule,
+    RedisModule,
+    ClipsModule,
+    ConfigModule,
+  ],
   providers: [
     NftConfig,
     NftService,
+    GasMetricsService,
     NftMintService,
+    NftMetadataService,
     RoyaltyQueryService,
-    NftOwnershipService,
     PlatformRevenueService,
     BatchRoyaltyService,
-    SorobanContractService,
+    ClipRoyaltyService,
+    NftMintGuard,
+    NftFreezeAdminGuard,
+    RoyaltyConfigurationService,
+    MintSignatureVerificationService,
+    AdminContractService,
+    NftTransferService,
+    NftTransferHistoryService,
+    NftMetadataRefreshService,
+    AdminConfigService,
+    NftApprovalService,
+    ClaimRoyaltyService,
+    RoyaltyClaimHistoryService,
+    NftMintStatusService,
+    NftCollectionService,
+    NftStandardQueriesService,
+    SorobanFeeEstimationService,
   ],
   controllers: [
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,
-    SorobanPauseController,
+    ClipRoyaltyController,
+    SorobanContractController,
+    AdminNftController,
+    NftCollectionController,
+    NftStandardQueriesController,
   ],
   exports: [
     NftService,
+    GasMetricsService,
     NftMintService,
+    NftMetadataService,
     RoyaltyQueryService,
-    NftOwnershipService,
     PlatformRevenueService,
     BatchRoyaltyService,
+    ClipRoyaltyService,
+    IpfsUploadModule,
+    NftOwnershipModule,
+    RoyaltyConfigurationService,
+    MintSignatureVerificationService,
+    NftTransferService,
+    NftTransferHistoryService,
+    NftMetadataRefreshService,
+    AdminConfigService,
+    NftApprovalService,
+    ClaimRoyaltyService,
+    RoyaltyClaimHistoryService,
+    NftMintStatusService,
+    NftCollectionService,
+    NftStandardQueriesService,
+    SorobanFeeEstimationService,
   ],
 })
 export class NftModule {}

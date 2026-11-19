@@ -8,6 +8,7 @@ import { StellarService } from '../stellar/stellar.service';
 import { RedisService } from '../redis/redis.service';
 import StellarSdk from '@stellar/stellar-sdk';
 import { CacheKeyBuilder } from './cache-key.util';
+import { checkedDivide } from '../common/helpers/safe-math.helper';
 
 const CACHE_TTL_SECONDS = 300;
 
@@ -62,14 +63,20 @@ export class BatchRoyaltyService {
     if (!skipCache) {
       const cached = await this.redisService.get(cacheKey);
       if (cached) {
-        this.logger.debug(`Cache hit for batch royalty: ${normalizedIds.length} tokens`);
+        this.logger.debug(
+          `Cache hit for batch royalty: ${normalizedIds.length} tokens`,
+        );
         return JSON.parse(cached) as BatchRoyaltyInfo[];
       }
     }
 
     const result = await this.queryBatchRoyaltyOnChain(normalizedIds);
 
-    await this.redisService.setex(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(result));
+    await this.redisService.setex(
+      cacheKey,
+      CACHE_TTL_SECONDS,
+      JSON.stringify(result),
+    );
 
     return result;
   }
@@ -90,7 +97,9 @@ export class BatchRoyaltyService {
       return StellarSdk.nativeToScVal(BigInt(tokenIdNum), { type: 'u128' });
     });
 
-    const tokenIdsScVal = StellarSdk.nativeToScVal(tokenIdsVec, { type: 'Vec' });
+    const tokenIdsScVal = StellarSdk.nativeToScVal(tokenIdsVec, {
+      type: 'Vec',
+    });
 
     const op = contract.call('batch_royalty_info', tokenIdsScVal);
 
@@ -112,7 +121,9 @@ export class BatchRoyaltyService {
       simulation = await server.simulateTransaction(tx);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Soroban simulation failed for batch_royalty_info: ${msg}`);
+      this.logger.error(
+        `Soroban simulation failed for batch_royalty_info: ${msg}`,
+      );
       throw new InternalServerErrorException(
         `Failed to query batch royalty from contract: ${msg}`,
       );
@@ -124,7 +135,8 @@ export class BatchRoyaltyService {
       );
     }
 
-    const results = (simulation as { results?: Array<{ xdr: string }> }).results;
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
 
     if (!results?.[0]?.xdr) {
       throw new InternalServerErrorException(
@@ -143,15 +155,18 @@ export class BatchRoyaltyService {
     return batchResults.map((item) => {
       const percentage =
         item.fee_denominator > 0
-          ? ((item.fee_numerator / item.fee_denominator) * 100).toFixed(2)
-          : '0.00';
+          ? checkedDivide(
+              Math.floor((item.fee_numerator / item.fee_denominator) * 10000),
+              100,
+            ) / 100
+          : 0;
 
       return {
         tokenId: item.token_id.toString(),
         recipient: item.recipient,
         feeNumerator: item.fee_numerator,
         feeDenominator: item.fee_denominator,
-        royaltyPercentage: `${percentage}%`,
+        royaltyPercentage: `${percentage.toFixed(2)}%`,
       };
     });
   }

@@ -24,8 +24,14 @@ describe('CacheKeyBuilder', () => {
   });
 
   it('CACHE_PREFIXES constants are used consistently', () => {
-    expect(CacheKeyBuilder.royalty('ADDR')).toMatch(new RegExp(`^${CACHE_PREFIXES.ROYALTY}:`));
-    expect(CacheKeyBuilder.batchRoyalty(['1'])).toMatch(new RegExp(`^${CACHE_PREFIXES.BATCH_ROYALTY}:`));
-    expect(CacheKeyBuilder.platformRevenue()).toMatch(new RegExp(`^${CACHE_PREFIXES.PLATFORM_REVENUE}`));
+    expect(CacheKeyBuilder.royalty('ADDR')).toMatch(
+      new RegExp(`^${CACHE_PREFIXES.ROYALTY}:`),
+    );
+    expect(CacheKeyBuilder.batchRoyalty(['1'])).toMatch(
+      new RegExp(`^${CACHE_PREFIXES.BATCH_ROYALTY}:`),
+    );
+    expect(CacheKeyBuilder.platformRevenue()).toMatch(
+      new RegExp(`^${CACHE_PREFIXES.PLATFORM_REVENUE}`),
+    );
   });
 });

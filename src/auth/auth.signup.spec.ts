@@ -7,30 +7,41 @@ import { JwtService } from '@nestjs/jwt';
 import { MailService } from './mail.service';
 import { DeviceFingerprintService } from './device-fingerprint.service';
 import { BruteForceProtectionService } from './brute-force-protection.service';
+import { EmailDeliveryService } from './email-delivery.service';
+import { EncryptionService } from '../encryption/encryption.service';
+import { StellarService } from '../stellar/stellar.service';
 import * as bcrypt from 'bcrypt';
 
 describe('Auth - Password Strength Validation', () => {
   let service: AuthService;
   let prismaService: PrismaService;
+  let stellarService: StellarService;
 
   beforeEach(async () => {
+    const prismaMock = {
+      user: {
+        findUnique: jest.fn(),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      refreshToken: {
+        create: jest.fn(),
+      },
+      emailVerificationToken: {
+        create: jest.fn(),
+      },
+      withTransaction: jest.fn(),
+    };
+    prismaMock.withTransaction.mockImplementation(async (callback: (tx: typeof prismaMock) => unknown) =>
+      callback(prismaMock),
+    );
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         {
           provide: PrismaService,
-          useValue: {
-            user: {
-              findUnique: jest.fn(),
-              create: jest.fn(),
-            },
-            refreshToken: {
-              create: jest.fn(),
-            },
-            emailVerificationToken: {
-              create: jest.fn(),
-            },
-          },
+          useValue: prismaMock,
         },
         {
           provide: JwtService,
@@ -54,11 +65,32 @@ describe('Auth - Password Strength Validation', () => {
           provide: BruteForceProtectionService,
           useValue: { check: jest.fn(), record: jest.fn() },
         },
+        {
+          provide: EmailDeliveryService,
+          useValue: {
+            enqueue: jest.fn().mockResolvedValue(undefined),
+          },
+        },
+        {
+          provide: EncryptionService,
+          useValue: {
+            encrypt: jest.fn().mockReturnValue('encrypted_secret'),
+            decrypt: jest.fn().mockReturnValue('decrypted_secret'),
+          },
+        },
+        {
+          provide: StellarService,
+          useValue: {
+            isTestnet: jest.fn().mockReturnValue(true),
+            fundWithFriendbot: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<AuthService>(AuthService);
     prismaService = module.get<PrismaService>(PrismaService);
+    stellarService = module.get<StellarService>(StellarService);
   });
 
   describe('POST /auth/signup', () => {
@@ -131,6 +163,61 @@ describe('Auth - Password Strength Validation', () => {
       await expect(service.signup(signupDto)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('should automatically fund the custodial wallet with Friendbot on testnet', async () => {
+      const email = 'test-friendbot@example.com';
+      const password = 'MyStr0ng!P@ssw0rd';
+      const mockUser = {
+        id: 1,
+        email,
+        password: 'hashed_password',
+        name: null,
+        picture: null,
+      };
+
+      (prismaService.user.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaService.user.create as jest.Mock).mockResolvedValue(mockUser);
+      (stellarService.isTestnet as jest.Mock).mockReturnValue(true);
+
+      const signupDto: SignupDto = {
+        name: 'Test Friendbot User',
+        email,
+        password,
+      };
+
+      await service.signup(signupDto);
+
+      expect(stellarService.isTestnet).toHaveBeenCalled();
+      expect(stellarService.fundWithFriendbot).toHaveBeenCalled();
+    });
+
+    it('should not fund the custodial wallet if not on testnet', async () => {
+      const email = 'test-no-friendbot@example.com';
+      const password = 'MyStr0ng!P@ssw0rd';
+      const mockUser = {
+        id: 1,
+        email,
+        password: 'hashed_password',
+        name: null,
+        picture: null,
+      };
+
+      (prismaService.user.findUnique as jest.Mock).mockResolvedValue(null);
+      (prismaService.user.create as jest.Mock).mockResolvedValue(mockUser);
+      (stellarService.isTestnet as jest.Mock).mockReturnValue(false);
+      (stellarService.fundWithFriendbot as jest.Mock).mockClear();
+
+      const signupDto: SignupDto = {
+        name: 'Test No Friendbot User',
+        email,
+        password,
+      };
+
+      await service.signup(signupDto);
+
+      expect(stellarService.isTestnet).toHaveBeenCalled();
+      expect(stellarService.fundWithFriendbot).not.toHaveBeenCalled();
     });
   });
 

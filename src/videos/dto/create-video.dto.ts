@@ -1,36 +1,74 @@
 import { IsString, IsOptional, IsInt, IsArray } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { IsValidPlatforms } from '../validators/decorators';
-import type { SupportedPlatform } from '../validators/is-valid-platforms.validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsValidPlatforms } from '../../common/validators/decorators';
+import { TrimString } from '../../common/decorators/trim-string.decorator';
+import type { SupportedPlatform } from '../../common/validators/is-valid-platform.validator';
 
 export class CreateVideoDto {
+  @ApiProperty({ description: 'Owner user ID', example: 1 })
   @IsInt()
   userId: number;
 
+  @ApiPropertyOptional({
+    description: 'Video title',
+    example: 'My highlight reel',
+  })
   @IsOptional()
+  @TrimString()
   @IsString()
   title?: string;
 
+  @ApiPropertyOptional({
+    description: 'Video description',
+    example: 'Best moments from last week',
+  })
   @IsOptional()
+  @TrimString()
   @IsString()
   description?: string;
 
+  @ApiPropertyOptional({
+    description: 'Source type',
+    example: 'upload',
+    enum: ['upload', 'url', 'stream'],
+  })
   @IsOptional()
+  @TrimString()
   @IsString()
   sourceType?: string;
 
+  @ApiPropertyOptional({
+    description: 'Source URL when not uploading a file',
+    example: 'https://cdn.example.com/videos/abc.mp4',
+  })
   @IsOptional()
+  @TrimString()
   @IsString()
   sourceUrl?: string;
 
+  @ApiPropertyOptional({
+    description: 'Thumbnail URL',
+    example: 'https://cdn.example.com/thumbs/abc.jpg',
+  })
   @IsOptional()
+  @TrimString()
   @IsString()
   thumbnail?: string;
 
+  @ApiPropertyOptional({
+    description: 'Duration in seconds',
+    example: 120,
+  })
   @IsOptional()
   @IsInt()
   duration?: number;
 
+  @ApiPropertyOptional({
+    description: 'Target social platforms',
+    example: ['tiktok', 'instagram'],
+    type: [String],
+  })
   @IsOptional()
   @IsArray()
   @IsValidPlatforms({
@@ -38,7 +76,6 @@ export class CreateVideoDto {
   })
   @Transform(({ value }) => {
     if (!Array.isArray(value)) return value;
-    // Normalize: lowercase and dedupe
     const normalized = value.map((p: string) =>
       typeof p === 'string' ? p.toLowerCase() : p,
     );

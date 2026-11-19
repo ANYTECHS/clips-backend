@@ -1,0 +1,5 @@
+  main
+* test/video-clip-fixtures
+  testing/add-fixtures
+  remotes/origin/HEAD -> origin/main
+  remotes/origin/main

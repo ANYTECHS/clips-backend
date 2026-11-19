@@ -3,6 +3,7 @@ import { StellarService } from './stellar.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
 import { ServiceUnavailableException } from '../common/exceptions/service-unavailable.exception';
+import { Horizon } from '@stellar/stellar-sdk';
 
 // Mock fetch for Horizon calls
 global.fetch = jest.fn();
@@ -13,6 +14,7 @@ describe('StellarService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    (global.fetch as jest.Mock).mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -174,6 +176,51 @@ describe('StellarService', () => {
     });
   });
 
+  describe('getWalletBalance', () => {
+    const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+    let loadAccountSpy: jest.SpyInstance;
+
+    afterEach(() => {
+      loadAccountSpy?.mockRestore();
+    });
+
+    it('queries Horizon and warns when the native balance is below 2 XLM', async () => {
+      loadAccountSpy = jest
+        .spyOn(Horizon.Server.prototype, 'loadAccount')
+        .mockResolvedValue({
+          balances: [{ asset_type: 'native', balance: '1.9999999' }],
+        } as never);
+
+      await expect(service.getWalletBalance(address)).resolves.toEqual({
+        balance: 1.9999999,
+        warning: true,
+      });
+      expect(loadAccountSpy).toHaveBeenCalledWith(address);
+    });
+
+    it('does not warn when the native balance is exactly 2 XLM', async () => {
+      loadAccountSpy = jest
+        .spyOn(Horizon.Server.prototype, 'loadAccount')
+        .mockResolvedValue({
+          balances: [{ asset_type: 'native', balance: '2.0000000' }],
+        } as never);
+
+      await expect(service.getWalletBalance(address)).resolves.toEqual({
+        balance: 2,
+        warning: false,
+      });
+    });
+
+    it('rejects invalid addresses without querying Horizon', async () => {
+      loadAccountSpy = jest.spyOn(Horizon.Server.prototype, 'loadAccount');
+
+      await expect(service.getWalletBalance('not-a-wallet')).rejects.toThrow(
+        'Invalid Stellar address format',
+      );
+      expect(loadAccountSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('circuit breaker state transitions', () => {
     it('should track circuit state changes', async () => {
       // Mock to fail initially then succeed
@@ -209,5 +256,132 @@ describe('StellarService', () => {
         service.getTransactionStatus('final-tx'),
       ).rejects.toThrow(ServiceUnavailableException);
     });
+  });
+
+  describe('fundWithFriendbot', () => {
+    it('should fund testnet address when fetch is successful', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+      });
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await expect(service.fundWithFriendbot(address)).resolves.toBeUndefined();
+      expect(global.fetch).toHaveBeenCalledWith(
+        `https://friendbot.stellar.org/?addr=${encodeURIComponent(address)}`,
+      );
+    });
+
+    it('should throw an error when Friendbot responds with non-ok status', async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: jest.fn().mockResolvedValue('Bad Request'),
+      });
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await expect(service.fundWithFriendbot(address)).rejects.toThrow(
+        'Friendbot funding failed (400): Bad Request',
+      );
+    });
+
+    it('should throw an error when fetch fails', async () => {
+      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network failure'));
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await expect(service.fundWithFriendbot(address)).rejects.toThrow('Network failure');
+    });
+
+    it('should do nothing if not on testnet', async () => {
+      jest.spyOn(service, 'isTestnet').mockReturnValueOnce(false);
+
+      const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
+      await service.fundWithFriendbot(address);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('network configuration via env', () => {
+    let originalEnv: string | undefined;
+    let originalHorizonUrl: string | undefined;
+
+    const restoreEnv = () => {
+      if (originalEnv === undefined) {
+        delete process.env.STELLAR_NETWORK;
+      } else {
+        process.env.STELLAR_NETWORK = originalEnv;
+      }
+      if (originalHorizonUrl === undefined) {
+        delete process.env.STELLAR_HORIZON_URL;
+      } else {
+        process.env.STELLAR_HORIZON_URL = originalHorizonUrl;
+      }
+    };
+
+    beforeAll(() => {
+      originalEnv = process.env.STELLAR_NETWORK;
+      originalHorizonUrl = process.env.STELLAR_HORIZON_URL;
+    });
+
+    afterEach(restoreEnv);
+
+    afterAll(restoreEnv);
+
+    it('should configure public mainnet when STELLAR_NETWORK is public', () => {
+      process.env.STELLAR_NETWORK = 'public';
+      delete process.env.STELLAR_HORIZON_URL;
+      const testService = new StellarService(circuitBreakerService);
+      expect(testService.network).toBe('public');
+      expect(testService.horizonUrl).toBe('https://horizon.stellar.org');
+      expect(testService.rpcUrl).toBe('https://soroban-rpc.stellar.org');
+      expect(testService.networkPassphrase).toBe('Public Global Stellar Network ; September 2015');
+      expect(testService.isMainnet()).toBe(true);
+      expect(testService.isTestnet()).toBe(false);
+    });
+
+    it('should configure testnet when STELLAR_NETWORK is testnet', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      delete process.env.STELLAR_HORIZON_URL;
+      const testService = new StellarService(circuitBreakerService);
+      expect(testService.network).toBe('testnet');
+      expect(testService.horizonUrl).toBe('https://horizon-testnet.stellar.org');
+      expect(testService.rpcUrl).toBe('https://soroban-testnet.stellar.org');
+      expect(testService.networkPassphrase).toBe('Test SDF Network ; September 2015');
+      expect(testService.isMainnet()).toBe(false);
+      expect(testService.isTestnet()).toBe(true);
+    });
+
+    it('should use STELLAR_HORIZON_URL when configured', () => {
+      process.env.STELLAR_NETWORK = 'testnet';
+      process.env.STELLAR_HORIZON_URL = 'https://custom-horizon.example';
+
+      expect(new StellarService(circuitBreakerService).horizonUrl).toBe(
+        'https://custom-horizon.example',
+      );
+    });
+
+    it('should accept STELLAR_NETWORK case-insensitively', () => {
+      process.env.STELLAR_NETWORK = '  PUBLIC ';
+      const testService = new StellarService(circuitBreakerService);
+      expect(testService.network).toBe('public');
+    });
+
+    it('should default to testnet when STELLAR_NETWORK is unset or empty', () => {
+      delete process.env.STELLAR_NETWORK;
+      expect(new StellarService(circuitBreakerService).network).toBe('testnet');
+
+      process.env.STELLAR_NETWORK = '   ';
+      expect(new StellarService(circuitBreakerService).network).toBe('testnet');
+    });
+
+    it.each(['mainnet', 'goerli', 'testnet2', 'staging'])(
+      'should fail fast when STELLAR_NETWORK is %s',
+      (value) => {
+        process.env.STELLAR_NETWORK = value;
+        expect(() => new StellarService(circuitBreakerService)).toThrow(
+          `Invalid STELLAR_NETWORK="${value}" — expected "testnet" or "public".`,
+        );
+      },
+    );
   });
 });

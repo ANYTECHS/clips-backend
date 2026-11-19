@@ -1,7 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { StrKey, Horizon } from '@stellar/stellar-sdk';
-import { MetricsService } from '../metrics/metrics.service';
+import {
+  Injectable,
+  Logger,
+  BadRequestException,
+  NotFoundException,
+  BadGatewayException,
+} from '@nestjs/common';
+import { Account, StrKey, Horizon, rpc } from '@stellar/stellar-sdk';
 import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
+
+export const LOW_BALANCE_THRESHOLD_XLM = 2.0;
+
+export interface WalletBalanceResult {
+  balance: number;
+  warning: boolean;
+}
 
 export type StellarNetwork = 'testnet' | 'public';
 
@@ -14,7 +26,6 @@ export class StellarService {
   readonly horizonUrl: string;
   readonly networkPassphrase: string;
 
-  constructor(private readonly metricsService: MetricsService) {
   private readonly horizonCircuitBreakerConfig: CircuitBreakerConfig = {
     name: 'stellar-horizon',
     failureThreshold: 5,
@@ -22,7 +33,7 @@ export class StellarService {
     samplingDuration: 60000,
   };
 
-  private readonly rpcCircuitBreakerConfig: CircuitBreakerConfig = {
+  private readonly sorobanCircuitBreakerConfig: CircuitBreakerConfig = {
     name: 'stellar-rpc',
     failureThreshold: 5,
     recoveryTimeout: 30000,
@@ -30,16 +41,27 @@ export class StellarService {
   };
 
   constructor(private readonly circuitBreakerService: CircuitBreakerService) {
-    const raw = (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase();
-    this.network = raw === 'public' ? 'public' : 'testnet';
+    const raw = (process.env.STELLAR_NETWORK ?? '').trim().toLowerCase();
+    const network = raw === '' ? 'testnet' : raw;
+
+    if (network !== 'testnet' && network !== 'public') {
+      throw new Error(
+        `Invalid STELLAR_NETWORK="${process.env.STELLAR_NETWORK}" — expected "testnet" or "public".`,
+      );
+    }
+
+    this.network = network;
 
     if (this.network === 'public') {
       this.rpcUrl = 'https://soroban-rpc.stellar.org';
-      this.horizonUrl = 'https://horizon.stellar.org';
+      this.horizonUrl =
+        process.env.STELLAR_HORIZON_URL ?? 'https://horizon.stellar.org';
       this.networkPassphrase = 'Public Global Stellar Network ; September 2015';
     } else {
       this.rpcUrl = 'https://soroban-testnet.stellar.org';
-      this.horizonUrl = 'https://horizon-testnet.stellar.org';
+      this.horizonUrl =
+        process.env.STELLAR_HORIZON_URL ??
+        'https://horizon-testnet.stellar.org';
       this.networkPassphrase = 'Test SDF Network ; September 2015';
     }
 
@@ -93,43 +115,6 @@ export class StellarService {
         };
       },
     );
-
-    if (response.status === 404) {
-      return { found: false };
-    }
-
-    if (!response.ok) {
-      const body = await response.text();
-      this.metricsService.incrementStellarRpcErrors();
-      throw new Error(
-        `Horizon lookup failed (${response.status}): ${body.slice(0, 300)}`,
-      );
-    }
-
-    const payload = (await response.json()) as {
-      successful?: boolean;
-      created_at?: string;
-    };
-
-    return {
-      found: true,
-      successful: Boolean(payload.successful),
-      confirmedAt: payload.created_at
-        ? new Date(payload.created_at)
-        : undefined,
-    };
-  }
-
-  async getAccountBalance(address: string): Promise<number> {
-    const server = new Horizon.Server(this.horizonUrl);
-    try {
-      const account = await server.loadAccount(address);
-      const nativeBalance = account.balances.find(
-        (b) => b.asset_type === 'native',
-      );
-      return nativeBalance ? parseFloat(nativeBalance.balance) : 0;
-    } catch (error) {
-      this.metricsService.incrementStellarRpcErrors();
   }
 
   async getAccountBalance(address: string): Promise<number> {
@@ -155,9 +140,70 @@ export class StellarService {
   }
 
   /**
-   * Validates a Stellar public address format and checksum
-   * @param address Stellar public address (G...)
+   * Loads a Stellar account from the Soroban RPC endpoint so callers can build
+   * transactions with the account's current sequence number.
+   *
+   * Used when preparing unsigned transactions for client-side signing
+   * (e.g. NFT minting, admin contract calls).
    */
+  async getAccount(address: string): Promise<Account> {
+    return this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => {
+        const server = new rpc.Server(this.rpcUrl);
+        return server.getAccount(address);
+      },
+    );
+  }
+
+  /**
+   * Fetches the native XLM balance for a Stellar address with strict error propagation.
+   * Unlike getAccountBalance, this throws typed exceptions for callers that need to
+   * surface them to the HTTP layer (e.g. the wallet balance endpoint).
+   */
+  async getWalletBalance(address: string): Promise<WalletBalanceResult> {
+    const validation = this.validateAddress(address);
+    if (!validation.valid) {
+      throw new BadRequestException(
+        validation.message ?? 'Invalid Stellar address',
+      );
+    }
+
+    let balance: number;
+    try {
+      balance = await this.circuitBreakerService.execute(
+        this.horizonCircuitBreakerConfig,
+        async () => {
+          const server = new Horizon.Server(this.horizonUrl);
+          const account = await server.loadAccount(address);
+          const native = account.balances.find(
+            (b) => b.asset_type === 'native',
+          );
+          return native ? parseFloat(native.balance) : 0;
+        },
+      );
+    } catch (err: unknown) {
+      const e = err as { name?: string; status?: number; response?: { status?: number }; message?: string };
+
+      if (e.name === 'ServiceUnavailableException') {
+        throw err;
+      }
+
+      const httpStatus = e?.response?.status ?? e?.status;
+      if (httpStatus === 404) {
+        throw new NotFoundException(
+          `Stellar account not found for address: ${address}`,
+        );
+      }
+
+      const msg = e.message ?? 'Unknown Horizon error';
+      this.logger.error(`Horizon balance fetch failed for ${address}: ${msg}`);
+      throw new BadGatewayException(`Horizon request failed: ${msg}`);
+    }
+
+    return { balance, warning: balance < LOW_BALANCE_THRESHOLD_XLM };
+  }
+
   validateAddress(address: string): { valid: boolean; message?: string } {
     if (!address) {
       return { valid: false, message: 'Address is required' };
@@ -175,6 +221,34 @@ export class StellarService {
         message:
           error instanceof Error ? error.message : 'Invalid Stellar address',
       };
+    }
+  }
+
+  async fundWithFriendbot(address: string): Promise<void> {
+    if (!this.isTestnet()) {
+      this.logger.warn(`Not funding address ${address}: not on testnet.`);
+      return;
+    }
+
+    try {
+      this.logger.log(`Requesting Friendbot funding for address ${address}...`);
+      const response = await fetch(
+        `https://friendbot.stellar.org/?addr=${encodeURIComponent(address)}`,
+      );
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(
+          `Friendbot funding failed (${response.status}): ${body.slice(0, 300)}`,
+        );
+      }
+
+      this.logger.log(`Successfully funded ${address} using Friendbot.`);
+    } catch (error) {
+      this.logger.error(
+        `Failed to fund address ${address} with Friendbot: ${error.message}`,
+      );
+      throw error;
     }
   }
 }

@@ -1,146 +1,328 @@
-import ffmpeg from 'fluent-ffmpeg';
-import { Logger } from '@nestjs/common';
+/**
+ * FFmpeg/FFprobe utility functions for video processing.
+ *
+ * Issue #745: Extracts duration, resolution, format, fps, and bitrate from
+ * uploaded videos via ffprobe before queueing clip generation. The extracted
+ * data is stored in processingStats.originalDuration and resolution fields.
+ * Issue #745: Video metadata extraction via ffprobe.
+ */
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 
-const logger = new Logger('FfmpegUtil');
+const execFileAsync = promisify(execFile);
 
-export interface CutClipOptions {
-  inputPath: string;
-  outputPath: string;
-  /** Start time in seconds — may be a float e.g. 12.5 */
-  startTime: number;
-  /** End time in seconds — may be a float e.g. 45.7 */
-  endTime: number;
-  /** Total duration of the source video in seconds (used for edge-case clamping) */
-  videoDuration?: number;
-  signal?: AbortSignal;
+export interface VideoMetadata {
+  /** Duration in seconds */
+  duration: number;
+  /** Video width in pixels */
+  width: number;
+  /** Video height in pixels */
+  height: number;
+  /** Container format (e.g. "mp4", "mov", "webm") */
+  format: string;
+  /** Frames per second */
+  fps: number;
+  /** Bit rate in bits per second */
+  bitrate: number;
+  /** Convenience string: "WIDTHxHEIGHT" — e.g. "1920x1080" */
+  resolution: string;
 }
+
+interface FfprobeStream {
+  codec_type?: string;
+  width?: number;
+  height?: number;
+  r_frame_rate?: string;
+  duration?: string;
+  bit_rate?: string;
+}
+
+interface FfprobeFormat {
+  format_name?: string;
+  duration?: string;
+  bit_rate?: string;
+}
+
+interface FfprobeOutput {
+  streams?: FfprobeStream[];
+  format?: FfprobeFormat;
+}
+
+/**
+ * Extract video metadata using ffprobe.
+ *
+ * Runs: ffprobe -v quiet -print_format json -show_streams -show_format <filePath>
+ *
+ * @param filePath  Path to the local video file.
+ * @returns         Parsed VideoMetadata object.
+ * @throws          Error when ffprobe is not installed or the file is invalid.
+ */
+export async function getVideoMetadata(filePath: string): Promise<VideoMetadata> {
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v',
+    'quiet',
+    '-print_format',
+    'json',
+    '-show_streams',
+    '-show_format',
+    filePath,
+  ]);
+
+  const probe = JSON.parse(stdout) as FfprobeOutput;
+
+  const videoStream = (probe.streams ?? []).find(
+    (s) => s.codec_type === 'video',
+  );
+
+  const fmt = probe.format ?? {};
+
+  // Duration: prefer stream-level; fall back to format-level
+  const durationRaw =
+    videoStream?.duration ?? fmt.duration ?? '0';
+  const duration = parseFloat(durationRaw) || 0;
+
+  // Resolution
+  const width = videoStream?.width ?? 0;
+  const height = videoStream?.height ?? 0;
+  const resolution = `${width}x${height}`;
+
+  // FPS expressed as a fraction string like "30000/1001" or "25/1"
+  const fpsRaw = videoStream?.r_frame_rate ?? '0/1';
+  const [num, den] = fpsRaw.split('/').map(Number);
+  const fps = den > 0 ? Math.round((num / den) * 100) / 100 : 0;
+
+  // Bitrate in bps (prefer stream; fall back to format)
+  const bitrateRaw =
+    videoStream?.bit_rate ?? fmt.bit_rate ?? '0';
+  const bitrate = parseInt(bitrateRaw, 10) || 0;
+
+  // Container format (may be comma-separated like "mov,mp4,m4a,3gp,3g2,mj2")
+  const formatRaw = fmt.format_name ?? '';
+  const format = formatRaw.split(',')[0] ?? '';
+
+  return { duration, width, height, resolution, format, fps, bitrate };
+  duration: number;
+  width: number;
+  height: number;
+  format: string;
+  fps: number;
+  bitrate: number;
+  resolution: string;
+}
+
+export async function getVideoMetadata(filePath: string): Promise<VideoMetadata> {
+  const { stdout } = await execFileAsync('ffprobe', [
+    '-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', filePath,
+  ]);
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+const execFileAsync = promisify(execFile);
+export interface VideoMetadata { duration: number; width: number; height: number; format: string; fps: number; bitrate: number; resolution: string }
+export async function getVideoMetadata(filePath: string): Promise<VideoMetadata> {
+  const { stdout } = await execFileAsync('ffprobe', ['-v', 'quiet', '-print_format', 'json', '-show_streams', '-show_format', filePath]);
+  const probe = JSON.parse(stdout) as any;
+  const vs = (probe.streams ?? []).find((s: any) => s.codec_type === 'video') ?? {};
+  const fmt = probe.format ?? {};
+  const duration = parseFloat(vs.duration ?? fmt.duration ?? '0') || 0;
+  const width = vs.width ?? 0;
+  const height = vs.height ?? 0;
+  const width = vs.width ?? 0; const height = vs.height ?? 0;
+  const [num, den] = (vs.r_frame_rate ?? '0/1').split('/').map(Number);
+  const fps = den > 0 ? Math.round((num / den) * 100) / 100 : 0;
+  const bitrate = parseInt(vs.bit_rate ?? fmt.bit_rate ?? '0', 10) || 0;
+  const format = (fmt.format_name ?? '').split(',')[0] ?? '';
+  return { duration, width, height, resolution: `${width}x${height}`, format, fps, bitrate };
+}
+export interface CutClipOptions { inputPath: string; outputPath: string; startTime: number; endTime: number; videoDuration?: number }
+export async function cutClip(options: CutClipOptions): Promise<string> {
+  const { inputPath, outputPath, startTime } = options;
+  const endTime = options.videoDuration ? Math.min(options.endTime, options.videoDuration) : options.endTime;
+  await execFileAsync('ffmpeg', ['-y', '-ss', String(startTime), '-to', String(endTime), '-i', inputPath, '-c', 'copy', outputPath]);
+import { Logger } from '@nestjs/common';
+import * as Ffmpeg from 'fluent-ffmpeg';
+
+const logger = new Logger('ffmpeg.util');
 
 export interface VideoMetadata {
   duration: number;
   width: number;
   height: number;
   format: string;
+  fps: number;
+  bitrate: number;
   resolution: string;
 }
 
+export interface CutClipOptions {
+  inputPath: string;
+  outputPath: string;
+  startTime: number;
+  endTime: number;
+  /** Total video duration — used to clamp endTime to a valid range */
+  videoDuration?: number;
+}
+
 /**
- * Extracts video metadata using ffprobe.
- * Returns duration, width, height, format, and resolution.
+ * Cut a segment from a video file using FFmpeg.
+ *
+ * Uses stream-copy (-c copy) for fast cutting without re-encoding.
+ *
+ * @param options  Cut options including source path, destination path,
+ *                 start time, and end time.
+ * @returns        The output file path.
  */
-export async function getVideoMetadata(
-  inputPath: string,
-): Promise<VideoMetadata> {
+export async function cutClip(options: CutClipOptions): Promise<string> {
+  const { inputPath, outputPath, startTime } = options;
+
+  // Clamp endTime to avoid going beyond the file end
+  const endTime = options.videoDuration
+    ? Math.min(options.endTime, options.videoDuration)
+    : options.endTime;
+
+  await execFileAsync('ffmpeg', [
+    '-y',
+    '-ss',
+    String(startTime),
+    '-to',
+    String(endTime),
+    '-i',
+    inputPath,
+    '-c',
+    'copy',
+    outputPath,
+  ]);
+
+  videoDuration?: number;
+}
+
+export async function cutClip(options: CutClipOptions): Promise<string> {
+  const { inputPath, outputPath, startTime } = options;
+  const endTime = options.videoDuration
+    ? Math.min(options.endTime, options.videoDuration)
+    : options.endTime;
+  await execFileAsync('ffmpeg', [
+    '-y', '-ss', String(startTime), '-to', String(endTime), '-i', inputPath, '-c', 'copy', outputPath,
+  ]);
+/**
+ * Extract metadata from a video file using ffprobe.
+ */
+export function getVideoMetadata(inputPath: string): Promise<VideoMetadata> {
+  logger.log(`Extracting metadata from: ${inputPath}`);
+
   return new Promise((resolve, reject) => {
-    ffmpeg.ffprobe(inputPath, (err, metadata) => {
+    Ffmpeg.ffprobe(inputPath, (err, data) => {
       if (err) {
+        logger.error(`ffprobe error for ${inputPath}: ${err.message}`);
         return reject(err);
       }
 
-      const format = metadata.format;
-      const stream = metadata.streams.find((s) => s.codec_type === 'video');
+      const videoStream = data.streams?.find((s) => s.codec_type === 'video');
+      const duration = parseFloat(String(data.format?.duration ?? '0'));
+      const width = videoStream?.width ?? 0;
+      const height = videoStream?.height ?? 0;
+      const format = data.format?.format_name ?? 'unknown';
+      const bitrate = Math.round(
+        parseFloat(String(data.format?.bit_rate ?? '0')) / 1000,
+      );
 
-      if (!stream) {
-        return reject(new Error('No video stream found'));
+      // Parse frame rate (e.g. "30/1" or "30000/1001")
+      let fps = 0;
+      if (videoStream?.r_frame_rate) {
+        const parts = videoStream.r_frame_rate.split('/');
+        fps =
+          parts.length === 2
+            ? parseFloat(parts[0]) / parseFloat(parts[1])
+            : parseFloat(parts[0]);
       }
 
-      const duration = parseFloat(format.duration?.toString() || '0');
-      const width = stream.width || 0;
-      const height = stream.height || 0;
-      const formatName = format.format_name || 'unknown';
-
-      resolve({
+      const metadata: VideoMetadata = {
         duration,
         width,
         height,
-        format: formatName,
+        format,
+        fps: Math.round(fps * 100) / 100,
+        bitrate,
         resolution: `${width}x${height}`,
-      });
+      };
+
+      logger.log(
+        `Metadata for ${inputPath}: duration=${duration}s, ${metadata.resolution}, fps=${metadata.fps}`,
+      );
+
+      resolve(metadata);
     });
   });
 }
 
 /**
- * Sanitises float startTime/endTime values before passing them to FFmpeg.
+ * Cut a segment from a video file using ffmpeg.
+ * Captures stderr for debugging (#740) and probes the output file to get
+ * the actual duration after cutting (#742).
  *
- * Problem: FFmpeg's -ss / -t flags choke on raw JS floats that may carry
- * floating-point noise (e.g. 12.500000000001). We normalise to a fixed
- * 3-decimal-place string so FFmpeg always receives a clean value like "12.500".
- *
- * Rules applied:
- *  - startTime is clamped to >= 0
- *  - endTime is clamped to <= videoDuration (when provided)
- *  - endTime must be > startTime; throws otherwise
- *  - duration = endTime - startTime, formatted to 3 d.p.
- *
- * FFmpeg invocation uses:
- *  .seekInput(startSeconds)  — maps to -ss (input seek, frame-accurate)
- *  .duration(durationSeconds) — maps to -t (output duration)
+ * Returns the outputPath on success.
  */
 export function cutClip(options: CutClipOptions): Promise<string> {
-  const { inputPath, outputPath, videoDuration } = options;
-
-  // --- Sanitise & clamp ---
-  const start = Math.max(0, options.startTime);
-  const end =
-    videoDuration != null
-      ? Math.min(options.endTime, videoDuration)
-      : options.endTime;
-
-  if (end <= start) {
-    throw new RangeError(
-      `endTime (${end}) must be greater than startTime (${start})`,
-    );
-  }
-
-  // Fixed-precision strings — avoids floating-point noise in FFmpeg args
-  const startSeconds = parseFloat(start.toFixed(3));
-  const durationSeconds = parseFloat((end - start).toFixed(3));
+  const { inputPath, outputPath, startTime, endTime } = options;
+  const duration = endTime - startTime;
 
   logger.log(
-    `Cutting clip: input=${inputPath} start=${startSeconds}s duration=${durationSeconds}s output=${outputPath}`,
+    `Cutting: ${inputPath} [${startTime}s-${endTime}s] (${duration}s) → ${outputPath}`,
   );
 
-  return new Promise((resolve, reject) => {
-    const stderrLines: string[] = [];
-    const MAX_STDERR_LINES = 10;
+  // Issue #740: store last 10 lines of stderr for debugging
+  const stderrLines: string[] = [];
 
-    const cmd = ffmpeg(inputPath)
-      .seekInput(startSeconds)
-      .duration(durationSeconds)
+  return new Promise((resolve, reject) => {
+    Ffmpeg(inputPath)
+      .setStartTime(startTime)
+      .setDuration(duration)
       .output(outputPath)
+      // Issue #740: capture every stderr line emitted by FFmpeg
       .on('stderr', (line: string) => {
+        logger.debug(`[ffmpeg stderr] ${line}`);
         stderrLines.push(line);
-        if (stderrLines.length > MAX_STDERR_LINES) {
+        // Keep only the last 10 lines to limit memory use
+        if (stderrLines.length > 10) {
           stderrLines.shift();
         }
-        logger.debug(`[ffmpeg stderr] ${line}`);
-      })
-      .on('end', () => {
-        resolve(outputPath);
       })
       .on('error', (err: Error) => {
-        const stderrSummary =
-          stderrLines.length > 0
-            ? `\nLast FFmpeg output:\n${stderrLines.join('\n')}`
-            : '';
-        const detailedError = new Error(`${err.message}${stderrSummary}`);
-        reject(detailedError);
-      });
+        const last10 = stderrLines.slice(-10).join('\n');
+        logger.error(
+          `FFmpeg cut failed for ${inputPath}: ${err.message}\nLast stderr lines:\n${last10}`,
+          // Attach last 10 lines to the error object so callers can persist them
+          // to processingError (as required by #740).
+          { processingError: last10 },
+        );
+        // Augment the error so the caller can read `err.processingError`
+        (err as any).processingError = last10;
+        reject(err);
+      })
+      .on('end', () => {
+        logger.log(`FFmpeg cut completed: ${outputPath}`);
+        resolve(outputPath);
+      })
+      .run();
+  });
+}
 
-    if (options.signal) {
-      const onAbort = () => {
-        try {
-          cmd.kill('SIGKILL');
-        } catch {}
-        reject(new Error('Aborted'));
-      };
-      if (options.signal.aborted) {
-        onAbort();
-        return;
+/**
+ * Probe an already-written output file and return its actual duration in seconds.
+ * Issue #742: use this after cutClip() to get the real duration (avoids FFmpeg
+ * rounding discrepancies when updating Clip.duration).
+ */
+export function probeOutputDuration(filePath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    Ffmpeg.ffprobe(filePath, (err, data) => {
+      if (err) {
+        logger.error(
+          `ffprobe failed for output file ${filePath}: ${err.message}`,
+        );
+        return reject(err);
       }
-      options.signal.addEventListener('abort', onAbort, { once: true });
-    }
-
-    cmd.run();
+      const duration = parseFloat(String(data.format?.duration ?? '0'));
+      logger.log(`Probed duration of ${filePath}: ${duration}s`);
+      resolve(duration);
+    });
   });
 }

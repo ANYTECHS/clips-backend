@@ -4,31 +4,41 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
-  id            Int            @id @default(autoincrement())
-  email         String         @unique
-  password      String?
-  mfaEnabled    Boolean        @default(false)
-  mfaSecret     String?
-  provider      String?
-  providerId    String?
-  name          String?
-  picture       String?
-  emailVerified DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  videos        Video[]
-  userPlatforms UserPlatform[]
-  subscriptions Subscription[]
-  stellarPaymentIntents StellarPaymentIntent[]
-  wallets       Wallet[]
-  payouts       Payout[]
-  magicLinks     MagicLink[]
-  refreshTokens  RefreshToken[]
-  passwordResetTokens PasswordResetToken[]
+  id                     Int            @id @default(autoincrement())
+  email                  String         @unique
+  password               String?
+  mfaEnabled             Boolean        @default(false)
+  mfaSecret              String?
+  provider               String?
+  providerId             String?
+  name                   String?
+  picture                String?
+  emailVerified          DateTime?
+  stellarPublicKey       String?
+  walletType             String?
+  encryptedStellarSecret String?
+  role                   String         @default("user")
+  showOnLeaderboard      Boolean        @default(false)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  videos                 Video[]
+  userPlatforms          UserPlatform[]
+  subscriptions          Subscription[]
+  stellarPaymentIntents  StellarPaymentIntent[]
+  wallets                Wallet[]
+  payouts                Payout[]
+  payoutMethods          PayoutMethod[]
+  magicLinks             MagicLink[]
+  refreshTokens          RefreshToken[]
+  passwordResetTokens    PasswordResetToken[]
   emailVerificationTokens EmailVerificationToken[]
+  earningsAuditLogs       EarningsAuditLog[]
+  dailyEarnings           DailyEarning[]
+  earningsSummary         UserEarningsSummary?
 
   @@unique([provider, providerId])
 }
@@ -45,8 +55,10 @@ model Video {
   fileSize         BigInt?
   status           String   @default("pending")
   processingError  String?
-  // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, errorDetails?: string }
+  // Schema: { momentsFound: number, inputQuality: string, durationSec: number, clipsGenerated: number, timeTakenMs: number, avgDurationSec?: number, errorDetails?: string }
   processingStats  Json?
+  // Schema: { duration: number, width: number, height: number, format: string, fps: number, bitrate: number }
+  metadata         Json?
   targetPlatforms  Json?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -59,6 +71,7 @@ model Video {
 
 model Clip {
   id            Int        @id @default(autoincrement())
+  collectionId  String     @default("viral-clips")
   videoId       Int
   clipUrl       String
   thumbnail     String?
@@ -67,22 +80,96 @@ model Clip {
   caption       String?
   startTime     Float
   endTime       Float
-  duration      Int
+  duration      Float
   viralityScore Float?
-  royaltyBps    Int?
+  royaltyBps    Int?       @default(1000)
+  selected      Boolean    @default(false)
   postStatus    Json?
   postedAt      DateTime?
   metadataUri   String?
   mintAddress   String?    @unique
   mintedAt      DateTime?
+  mintWalletAddress String?
   nftStatus     String     @default("none")
+  status        String     @default("pending")
+  localFilePath String?
+  error         String?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  collection    NftCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Restrict)
   earnings      Earning[]
   clipPosts     ClipPost[]
+  royalty       ClipRoyalty?
+  mintStatus    NftMintStatus?
 
   @@index([videoId])
+  @@index([selected])
+  @@index([collectionId, mintAddress])
+}
+
+model NftCollection {
+  collectionId String   @id
+  name         String
+  description  String
+  type         String
+  metadata     Json     @default("{}")
+  royaltyBps   Int?
+  maxSupply    Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  clips        Clip[]
+
+  @@index([type])
+}
+
+/// Tracks the full minting lifecycle for a single clip.
+/// One row is created when minting begins and updated as stages progress.
+model NftMintStatus {
+  id               Int       @id @default(autoincrement())
+  clipId           Int       @unique
+  /// Current lifecycle stage.
+  /// Values: 'none' | 'upload' | 'prepare' | 'submit' | 'confirm' | 'fail'
+  stage            String    @default("none")
+  /// On-chain transaction hash (set after submit stage)
+  txHash           String?
+  /// Number of retry attempts so far
+  retryCount       Int       @default(0)
+  /// Next allowed retry timestamp (for exponential backoff)
+  nextRetryAt      DateTime?
+  /// Human-readable failure reason when stage = 'fail'
+  failureReason    String?
+  /// Whether permanently failed (max retries exceeded)
+  permanentFailure Boolean   @default(false)
+  /// IPFS CID / metadata URI (set after upload stage)
+  metadataUri      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  clip             Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@index([stage])
+  @@index([permanentFailure])
+}
+
+/// Last successfully confirmed NFT mint for each Stellar wallet.
+model NftWalletMintCooldown {
+  walletAddress String   @id
+  lastMintAt    DateTime
+}
+
+model ClipRoyalty {
+  id               Int       @id @default(autoincrement())
+  clipId           Int       @unique
+  recipientAddress String
+  basisPoints      Int
+  platformFeeBps   Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  clip             Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([clipId])
+  @@index([recipientAddress])
 }
 
 model ClipPost {
@@ -102,14 +189,26 @@ model ClipPost {
 }
 
 model Earning {
-  id        Int      @id @default(autoincrement())
-  clipId    Int
-  amount    Float
-  currency  String   @default("USD")
-  date      DateTime
-  source    String?
-  createdAt DateTime @default(now())
-  clip      Clip     @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  id                    Int       @id @default(autoincrement())
+  clipId                Int
+  amount                Float
+  currency              String    @default("USD")
+  amountInBaseCurrency  Float?
+  exchangeRate          Float?
+  date                  DateTime
+  source                String?
+  isAnomaly             Boolean   @default(false)
+  anomalyReason         String?
+  createdAt             DateTime  @default(now())
+  deletedAt             DateTime?
+  clip                  Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([date])
+  @@index([currency])
+  @@index([date, currency])
+  @@index([deletedAt])
+  @@index([clipId, date])
+  @@index([clipId])
 }
 
 model UserPlatform {
@@ -141,22 +240,66 @@ model Wallet {
 }
 
 model Payout {
-  id            Int       @id @default(autoincrement())
-  userId        Int
-  walletId      Int?
-  amount        Float
-  currency      String    @default("USD")
-  method        String
-  status        String
-  transactionId String?
-  stellarXdr    String?
-  onChainTxHash String?
-  confirmedAt   DateTime?
-  paidAt        DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  wallet        Wallet?   @relation(fields: [walletId], references: [id])
+  id               Int           @id @default(autoincrement())
+  userId           Int
+  walletId         Int?
+  payoutMethodId   Int?
+  amount           Float
+  currency         String        @default("USD")
+  method           String
+  status           String        @default("pending")
+  transactionId    String?
+  externalTransactionId String?
+  stellarXdr       String?
+  onChainTxHash    String?
+  confirmedAt      DateTime?
+  paidAt           DateTime?
+  approvedAt       DateTime?
+  approvedBy       Int?
+  reviewedAt       DateTime?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  feeAmount        Float?
+  feePercentage    Float?
+  finalAmount      Float?
+  retryCount       Int           @default(0)
+  lastAttemptAt    DateTime?
+  confirmationPollCount Int       @default(0)
+  lastConfirmationCheckAt DateTime?
+  nextRetryAt      DateTime?
+  failureReason    String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet           Wallet?       @relation(fields: [walletId], references: [id])
+  payoutMethod     PayoutMethod? @relation(fields: [payoutMethodId], references: [id])
+  receipt          PayoutReceipt?
+
+  @@index([payoutMethodId])
+  @@index([status])
+  @@index([method, status, onChainTxHash])
+  @@index([userId])
+  @@index([nextRetryAt])
+  @@index([deletedAt])
+  @@index([userId, deletedAt])
+}
+
+model PayoutReceipt {
+  id               Int       @id @default(autoincrement())
+  payoutId         Int       @unique
+  receiptId        String    @unique
+  pdfUrl           String?
+  pdfStoragePath   String?
+  emailSent        Boolean   @default(false)
+  emailSentAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  payout           Payout    @relation(fields: [payoutId], references: [id], onDelete: Cascade)
+
+  @@index([payoutId])
+  @@index([receiptId])
+  @@index([emailSent])
 }
 
 model Subscription {
@@ -251,4 +394,300 @@ model StellarWebhookLog {
 
   @@index([transactionId])
   @@index([processedAt])
+}
+
+model PayoutFeeConfig {
+  id              Int      @id @default(autoincrement())
+  method          String   @unique
+  feeType         String   @default("fixed") // "fixed" or "percentage"
+  feePercentage   Float
+  fixedFee        Float    @default(0)
+  minFee          Float    @default(0)
+  maxFee          Float?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model PlatformWebhookLog {
+  id           Int      @id @default(autoincrement())
+  platform     String
+  eventType    String
+  eventId      String?
+  payload      String
+  signature    String?
+  isValid      Boolean  @default(false)
+  processedAt  DateTime @default(now())
+  error        String?
+
+  @@unique([platform, eventId])
+  @@index([platform])
+  @@index([processedAt])
+  @@index([eventId])
+}
+
+model AnomalyAlert {
+  id          Int      @id @default(autoincrement())
+  earningId   Int
+  userId      Int
+  amount      Float
+  reason      String
+  severity    String
+  isResolved  Boolean  @default(false)
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([isResolved])
+  @@index([createdAt])
+}
+
+model PayoutMethod {
+  id                      Int       @id @default(autoincrement())
+  userId                  Int
+  type                    String
+  isDefault               Boolean   @default(false)
+  encryptedAccountNumber  String?
+  encryptedRoutingNumber  String?
+  encryptedSwiftCode      String?
+  encryptedIban           String?
+  bankName                String?
+  accountHolderName       String?
+  country                 String?
+  currency                String    @default("USD")
+  lastFourDigits          String?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  deletedAt               DateTime?
+  user                    User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payouts                 Payout[]
+
+  @@index([userId])
+  @@index([type])
+}
+
+model MonthlyEarning {
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  year              Int
+  month             Int
+  totalAmount       Float
+  currency          String   @default("USD")
+  platformBreakdown Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, year, month])
+  @@index([userId])
+  @@index([year, month])
+}
+
+model EarningsAuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  amount     Float
+  actionType String
+  timestamp  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+
+model SubscriptionRevenue {
+  id              Int      @id @default(autoincrement())
+  subscriptionId  Int
+  transactionHash String   @unique
+  payerAddress    String
+  amount          Float
+  assetType       String
+  memo            String
+  processedAt     DateTime @default(now())
+
+  @@index([subscriptionId])
+  @@index([processedAt])
+}
+
+/// Daily roll-up of a user's earnings, produced by the midnight aggregation
+/// job (Issue #767). One row per user per UTC day per currency, so dashboards
+/// and reports can read totals without scanning the Earning table.
+model DailyEarning {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  /// Midnight (00:00:00.000) UTC of the day being summarised.
+  date         DateTime
+  currency     String   @default("USD")
+  totalAmount  Float    @default(0)
+  /// Total converted into the platform base currency, when exchange rates were recorded.
+  totalInBaseCurrency Float?
+  /// Number of Earning rows folded into this total.
+  earningCount Int      @default(0)
+  /// Number of distinct clips that earned on this day.
+  clipCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date, currency])
+  @@index([userId])
+  @@index([date])
+  @@index([userId, date])
+}
+
+/// Denormalised lifetime earnings summary per user, refreshed by the daily
+/// aggregation job (Issue #767) so the dashboard does not recompute it.
+model UserEarningsSummary {
+  userId           Int      @id
+  totalEarned      Float    @default(0)
+  totalPaidOut     Float    @default(0)
+  availableBalance Float    @default(0)
+  currency         String   @default("USD")
+  lastAggregatedAt DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Indexed NFT ownership transfers from Soroban Transfer events (Issue #841).
+model NftTransfer {
+  id            Int      @id @default(autoincrement())
+  tokenId       Int
+  fromAddress   String
+  toAddress     String
+  txHash        String
+  transferredAt DateTime
+  salePrice     BigInt?
+  contractId    String?
+  createdAt     DateTime @default(now())
+
+  @@unique([txHash, tokenId])
+  @@index([tokenId])
+  @@index([transferredAt])
+  @@index([tokenId, transferredAt])
+}
+
+/// Tracks backend-authorized metadata refreshes for the 30-day cooldown (Issue #837).
+model NftMetadataRefresh {
+  id           Int      @id @default(autoincrement())
+  tokenId      Int
+  adminAddress String
+  txHash       String?
+  refreshedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([tokenId])
+  @@index([tokenId, refreshedAt])
+}
+
+/// Tracks submitted Soroban / Stellar transaction hashes until confirmed or
+/// failed (Issue #846). Status is one of: pending | confirmed | failed.
+model TrackedTransaction {
+  id             Int       @id @default(autoincrement())
+  hash           String    @unique
+  status         String    @default("pending")
+  label          String?
+  userId         Int?
+  failureReason  String?
+  submittedAt    DateTime  @default(now())
+  confirmedAt    DateTime?
+  lastCheckedAt  DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([lastCheckedAt])
+  @@index([userId])
+}
+
+/// Historical royalty claims by NFT creators (Issue #840).
+/// Populated from on-chain `RoyaltyClaimed` events by the Soroban indexer.
+model RoyaltyClaim {
+  id              Int      @id @default(autoincrement())
+  tokenId         Int
+  recipient       String
+  amount          String
+  assetContractId String?
+  txHash          String   @unique
+  ledger          Int?
+  eventIndex      Int?
+  claimedAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@index([tokenId, claimedAt])
+  @@index([recipient])
+}
+
+/// Indexed Soroban NFT contract events (Issue #845).
+model BlockchainEvent {
+  id          String   @id @default(cuid())
+  eventType   String
+  tokenId     Int?
+  fromAddress String?
+  toAddress   String?
+  amount      String?
+  asset       String?
+  txHash      String
+  eventIndex  Int
+  ledger      Int
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  @@unique([txHash, eventIndex])
+  @@index([eventType])
+  @@index([tokenId])
+  @@index([ledger])
+  @@index([createdAt])
+}
+
+/// Cursor / failure state for the Soroban contract event indexer (Issue #845).
+model IndexerState {
+  id           String   @id
+  lastLedger   Int      @default(0)
+  failureCount Int      @default(0)
+  lastError    String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
+
+/// Scheduled contract pause requests with 24-hour timelock (Issue #1048).
+///
+/// Lifecycle:
+///   1. Admin calls POST /blockchain/pause  → row created (activatedAt=null, cancelledAt=null)
+///   2. After scheduledFor has passed the indexer sets activatedAt when a Paused event arrives.
+///   3. Admin calls DELETE /blockchain/pause to cancel → cancelledAt set.
+///   4. When Unpaused event arrives → cancelledAt set on the active row.
+model ContractPauseSchedule {
+  id           Int       @id @default(autoincrement())
+
+  /// Stellar address of the admin who requested the pause.
+  requestedBy  String
+
+  /// Wall-clock time when the pause was requested.
+  requestedAt  DateTime  @default(now())
+
+  /// requestedAt + 24 hours — earliest time the pause may be activated.
+  scheduledFor DateTime
+
+  /// Set by the indexer when a Paused on-chain event is observed and the
+  /// timelock has elapsed.
+  activatedAt  DateTime?
+
+  /// Set when the admin cancels before activation, or when Unpaused event
+  /// is observed on-chain.
+  cancelledAt  DateTime?
+
+  /// Address that cancelled the pause (admin).
+  cancelledBy  String?
+
+  /// Optional free-text reason for the pause.
+  reason       String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([requestedAt])
+  @@index([scheduledFor])
+  @@index([activatedAt])
+  @@index([cancelledAt])
 }

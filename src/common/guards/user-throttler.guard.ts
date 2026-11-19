@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
-import type { ExecutionContext } from '@nestjs/common';
+import { ThrottlerGuard, ThrottlerRequest } from '@nestjs/throttler';
 
 /**
  * Extends ThrottlerGuard to key rate limits by authenticated user ID
@@ -13,33 +12,11 @@ export class UserThrottlerGuard extends ThrottlerGuard {
     return userId ? `user:${userId}` : (req.ip as string);
   }
 
-  protected getErrorMessage(): string {
+  protected async getErrorMessage(): Promise<string> {
     return 'Too many requests. Please try again later.';
   }
 
-  async handleRequest(
-    context: ExecutionContext,
-    limit: number,
-    ttl: number,
-    throttler: any,
-    storage: any,
-    generateKey: any,
-  ): Promise<boolean> {
-    const result = await super.handleRequest(
-      context,
-      limit,
-      ttl,
-      throttler,
-      storage,
-      generateKey,
-    );
-
-    const res = context.switchToHttp().getResponse();
-    // Attach rate-limit headers
-    if (res && typeof res.setHeader === 'function') {
-      res.setHeader('X-RateLimit-Limit', limit);
-    }
-
-    return result;
+  async handleRequest(requestProps: ThrottlerRequest): Promise<boolean> {
+    return super.handleRequest(requestProps);
   }
 }

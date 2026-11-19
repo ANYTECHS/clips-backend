@@ -1,8 +1,18 @@
 import { Controller, Get, Delete, Param, HttpCode } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { CircuitBreakerService, CircuitBreakerMetrics } from './circuit-breaker.service';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiNotFoundResponse,
+  ApiInternalServerErrorResponse,
+} from '@nestjs/swagger';
+import {
+  CircuitBreakerService,
+  CircuitBreakerMetrics,
+} from './circuit-breaker.service';
 
 @ApiTags('circuit-breaker')
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('circuit-breaker')
 export class CircuitBreakerController {
   constructor(private readonly circuitBreakerService: CircuitBreakerService) {}
@@ -37,8 +47,7 @@ export class CircuitBreakerController {
     status: 204,
     description: 'Circuit breaker reset successfully',
   })
-  @ApiResponse({
-    status: 404,
+  @ApiNotFoundResponse({
     description: 'Circuit breaker not found',
   })
   resetBreaker(@Param('name') name: string): void {

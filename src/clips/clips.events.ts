@@ -19,3 +19,68 @@ export interface ClipGenerationFailedPayload {
   failedReason: string;
   attemptsMade: number;
 }
+
+// ─── Real-time progress WebSocket events ─────────────────────────────────────
+
+/**
+ * Step labels emitted at key processing milestones.
+ *
+ *  video_download    — source video has been fetched / is accessible (10 %)
+ *  ai_analysis       — viral-moment detection complete (30 %)
+ *  ffmpeg_processing — FFmpeg is generating the clip (60 %)
+ *  upload            — clip uploaded to Cloudinary CDN (90 %)
+ *  done              — job finished, DB record updated (100 %)
+ *
+ *  ffmpeg_cut remains accepted as a backwards-compatible alias for existing
+ *  progress payloads and older clients.
+ */
+export type ClipProgressStep =
+  | 'video_download'
+  | 'ai_analysis'
+  | 'ffmpeg_processing'
+  | 'ffmpeg_cut'
+  | 'upload'
+  | 'done';
+
+export interface ClipProgressPayload {
+  /** BullMQ job ID */
+  jobId: string | undefined;
+  /** Prisma video ID */
+  videoId: string;
+  /** 0–100 */
+  percent: number;
+  /** Alias for percent */
+  progress: number;
+  /** Alias for step */
+  stage: ClipProgressStep;
+  /** Human-readable step label */
+  step: ClipProgressStep;
+  /** Snapshot of the clip being processed (may be absent for video-level jobs) */
+  currentClip?: number | string | {
+    id: string;
+    startTime: number;
+    endTime: number;
+    positionRatio: number;
+  };
+}
+
+export interface ClipCompletedPayload {
+  jobId: string | undefined;
+  videoId: string;
+  clipId?: number;
+  clipUrl?: string;
+  thumbnail?: string;
+  status: string;
+}
+
+export interface ClipFailedPayload {
+  jobId: string | undefined;
+  videoId: string;
+  reason: string;
+  attemptsMade: number;
+}
+
+/** Socket.IO event names emitted to the client */
+export const WS_CLIP_PROGRESS = 'clip.progress';
+export const WS_CLIP_COMPLETED = 'clip.completed';
+export const WS_CLIP_FAILED = 'clip.failed';

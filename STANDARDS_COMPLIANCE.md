@@ -1,6 +1,6 @@
 # NFT Contract Standards Compliance
 
-Review of `contracts/nft-royalty` against applicable Stellar / Soroban NFT standards.
+Review of `contracts/src` (`lib.rs` + `token.rs`) against applicable Stellar / Soroban NFT standards.
 
 ## Applicable standards
 
@@ -18,7 +18,7 @@ Review of `contracts/nft-royalty` against applicable Stellar / Soroban NFT stand
 | No collection metadata | Added `name()` / `symbol()` |
 | Mint could overwrite an existing token | `mint` now rejects existing token IDs |
 | No burn | Added `burn` (with optional royalty refund) |
-| No admin / emergency stop | Added `initialize`, `pause(reason)`, `unpause`, `is_paused`, `pause_reason` |
+| No emergency stop | Added `pause(reason)`, `set_pause_reason`, `unpause`, `is_paused`, `pause_reason` (contract owner only) |
 
 Compatibility tests: `test_burn_without_refund_and_standards` (balances, approvals, transfer_from, burn).
 
@@ -27,8 +27,7 @@ Compatibility tests: `test_burn_without_refund_and_standards` (balances, approva
 - Ownership: `owner_of`, `balance_of`, `total_supply`
 - Transfers: `transfer`, `transfer_from`, single-token `approve` / `get_approved`
 - Metadata: `name`, `symbol`, `token_uri`
-- Royalties: `get_royalties`, `batch_royalty_info`, `execute_royalty_payment`, royalty escrow
-  (`deposit_royalty`, `unclaimed_royalty`)
+- Royalties: per-token royalty on mint, royalty escrow (`deposit_royalty`, `unclaimed_royalty`)
 - Burn with optional royalty refund (`Refunded` event)
 - Admin pause with reason
 
@@ -43,5 +42,5 @@ Compatibility tests: `test_burn_without_refund_and_standards` (balances, approva
 
 ## Backend / Swagger impact
 
-- New: `POST /nfts/:tokenId/burn`, `GET /soroban/pause`, `GET /soroban/pause/reason` (documented in Swagger).
+- `POST /nfts/:id/burn`, `GET /soroban/pause`, `GET /soroban/pause/reason` (already on main) call `burn`, `is_paused` and `pause_reason`, which this contract now implements.
 - Existing metadata, ownership, transfer, royalty and collection API responses are unchanged.

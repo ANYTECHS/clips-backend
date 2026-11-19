@@ -1,9 +1,9 @@
 import { validate } from 'class-validator';
 import { plainToInstance } from 'class-transformer';
-import { MintClipDto } from './mint-clip.dto';
+import { CreateMintDto } from './mint-clip.dto';
 
-function makeValid(overrides: Partial<MintClipDto> = {}): MintClipDto {
-  return plainToInstance(MintClipDto, {
+function makeValid(overrides: Partial<CreateMintDto> = {}): CreateMintDto {
+  return plainToInstance(CreateMintDto, {
     clipId: '42',
     creatorWallet: 'GABC123',
     ...overrides,
@@ -21,8 +21,8 @@ describe('MintClipDto royaltyBps validation', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('passes with royaltyBps = 10000 (100%)', async () => {
-    const errors = await validate(makeValid({ royaltyBps: 10000 }));
+  it('passes with royaltyBps = 1500 (max 15%)', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 1500 }));
     expect(errors).toHaveLength(0);
   });
 
@@ -36,13 +36,13 @@ describe('MintClipDto royaltyBps validation', () => {
     expect(errors.some((e) => e.property === 'royaltyBps')).toBe(true);
   });
 
-  it('fails with royaltyBps = 10001 (>100%)', async () => {
-    const errors = await validate(makeValid({ royaltyBps: 10001 }));
+  it('fails with royaltyBps = 1501 (>15%)', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 1501 }));
     expect(errors.some((e) => e.property === 'royaltyBps')).toBe(true);
   });
 
-  it('fails with royaltyBps = 99999', async () => {
-    const errors = await validate(makeValid({ royaltyBps: 99999 }));
+  it('fails with royaltyBps = 10000 (legacy 100% max no longer allowed for clips)', async () => {
+    const errors = await validate(makeValid({ royaltyBps: 10000 }));
     expect(errors.some((e) => e.property === 'royaltyBps')).toBe(true);
   });
 });

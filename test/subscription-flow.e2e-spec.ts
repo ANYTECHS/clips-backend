@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { StellarPaymentService } from '../src/subscriptions/stellar-payment.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StellarService } from '../src/stellar/stellar.service';
+import { CircuitBreakerService } from '../src/common/circuit-breaker/circuit-breaker.service';
 
 jest.mock('../src/prisma/prisma.service', () => ({
   PrismaService: class PrismaService {},
@@ -12,6 +13,12 @@ jest.mock('@stellar/stellar-sdk', () => ({
   default: jest.fn().mockImplementation(() => ({
     transactionsTransaction: jest.fn(),
   })),
+  Horizon: {
+    Server: jest.fn().mockImplementation(() => ({
+      transactions: jest.fn(),
+      loadAccount: jest.fn(),
+    })),
+  },
   TransactionBuilder: jest.fn(),
   Networks: {},
   Operation: {},
@@ -81,11 +88,26 @@ describe('Subscription flow integration', () => {
         { provide: PrismaService, useValue: prisma },
         {
           provide: ConfigService,
-          useValue: { get: jest.fn().mockReturnValue('https://horizon-testnet.stellar.org') },
+          useValue: {
+            get: jest.fn((key: string) => {
+              if (key === 'STELLAR_WALLET_ADDRESS') return 'GDESTINATION';
+              if (key === 'STELLAR_USDC_ISSUER') return null;
+              return 'https://horizon-testnet.stellar.org';
+            }),
+          },
         },
         {
           provide: StellarService,
-          useValue: { validateAddress: jest.fn().mockReturnValue({ valid: true }) },
+          useValue: {
+            horizonUrl: 'https://horizon-testnet.stellar.org',
+            validateAddress: jest.fn().mockReturnValue({ valid: true }),
+          },
+        },
+        {
+          provide: CircuitBreakerService,
+          useValue: {
+            execute: (_cfg: unknown, fn: () => unknown) => fn(),
+          },
         },
       ],
     }).compile();

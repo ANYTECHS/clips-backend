@@ -62,11 +62,15 @@ describe('CreateVideoDto', () => {
           'tiktok',
           'Instagram',
           'INSTAGRAM',
-          'youtube',
+          'youtube-shorts',
         ],
       });
 
-      expect(dto.targetPlatforms).toEqual(['tiktok', 'instagram', 'youtube']);
+      expect(dto.targetPlatforms).toEqual([
+        'tiktok',
+        'instagram',
+        'youtube-shorts',
+      ]);
       const errors = await validate(dto);
       expect(errors.length).toBe(0);
     });
@@ -133,6 +137,19 @@ describe('CreateVideoDto', () => {
   });
 
   describe('required fields validation', () => {
+    it('trims whitespace from user-provided text fields', () => {
+      const dto = plainToInstance(CreateVideoDto, {
+        userId: 1,
+        title: '  A clip title  ',
+        description: '  A clip description  ',
+        sourceUrl: '  https://example.com/video.mp4  ',
+      });
+
+      expect(dto.title).toBe('A clip title');
+      expect(dto.description).toBe('A clip description');
+      expect(dto.sourceUrl).toBe('https://example.com/video.mp4');
+    });
+
     it('should fail validation when userId is missing', async () => {
       const dto = plainToInstance(CreateVideoDto, {
         sourceUrl: 'https://youtube.com/watch?v=test',

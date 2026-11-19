@@ -6,6 +6,7 @@ import {
   Registry,
   collectDefaultMetrics,
 } from 'prom-client';
+import { QueueMetricsService } from './queue-metrics.service';
 
 @Injectable()
 export class MetricsService {
@@ -52,8 +53,22 @@ export class MetricsService {
     registers: [this.registry],
   });
 
-  constructor() {
+  constructor(private readonly queueMetrics: QueueMetricsService) {
     collectDefaultMetrics({ register: this.registry });
+    this.registerQueueMetrics();
+  }
+
+  /**
+   * Register queue metrics from QueueMetricsService into the main registry.
+   */
+  private registerQueueMetrics(): void {
+    const queueMetricsData = this.queueMetrics.getMetrics();
+    this.registry.registerMetric(queueMetricsData.jobCount);
+    this.registry.registerMetric(queueMetricsData.jobDuration);
+    this.registry.registerMetric(queueMetricsData.jobFailures);
+    this.registry.registerMetric(queueMetricsData.jobCompletions);
+    this.registry.registerMetric(queueMetricsData.jobRetryRate);
+    this.registry.registerMetric(queueMetricsData.jobFailureReasons);
   }
 
   incrementClipsGenerated(status: 'success' | 'failure'): void {
@@ -90,6 +105,33 @@ export class MetricsService {
 
   incrementCloudinaryUploadErrors(): void {
     this.cloudinaryUploadErrors.inc();
+  }
+
+  /**
+   * Record job start time for duration tracking.
+   * @param jobId Unique job identifier (queue:jobId format recommended)
+   */
+  recordJobStart(jobId: string): void {
+    this.queueMetrics.recordJobStart(jobId);
+  }
+
+  /**
+   * Record job completion with duration.
+   * @param jobId Job identifier that was passed to recordJobStart
+   * @param queue Queue name
+   * @param status 'success' or 'failure'
+   */
+  recordJobCompletion(jobId: string, queue: string, status: 'success' | 'failure'): void {
+    this.queueMetrics.recordJobCompletion(jobId, queue, status);
+  }
+
+  /**
+   * Record job failure.
+   * @param queue Queue name
+   * @param reason Failure reason (e.g., 'timeout', 'error', 'cancelled')
+   */
+  recordJobFailure(queue: string, reason?: string): void {
+    this.queueMetrics.recordJobFailure(queue, reason);
   }
 
   async getMetrics(): Promise<string> {

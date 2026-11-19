@@ -83,7 +83,9 @@ describe('PlatformRevenueService', () => {
         ],
       });
 
-      await expect(module.compile()).rejects.toThrow(InternalServerErrorException);
+      await expect(module.compile()).rejects.toThrow(
+        InternalServerErrorException,
+      );
     });
   });
 });

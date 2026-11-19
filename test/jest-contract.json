@@ -1,0 +1,15 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testRegex": "contract\\.api-spec\\.ts$",
+  "modulePathIgnorePatterns": ["<rootDir>/dist", "<rootDir>/test/__mocks__"],
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@prisma/client$": "<rootDir>/src/__mocks__/@prisma/client.ts",
+    "^(\\.{1,2}/.*)\\.js$": "$1"
+  },
+  "setupFilesAfterEnv": ["<rootDir>/src/test-setup.ts"]
+}

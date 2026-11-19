@@ -1,0 +1,324 @@
+import {
+  Controller,
+  Get,
+  HttpException,
+  HttpStatus,
+  Logger,
+} from '@nestjs/common';
+import {
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+  ApiInternalServerErrorResponse,
+  ApiOkResponse,
+  ApiServiceUnavailableResponse,
+} from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
+import { RedisMemoryService, RedisMemoryStats } from './redis-memory.service';
+import { RedisHealthService, RedisHealthResult } from './redis-health.service';
+import { RedisService } from '../redis/redis.service';
+import { QueueHealthService } from '../queue/queue-health.service';
+import {
+  QueueHealthResponseDto,
+  QueueStatisticsResponseDto,
+} from '../queue/dtos/queue-stats.dto';
+import { SorobanHealthService } from './soroban-health.service';
+import { SorobanHealthResponseDto } from './dto/soroban-health.dto';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+
+interface HealthResponse {
+  status: 'ok' | 'degraded';
+  stats: RedisMemoryStats;
+}
+
+interface RedisHealthResponse {
+  status: 'healthy' | 'unhealthy';
+  service: 'redis';
+  connected: boolean;
+  latencyMs: number | null;
+  message?: string;
+}
+
+@ApiTags('health')
+@ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@SkipThrottle()
+@Controller('health')
+export class HealthController {
+  private readonly logger = new Logger(HealthController.name);
+
+  constructor(
+    private readonly redisMemoryService: RedisMemoryService,
+    private readonly redisService: RedisService,
+    private readonly redisHealthService: RedisHealthService,
+    private readonly queueHealthService: QueueHealthService,
+    private readonly sorobanHealthService: SorobanHealthService,
+    private readonly gracefulShutdown: GracefulShutdownService,
+  ) {}
+
+  @Get()
+  @ApiOperation({
+    summary: 'Application health overview',
+    description:
+      'Returns the app health status and includes the Redis service health in the main health response. ' +
+      'During graceful worker shutdown (SIGTERM), `status` is `draining` so load balancers can stop ' +
+      'routing new traffic while active jobs finish (Issue #975).',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Health overview retrieved successfully.',
+    schema: {
+      example: {
+        status: 'healthy',
+        redis: { status: 'healthy', service: 'redis' },
+        workers: { shuttingDown: false, registered: 4 },
+      },
+    },
+  })
+  async getHealth(): Promise<{
+    status: 'healthy' | 'unhealthy' | 'draining';
+    redis: RedisHealthResult;
+    workers: { shuttingDown: boolean; registered: number };
+  }> {
+    const redisStatus = await this.redisHealthService.check();
+    const shuttingDown = this.gracefulShutdown.isShuttingDown();
+
+    let status: 'healthy' | 'unhealthy' | 'draining' =
+      redisStatus.status === 'healthy' ? 'healthy' : 'unhealthy';
+    if (shuttingDown) {
+      status = 'draining';
+    }
+
+    return {
+      status,
+      redis: redisStatus,
+      workers: {
+        shuttingDown,
+        registered: this.gracefulShutdown.getRegisteredWorkerCount(),
+      },
+    };
+  }
+
+  /**
+   * GET /health/soroban
+   * Verifies the configured NFT Soroban contract is reachable (Issue #844).
+   */
+  @Get('soroban')
+  @ApiOperation({
+    summary: 'Soroban NFT contract health check',
+    description:
+      'Queries the configured NFT contract `version()` and `name()`, verifies ' +
+      'the contract address format, and reports the configured Stellar network. ' +
+      'Returns HTTP 200 when healthy and HTTP 503 when unreachable or misconfigured.',
+  })
+  @ApiOkResponse({
+    description: 'Contract is reachable and responding',
+    type: SorobanHealthResponseDto,
+    schema: {
+      example: {
+        status: 'healthy',
+        network: 'testnet',
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.0.0',
+        collectionName: 'ClipCash NFTs',
+        rpcReachable: true,
+      },
+    },
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Contract unreachable, misconfigured, or RPC unavailable',
+    type: SorobanHealthResponseDto,
+  })
+  async checkSoroban(): Promise<SorobanHealthResponseDto> {
+    const result = await this.sorobanHealthService.check();
+    if (result.status !== 'healthy') {
+      throw new HttpException(result, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return result;
+  }
+
+  /**
+   * Returns current Redis memory utilisation.
+   * Responds with HTTP 200 when usage is within safe bounds and
+   * HTTP 503 when usage exceeds the 80 % alert threshold.
+   */
+  @Get('redis-memory')
+  @ApiOperation({
+    summary: 'Redis memory health check',
+    description:
+      'Returns Redis memory stats. Status is "degraded" and HTTP 503 is returned when usage exceeds 80%.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Redis memory usage is within normal bounds.',
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'Redis memory usage exceeds the 80% alert threshold.',
+  })
+  async checkRedisMemory(): Promise<HealthResponse> {
+    let stats: RedisMemoryStats;
+    try {
+      stats = await this.redisMemoryService.getStats();
+    } catch (err) {
+      this.logger.error(
+        `Redis memory health check threw unexpectedly: ${(err as Error).message}`,
+      );
+      // Surface as 503 so monitoring tools can detect and alert on it
+      throw new HttpException(
+        {
+          status: 'degraded',
+          alert: `Unable to retrieve Redis memory stats: ${(err as Error).message}`,
+          unavailable: true,
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    // Redis is unreachable — return 503 with a clear unavailable indicator
+    if (stats.unavailable) {
+      this.logger.warn('Redis memory health check: Redis unavailable');
+      throw new HttpException(
+        { status: 'degraded' as const, stats },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    if (stats.isAboveThreshold) {
+      this.logger.warn('Redis memory health check returned degraded status', {
+        usagePercent: stats.usagePercent,
+        alert: stats.alert,
+      });
+      throw new HttpException(
+        { status: 'degraded' as const, stats },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    return { status: 'ok', stats };
+  }
+
+  @Get('redis')
+  @ApiOperation({
+    summary: 'Redis connection health check',
+    description:
+      'Pings Redis and reports whether the service is reachable and responsive. Returns HTTP 200 when healthy and HTTP 503 when unreachable.',
+  })
+  @ApiOkResponse({
+    description: 'Redis is reachable and responsive.',
+    schema: {
+      example: {
+        status: 'healthy',
+        service: 'redis',
+        connected: true,
+        latencyMs: 12,
+      },
+    },
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Redis is unreachable or did not respond in time.',
+    schema: {
+      example: {
+        status: 'unhealthy',
+        service: 'redis',
+        connected: false,
+        latencyMs: null,
+        message: 'Redis ping failed',
+      },
+    },
+  })
+  async checkRedis(): Promise<RedisHealthResponse> {
+    const result = await this.redisHealthService.check();
+
+    if (result.status !== 'healthy') {
+      this.logger.warn('Redis health check: Redis unreachable');
+      throw new HttpException(
+        {
+          status: result.status,
+          service: result.service,
+          connected: false,
+          latencyMs: null,
+          message: result.message ?? 'Redis ping failed',
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+
+    return {
+      status: 'healthy',
+      service: 'redis',
+      connected: true,
+      latencyMs: result.latencyMs ?? null,
+    };
+  }
+
+  @Get('queues')
+  @ApiOperation({
+    summary: 'Queue health check',
+    description:
+      'Returns health metrics for all BullMQ queues including job counts, failure rates, and overall status. ' +
+      'Also includes cleanup metrics showing number of jobs removed by scheduled cleanup operations.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Queue health metrics retrieved successfully.',
+    type: QueueHealthResponseDto,
+  })
+  @ApiResponse({
+    status: 503,
+    description: 'One or more queues are unavailable.',
+  })
+  async checkQueueHealth(): Promise<QueueHealthResponseDto> {
+    try {
+      const health = await this.queueHealthService.getQueueHealth();
+
+      if (health.status === 'unhealthy') {
+        throw new HttpException(health, HttpStatus.SERVICE_UNAVAILABLE);
+      }
+
+      return health;
+    } catch (err) {
+      this.logger.error(`Queue health check failed: ${(err as Error).message}`);
+
+      if (err instanceof HttpException) {
+        throw err;
+      }
+
+      throw new HttpException(
+        {
+          status: 'degraded',
+          message: 'Queue health check failed',
+          error: (err as Error).message,
+        },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+  }
+
+  @Get('queues/statistics')
+  @ApiOperation({
+    summary: 'Queue statistics',
+    description:
+      'Returns detailed statistics for all BullMQ queues including job counts, processing times, and failure analysis.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Queue statistics retrieved successfully.',
+    type: QueueStatisticsResponseDto,
+  })
+  async getQueueStatistics(): Promise<QueueStatisticsResponseDto> {
+    try {
+      return await this.queueHealthService.getQueueStatistics();
+    } catch (err) {
+      this.logger.error(
+        `Queue statistics retrieval failed: ${(err as Error).message}`,
+      );
+      throw new HttpException(
+        {
+          message: 'Failed to retrieve queue statistics',
+          error: (err as Error).message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+}

@@ -3,20 +3,26 @@ import { VideosController } from './videos.controller';
 import { VideoUploadController } from './video-upload.controller';
 import { ClipsModule } from '../clips/clips.module';
 import { PrismaModule } from '../prisma/prisma.module';
-import { BullModule } from '@nestjs/bullmq';
 import { VideoUploadService } from './video-upload.service';
+import { VideoProcessingService } from './video-processing.service';
+import { VideoProgressGatewayModule } from './video-progress-gateway.module';
+import { ClipGenerationProcessor } from './clip-generation.processor';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
+import { registerQueue } from '../common';
 
 @Module({
   imports: [
     ClipsModule,
     PrismaModule,
-    BullModule.registerQueue({
-      name: CLIP_GENERATION_QUEUE,
-    }),
+    VideoProgressGatewayModule,
+    registerQueue(CLIP_GENERATION_QUEUE),
   ],
   controllers: [VideosController, VideoUploadController],
-  providers: [VideoUploadService],
-  exports: [VideoUploadService],
+  providers: [
+    VideoUploadService,
+    VideoProcessingService,
+    ClipGenerationProcessor,
+  ],
+  exports: [VideoUploadService, VideoProcessingService],
 })
 export class VideosModule {}

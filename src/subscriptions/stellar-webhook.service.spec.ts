@@ -4,6 +4,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { UnauthorizedException, BadRequestException } from '@nestjs/common';
 import * as crypto from 'crypto';
+import { StellarPaymentService } from './stellar-payment.service';
+import { StellarService } from '../stellar/stellar.service';
+
+jest.mock('@stellar/stellar-sdk', () =>
+  require('../../test/mocks/stellar-sdk.mock'),
+);
 
 describe('StellarWebhookService', () => {
   let service: StellarWebhookService;
@@ -25,25 +31,38 @@ describe('StellarWebhookService', () => {
     },
   };
 
+  const configValues: Record<string, string> = {
+    STELLAR_HORIZON_URL: 'https://horizon-testnet.stellar.org',
+    WEBHOOK_SECRET: 'test_webhook_secret_32_chars_long!!',
+    STELLAR_WALLET_ADDRESS: 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H',
+  };
+
   const mockConfigService = {
-    get: jest.fn((key: string) => {
-      const config: Record<string, string> = {
-        'STELLAR_HORIZON_URL': 'https://horizon-testnet.stellar.org',
-        'WEBHOOK_SECRET': 'test_webhook_secret_32_chars_long!!',
-        'STELLAR_WALLET_ADDRESS': 'GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H',
-      };
-      return config[key];
-    }),
+    get: jest.fn((key: string) => configValues[key]),
+  };
+
+  const mockStellarPaymentService = {
+    processDetectedPayment: jest.fn().mockResolvedValue(true),
+  };
+
+  const mockStellarService = {
+    horizonUrl: 'https://horizon-testnet.stellar.org',
+    validateAddress: jest.fn().mockReturnValue({ valid: true }),
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockConfigService.get.mockImplementation(
+      (key: string) => configValues[key],
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StellarWebhookService,
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: StellarPaymentService, useValue: mockStellarPaymentService },
+        { provide: StellarService, useValue: mockStellarService },
       ],
     }).compile();
 
@@ -81,8 +100,10 @@ describe('StellarWebhookService', () => {
     });
 
     it('should throw UnauthorizedException when WEBHOOK_SECRET is not configured', () => {
-      // Override config to return undefined for WEBHOOK_SECRET
-      jest.spyOn(configService, 'get').mockReturnValue(undefined);
+      mockConfigService.get.mockImplementation((key: string) => {
+        if (key === 'WEBHOOK_SECRET') return undefined;
+        return configValues[key];
+      });
 
       const payload = JSON.stringify({ test: 'data' });
       const signature = 'any_signature';
@@ -132,7 +153,9 @@ describe('StellarWebhookService', () => {
 
       const result = await service.isDuplicateWebhook('tx123');
       expect(result).toBe(true);
-      expect(mockPrismaService.stellarWebhookLog.findUnique).toHaveBeenCalledWith({
+      expect(
+        mockPrismaService.stellarWebhookLog.findUnique,
+      ).toHaveBeenCalledWith({
         where: { transactionId: 'tx123' },
       });
     });
@@ -172,8 +195,13 @@ describe('StellarWebhookService', () => {
 
     it('should handle duplicate key error gracefully', async () => {
       // Prisma duplicate key error
-      const duplicateError = { code: 'P2002', message: 'Unique constraint failed' };
-      mockPrismaService.stellarWebhookLog.create.mockRejectedValue(duplicateError);
+      const duplicateError = {
+        code: 'P2002',
+        message: 'Unique constraint failed',
+      };
+      mockPrismaService.stellarWebhookLog.create.mockRejectedValue(
+        duplicateError,
+      );
 
       const payload = { transaction_hash: 'tx123' };
       // Should not throw
@@ -236,9 +264,9 @@ describe('StellarWebhookService', () => {
     });
 
     it('should reject webhook with missing signature', async () => {
-      await expect(
-        service.processWebhook(validPayload, ''),
-      ).rejects.toThrow(UnauthorizedException);
+      await expect(service.processWebhook(validPayload, '')).rejects.toThrow(
+        UnauthorizedException,
+      );
     });
 
     it('should detect and return success for duplicate webhooks', async () => {

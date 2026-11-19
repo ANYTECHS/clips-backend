@@ -1,66 +1,47 @@
-# Soroban Gas / Resource Cost Benchmarks
+# Soroban Gas Benchmarks
 
-Living document tracking resource usage of the `nft-royalty` contract
-(`contracts/nft-royalty`). Update it after every contract optimization or SDK bump.
+**Document baseline date:** 2026-09-29  
+**Last benchmark run:** None recorded  
+**Status:** No verified on-chain resource or fee measurements are currently available.
 
-| Field | Value |
-|---|---|
-| Benchmark date | 2026-11-19 (template created; measurements pending first run) |
-| Contract version | `nft-royalty-contract` 0.1.0 |
-| soroban-sdk | 21.0.0 |
-| Build profile | `release` (`opt-level = "z"`, LTO, stripped) |
-| Network | Stellar **Testnet** (`Test SDF Network ; September 2015`) via `https://soroban-testnet.stellar.org` |
-| Tooling | `stellar-cli` (`stellar contract invoke --sim-only` / `--cost`) |
+This is the living record for the NFT contract's resource use and fees. Values must be identified as measured, estimated, or unavailable; application-side constants are not chain measurements.
+
+## Current Baseline
+
+The backend currently seeds the following values in memory from [`GasMetricsService`](src/nft/gas-metrics.service.ts), and records the same fixed values from [`NftService`](src/nft/nft.service.ts). They are synthetic application metrics: there is no recorded Soroban simulation, successful transaction, measurement date, contract version, or network associated with them. The `gasUnits` values are application-defined and must not be interpreted as Stellar fees.
+
+| Operation | CPU instructions | Memory bytes | App `gasUnits` | Inclusion / resource fee | Evidence and environment |
+|---|---:|---:|---:|---|---|
+| Mint | 1,250,000 | 45,000 | 15,200 | Not measured | Synthetic in-memory seed; no network recorded |
+| Transfer | 890,000 | 32,000 | 11,400 | Not measured | Synthetic in-memory seed; no network recorded |
+| Burn | Not measured | Not measured | Not measured | Not measured | No benchmark data found |
+| Royalty claim | Not measured | Not measured | Not measured | Not measured | No benchmark data found |
+| Metadata refresh | Not measured | Not measured | Not measured | Not measured | No benchmark data found |
+| Freeze / unfreeze | Not measured | Not measured | Not measured | Not measured | No benchmark data found; requires the updated contract deployment |
+| Collection queries | Not measured | Not measured | Not measured | Not applicable for simulation-only reads | No benchmark data found |
+
+**Network and environment used for this baseline:** none. The two figures above are code constants, not testnet or production results. No Soroban RPC simulation or transaction submission was performed for this document. The repository's documented test environment is Stellar Testnet (`STELLAR_NETWORK=testnet`, `https://soroban-testnet.stellar.org`); that is the target for the first real benchmark run, not the source of the values above.
 
 ## Methodology
 
-1. Build: `cd contracts/nft-royalty && stellar contract build` (or `cargo build --target wasm32-unknown-unknown --release`).
-2. Deploy a fresh instance to testnet and call `initialize(admin)`.
-3. Seed state: mint tokens 1–100 with a 10% royalty; deposit 1 XLM of royalty escrow on token 1.
-4. For each operation, run a simulation and record the resource footprint reported by RPC
-   `simulateTransaction` (`cpuInsns`, `memBytes`, ledger read/write entries & bytes) plus the
-   `minResourceFee` in stroops:
-   ```bash
-   stellar contract invoke --id $CONTRACT --source bench --network testnet --sim-only -- <fn> <args>
-   ```
-5. Run each operation 5 times on a warm state and record the **median**.
-6. Local cross-check (no network): `env.budget().reset_default(); ...; env.budget().print()` in a unit test
-   gives host CPU/memory for the same call.
+Run benchmarks against a deployed contract on Stellar Testnet before using the results as a production estimate.
 
-All instance-storage reads/writes scale with the total contract instance size, so measurements
-are taken with the 100-token seed state described above.
+1. Record the benchmark date, network, RPC endpoint, ledger/protocol version, contract ID, contract version and WASM hash, SDK/CLI version, and the state/setup required for each operation. Never include keys or secrets in this document.
+2. Use the same transaction construction and Soroban RPC path as the client operation. Simulate each invocation and record the RPC's CPU instruction count, memory bytes, ledger footprint/read-write entry counts and byte counts, and `minResourceFee` when present.
+3. For writes, submit successful testnet transactions using disposable or uniquely prepared test data. Record the transaction hash and actual `feeCharged` from the RPC separately from the simulated resource fee and the inclusion fee. Do not use the transaction builder's configured base fee as the actual Soroban fee.
+4. For collection queries, run simulation-only reads against a fixed contract and ledger state. Record simulation resource costs; mark charged transaction fees as not applicable because no transaction is submitted.
+5. Collect at least 30 successful samples per operation after 5 warm-up runs. Report sample count, median, p95, minimum, and maximum. Keep operation inputs and state comparable between before/after runs.
+6. Repeat the same procedure after contract or SDK optimizations. Add a dated result row and retain the previous baseline; do not overwrite historical measurements. Link the change or benchmark run when available.
 
-## Current measurements (Testnet)
+Suggested Soroban RPC measurements are `cpuInsns`, `memBytes`, footprint entry/byte counts, `minResourceFee`, and (for successful submitted transactions) `feeCharged`. Record units exactly as returned or convert to stroops explicitly; do not mix XLM, stroops, and application-defined units.
 
-> Values below must be filled from a real run following the methodology. Do not copy them
-> from estimates.
+## Production Expectations
 
-| Operation | Function | CPU insns | Mem bytes | Read entries | Write entries | Min resource fee (stroops) |
-|---|---|---|---|---|---|---|
-| Mint | `mint` | TBD | TBD | TBD | TBD | TBD |
-| Transfer | `transfer` | TBD | TBD | TBD | TBD | TBD |
-| Burn (no refund) | `burn(.., false)` | TBD | TBD | TBD | TBD | TBD |
-| Burn + royalty refund | `burn(.., true)` | TBD | TBD | TBD | TBD | TBD |
-| Royalty claim / payment | `execute_royalty_payment` | TBD | TBD | TBD | TBD | TBD |
-| Metadata refresh | `token_uri` (read) | TBD | TBD | TBD | TBD | TBD |
-| Freeze (pause) | `pause(Some(reason))` | TBD | TBD | TBD | TBD | TBD |
-| Unfreeze (unpause) | `unpause` | TBD | TBD | TBD | TBD | TBD |
-| Collection query | `total_supply` / `balance_of` | TBD | TBD | TBD | TBD | TBD |
-| Collection query (batch 50) | `batch_royalty_info` | TBD | TBD | TBD | TBD | TBD |
+All real measurements should first be taken on Testnet and labeled **testnet**. Testnet values are comparative engineering data, not production guarantees: production fees and resource availability can differ with network protocol, ledger state, fee market, footprint, and contract version. Do not label any value a production measurement unless it was collected from a production transaction under an approved process. Any production estimate must be a separately labeled estimate with its assumptions; this document currently contains none.
 
-## Testnet vs production expectations
+## Change Log
 
-- **Testnet numbers are indicative only.** Mainnet resource fees depend on network fee settings
-  (per-instruction and per-byte rates) and inclusion fee surge pricing, which differ from testnet.
-- Production fee = resource fee (from simulation) + inclusion fee. Budget the inclusion fee
-  separately; during congestion it can dominate.
-- All token state currently lives in **instance storage**; as the collection grows, every call pays
-  to load the full instance. Expect production costs for large collections to exceed the
-  100-token benchmark. Migrating per-token keys to persistent storage is the main planned optimization.
-- Persistent/instance entries require TTL extension (rent) in production; that cost is not included above.
-
-## Changelog
-
-| Date | Change | Notes |
-|---|---|---|
-| 2026-11-19 | Initial document; added pause-with-reason, burn with royalty refund, standard NFT interface functions | Measurements pending first testnet run |
+| Date | Change | Network | Result |
+|---|---|---|---|
+| 2026-09-29 | Initial document; audited existing backend metrics and recorded their provenance | None; no chain run | Two synthetic application seeds recorded above; verified on-chain benchmark count: zero |
+| 2026-11-19 | Added `burn` (with royalty refund), `pause`/`unpause`/`pause_reason`, and SEP-0050 functions to `contracts/src/token.rs`; operations to benchmark: `burn(.., false)`, `burn(.., true)`, `pause`, `unpause`, `balance_of`, `transfer_from` | None; no chain run | No measurements yet |
