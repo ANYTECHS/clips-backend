@@ -1,466 +1,480 @@
-# BullMQ Job Flows
+# Async Job Queue Flows
 
-This document maps the complete BullMQ lifecycle for clip generation, posting, and minting jobs. It covers queue creation, processing workers, retries, failure handling, and downstream dependencies.
-
----
-
-## Overview
-
-The system uses four main job queues backed by Redis:
+ClipCash uses **BullMQ** backed by **Redis** to handle all computationally heavy and
+network-bound operations asynchronously.  Every queue follows the same lifecycle:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    API Request / Event                       │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-        ┌──────────────────────────────────────────┐
-        │    Rate Limit Check (Redis counter)      │
-        └──────────────────┬───────────────────────┘
-                           │
-                           ▼
-        ┌──────────────────────────────────────────┐
-        │      Enqueue Job to BullMQ (Redis)       │
-        └──────────────────┬───────────────────────┘
-                           │
-                           ▼
-        ┌──────────────────────────────────────────┐
-        │   Worker Process (Processor)             │
-        │  ┌─────────────────────────────────────┐ │
-        │  │  Execute Job Logic                  │ │
-        │  │  - Download input                   │ │
-        │  │  - Process                          │ │
-        │  │  - Upload output                    │ │
-        │  │  - Update database                  │ │
-        │  └─────────────────────────────────────┘ │
-        │  ┌─────────────────────────────────────┐ │
-        │  │  On Success: Complete               │ │
-        │  │  On Failure: Retry or Move to Failed│ │
-        │  └─────────────────────────────────────┘ │
-        └──────────────────┬───────────────────────┘
-                           │
-               ┌───────────┴────────────┐
-               │                        │
-               ▼                        ▼
-        ┌─────────────────┐     ┌──────────────────┐
-        │ Job Complete    │     │ Job Failed       │
-        │ (Completed set) │     │ (Failed set)     │
-        └─────────────────┘     └──────────────────┘
-                │                        │
-                │ Emit event             │ Notify via
-                │ WebSocket              │ job-failure-notifier
-                │                        │
-                ▼                        ▼
-           Client update            Admin alert
+API Request  →  Enqueue Job  →  Redis (BullMQ)  →  Worker Processor  →  DB / External Service
 ```
 
 ---
 
-## Queue 1: clip-generation
+## Table of Contents
 
-**Purpose:** Transform raw video into clip assets via FFmpeg
+1. [Queue Overview](#queue-overview)
+2. [Clip Generation Flow](#1-clip-generation-flow)
+3. [Social Posting Flow](#2-social-posting-flow)
+4. [NFT Minting Flow](#3-nft-minting-flow)
+5. [Payout Retry Flow](#4-payout-retry-flow)
+6. [Email Delivery Flow](#5-email-delivery-flow)
+7. [Anomaly Detection Flow](#6-anomaly-detection-flow)
+8. [Job Retries and Backoff](#job-retries-and-backoff)
+9. [Failed Jobs and Dead-Letter Handling](#failed-jobs-and-dead-letter-handling)
+10. [API Endpoints that Create Jobs](#api-endpoints-that-create-jobs)
+11. [Job Status Endpoints](#job-status-endpoints)
+12. [Asynchronous Response Pattern](#asynchronous-response-pattern)
 
-**Definition:** `src/clips/clip-generation.queue.ts`
-**Processor:** `src/clips/clip-generation.processor.ts`
+---
 
-### Job Payload
+## Queue Overview
 
+| Queue name         | Processor class             | Concurrency (default) | Retry attempts |
+|--------------------|-----------------------------|-----------------------|----------------|
+| `clip-generation`  | `ClipGenerationProcessor`   | 2                     | 3              |
+| `clip-posting`     | `ClipPostingProcessor`      | 10                    | 3              |
+| `nft-mint`         | `NftMintProcessor`          | 2                     | 3              |
+| `payout-retry`     | `PayoutRetryProcessor`      | 2                     | 5              |
+| `email-delivery`   | `EmailDeliveryProcessor`    | 5                     | 3              |
+| `anomaly-detection`| `AnomalyDetectionProcessor` | 1                     | 3              |
+
+Concurrency values are tunable at runtime via environment variables (see
+[BULLMQ_WORKER_SCALING.md](../BULLMQ_WORKER_SCALING.md)).
+
+---
+
+## 1. Clip Generation Flow
+
+### Purpose
+Runs FFmpeg to cut a video segment from a source file, optionally analyses
+the segment with Claude AI for a virality score, then uploads the result to
+Cloudinary.
+
+### Trigger
+`POST /clips` or `POST /videos/:id/generate-clips` → `ClipsService.enqueueClip()`
+
+### Flow Diagram
+
+```
+ Client
+   │
+   ├─ POST /videos/:id/generate-clips
+   │       (returns { jobId, status: "queued" })
+   │
+   ▼
+ ClipsService
+   ├─ Creates Clip row in DB (status = "queued")
+   └─ Enqueues job on  clip-generation  queue
+          │
+          ▼ (async — worker picks up when capacity is free)
+ ClipGenerationProcessor.process(job)
+   ├─ 10% progress  — verify source video exists / download if remote
+   ├─ 30% progress  — call Claude AI for transcript / virality score (optional)
+   ├─ 60% progress  — FFmpeg: cut segment (startTime → endTime)
+   ├─ 80% progress  — upload MP4 to Cloudinary, generate thumbnail
+   └─ 100% progress — update Clip row: status="ready", clipUrl, thumbnailUrl
+          │
+          ▼
+ WebSocket (ClipsGateway)
+   └─ Emits  clip:progress  and  clip:ready  events to subscribing clients
+```
+
+### Job Data Shape
 ```typescript
 interface ClipGenerationJob {
-  videoId: string;           // Reference to Video entity
-  inputPath: string;         // s3://bucket/path/video.mp4
-  outputPath: string;        // s3://bucket/path/clip.mp4
-  startTime: number;         // Milliseconds
-  endTime: number;           // Milliseconds
-  positionRatio: number;     // 0.5 = center position (unused for now)
-  transcript?: string;       // Optional transcript
-  title?: string;            // Optional clip title
-  clipId?: number;           // Reference to Clip entity
+  videoId: string;
+  inputPath: string;      // absolute path to source video
+  outputPath: string;     // desired output clip path
+  startTime: number;      // seconds (float)
+  endTime: number;        // seconds (float)
+  positionRatio: number;  // 0.0–1.0
+  videoDuration?: number;
+  transcript?: string;
+  title?: string;
+  clipId?: number;        // existing DB row to update
 }
 ```
 
-### Lifecycle
-
-1. **Enqueue** (`ClipsService.enqueueClip()`)
-   - User calls `POST /clips/generate`
-   - `QueueRateLimitGuard` checks Redis counter for user (max 5 concurrent)
-   - Returns 429 if limit exceeded
-   - Job added to `clip-generation` queue with priority 5
-
-2. **Process** (`ClipGenerationProcessor.process()`)
-   - Worker picks job from queue
-   - Validates payload
-   - Downloads input video from S3
-   - Executes FFmpeg to extract clip (startTime to endTime)
-   - Uploads output to Cloudinary
-   - Stores URL and metadata in database (Clip record)
-   - Emits WebSocket event: `clip:generated` or `clip:generation-failed`
-
-3. **Retry on Failure**
-   - **Attempts:** 5 (1 initial + 4 auto-retries)
-   - **Backoff:** Exponential (2s, 4s, 8s, 16s)
-   - **Trigger reasons:**
-     - S3 network timeout (transient)
-     - FFmpeg OOM (process restarted)
-     - Cloudinary rate limit (transient)
-     - Database connection drop (transient)
-
-4. **Final Failure** (after 5 attempts)
-   - Job moved to failed set
-   - `@OnWorkerEvent('failed')` handler invokes `JobFailureNotifierService`
-   - Sends alert to admin emails (configured via `ADMIN_EMAILS` env var)
-   - Clip record marked with `status: 'generation-failed'`
-
-5. **Manual Retry**
-   - Operator calls `POST /jobs/:id/retry`
-   - Job moved back to waiting set
-   - Worker picks it up again on next available slot
-
-### Configuration
-
-- **Queue name:** `clip-generation`
-- **Max concurrent per user:** 5 (enforced via Redis counter)
-- **Worker concurrency:** Configured in `@Processor` decorator (default 1)
-- **Timeout:** BullMQ default (30s)
-- **Rate limit window:** 1 hour (sliding)
-
-### Failure Modes
-
-| Failure | Root cause | User sees | Recovery |
-|---------|-----------|-----------|----------|
-| Network timeout | S3 unavailable | Retry auto (up to 4x) | Operator: manual retry |
-| Invalid input path | Frontend bug | All 5 retries fail | Developer fix required |
-| Cloudinary quota | Billing issue | Retry auto | Operator: add quota or manual retry |
-| FFmpeg crash | Memory pressure | Retry auto | Operator: manual retry or scale up |
+### Error Handling
+- If FFmpeg exits non-zero → job is retried (exponential backoff, max 3 attempts).
+- If Cloudinary upload fails → `UPLOAD_MAX_ATTEMPTS = 3` internal retries before
+  the BullMQ job itself fails.
+- If all retries are exhausted → Clip row is set to `status = "failed"` and a
+  `CLIP_GENERATION_FAILED_EVENT` is emitted via EventEmitter2.
 
 ---
 
-## Queue 2: clip-posting
+## 2. Social Posting Flow
 
-**Purpose:** Post generated clips to external platforms (TikTok, YouTube, Instagram, Twitch)
+### Purpose
+Posts a ready clip to one or more social media platforms using the Ayrshare
+integration.  Kept in a separate queue from clip-generation so I/O-bound posting
+jobs do not contend with CPU-heavy FFmpeg work.
 
-**Definition:** `src/clips/clip-posting.queue.ts`
-**Processor:** `src/clips/clip-posting.processor.ts`
+### Trigger
+`POST /clips/:id/post` → `ClipPublishService.publishClip()` → enqueues job on
+`clip-posting` queue.
 
-### Job Payload
+### Flow Diagram
 
+```
+ Client
+   │
+   ├─ POST /clips/:id/post  { platforms: ["tiktok","instagram"] }
+   │       (returns { jobId, status: "queued" })
+   │
+   ▼
+ ClipPublishService
+   ├─ Validates clip is in "ready" state
+   ├─ Validates user has connected platforms
+   └─ Enqueues job on  clip-posting  queue
+          │
+          ▼ (async)
+ ClipPostingProcessor.process(job)
+   ├─ 10% — resolve which requested platforms the user still has connected
+   ├─ 30% — call AyrshareService.post() for each valid platform
+   │         (rate-limited per platform)
+   ├─ 70% — persist ClipPost rows: { platform, externalPostId, status }
+   └─ 100%— update Clip.postStatus = "posted"
+          │
+          ▼
+ WebSocket (ClipsGateway)
+   └─ Emits  clip:posted  event with platform results
+```
+
+### Job Data Shape
 ```typescript
 interface ClipPostingJob {
-  clipId: number;            // Reference to Clip entity
-  userId: number;            // Reference to User entity
-  platforms: string[];       // ['tiktok', 'youtube', 'instagram']
-  accessTokens: Record<string, string>; // { tiktok: 'token...', youtube: 'token...' }
+  clipId: number;
+  userId: number;
+  mediaUrl: string;     // Cloudinary URL
+  caption: string;
+  platforms: string[];  // e.g. ["tiktok", "instagram_reels"]
 }
 ```
 
-### Lifecycle
-
-1. **Enqueue** (`ClipsService.enqueuePosting()`)
-   - User calls `POST /clips/:id/post`
-   - Validates clip is ready and user owns it
-   - Retrieves user's access tokens for selected platforms from database
-   - Job enqueued with platforms list
-
-2. **Process** (`ClipPostingProcessor.process()`)
-   - Worker picks job
-   - For each platform:
-     - Call platform's upload API (TikTok, YouTube, etc.)
-     - Store `postId` in database (ClipPlatformStatus record)
-     - Mark platform as `posted`
-   - Webhook endpoint subscribes to platform events (TikTok, YouTube notify on completion)
-   - Emits `clip:posted` event per platform
-
-3. **Retry on Failure**
-   - **Attempts:** 3
-   - **Backoff:** Exponential (2s, 4s)
-   - **Trigger reasons:**
-     - Platform API timeout
-     - Invalid access token (refresh and retry)
-     - Platform rate limit
-     - Network transient
-
-4. **Final Failure** (after 3 attempts)
-   - Job moved to failed set
-   - Admin notified
-   - User shown error in UI (can retry manually)
-
-5. **Webhook Handling**
-   - Platform sends webhook to `POST /webhooks/tiktok` or `POST /webhooks/youtube`
-   - Updates clip analytics (views, engagement, earnings)
-   - Triggers earnings reconciliation job if data changed
-
-### Configuration
-
-- **Queue name:** `clip-posting`
-- **Max concurrent per user:** Unlimited (no guard)
-- **Worker concurrency:** 2 (platform APIs have rate limits)
-- **Timeout:** 60s per platform
-
-### Failure Modes
-
-| Failure | Root cause | User sees | Recovery |
-|---------|-----------|-----------|----------|
-| Invalid token | Token expired | Job fails, prompt refresh | User: refresh token via UI |
-| Platform rate limit | Too many posts in period | Retry auto | Operator: wait or reduce load |
-| Platform API down | Maintenance or outage | Retry auto | Operator: manual retry when back |
-| Bad clip URL | Clip generation failed | All 3 retries fail | User: regenerate clip |
+### Error Handling
+- Platform API rate limits → BullMQ exponential backoff (2 s, 4 s, 8 s).
+- Platforms that reject the post (invalid token, etc.) → that platform's
+  `ClipPost` row is marked `status = "failed"` while other platforms succeed.
+- Full job failure after 3 attempts → `ClipPost.status = "failed"` for all
+  remaining platforms, `Clip.postStatus = "failed"`.
 
 ---
 
-## Queue 3: nft-mint
+## 3. NFT Minting Flow
 
-**Purpose:** Prepare Soroban contract transaction for NFT minting
+### Purpose
+Prepares and submits a Soroban smart-contract transaction to mint a clip as an
+NFT on the Stellar network, uploads metadata to IPFS (Pinata) first.
 
-**Definition:** `src/clips/nft-mint.queue.ts`
-**Processor:** `src/clips/nft-mint.processor.ts`
+### Trigger
+`POST /clips/:id/mint` → `NftMintService.enqueueMintJob()` → enqueues job on
+`nft-mint` queue.
 
-### Job Payload
+### Flow Diagram
 
+```
+ Client
+   │
+   ├─ POST /clips/:id/mint  { walletAddress, royaltyBps }
+   │       (returns { jobId, status: "pending" })
+   │
+   ▼
+ NftMintService.enqueueMintJob()
+   ├─ Validates clip exists and is in "ready" state
+   ├─ Validates clip has not already been minted (mintTxHash must be null)
+   ├─ Checks clip is not in "posted" state (auto-posted clips cannot be minted)
+   └─ Enqueues job on  nft-mint  queue
+          │
+          ▼ (async)
+ NftMintProcessor.process(job)
+   ├─ Upload clip metadata JSON → Pinata IPFS (returns metadataUri)
+   ├─ Call Soroban RPC to build XDR transaction for nft_mint contract function
+   └─ Return { xdr, clipId }
+          │
+          ▼
+ API Response (polling / webhook)
+   └─ Client signs XDR with Freighter / Albedo wallet and submits to Stellar
+          │
+          ▼
+ POST /clips/:id/mint/confirm  (after user signs)
+   └─ Persist mintTxHash, update Clip.mintStatus = "minted"
+```
+
+### Job Data Shape
 ```typescript
 interface NftMintJob {
-  clipId: number;            // Reference to Clip entity
-  walletAddress: string;     // User's Stellar wallet
-  userId: number;            // Reference to User entity
+  clipId: number;
+  walletAddress: string;  // Stellar G... address
+  userId: number;
 }
 ```
 
-### Lifecycle
-
-1. **Enqueue** (`NftMintService.enqueueMint()`)
-   - User calls `POST /clips/:id/mint` with wallet address
-   - Validates clip exists and is posted
-   - Job enqueued to `nft-mint` queue
-
-2. **Process** (`NftMintProcessor.process()`)
-   - Worker picks job
-   - Calls `NftMintService.prepareMintTx()`
-   - Builds Soroban contract transaction XDR:
-     - Contract: `SOROBAN_NFT_CONTRACT_ID` (env var)
-     - Recipient: `walletAddress`
-     - Royalty BPS: `CREATOR_ROYALTY_BPS` (default 1000 = 10%) and `PLATFORM_ROYALTY_BPS` (default 100 = 1%)
-     - Metadata: clip title, URL, IPFS hash
-   - Returns XDR to caller
-   - Frontend receives XDR in response
-
-3. **Off-Chain: User Signs**
-   - Frontend uses Stellar SDK to sign XDR with user's secret key
-   - Signed XDR sent to `POST /clips/:id/mint/confirm`
-
-4. **Confirm** (`NftMintService.submitMintTx()`)
-   - Backend submits signed XDR to Stellar network
-   - Polls for transaction confirmation (up to 10 retries, 2s backoff)
-   - On success: Updates Clip record with `mintTx`, `nftId`, `status: 'minted'`
-   - On failure: Throws error, user can retry from step 2
-
-5. **Retry on Failure**
-   - **Attempts:** 3
-   - **Backoff:** Exponential (2s, 4s)
-   - **Trigger reasons:**
-     - Soroban RPC timeout
-     - Network transient error
-     - Contract validation failure
-
-6. **Final Failure** (after 3 attempts)
-   - Job moved to failed set
-   - Admin notified
-   - User can call `POST /clips/:id/mint` again to retry from step 1
-
-### Circuit Breaker
-
-- `soroban-nft-mint` circuit breaker wraps Soroban RPC calls
-- If Soroban RPC is down, circuit opens after 5 consecutive failures
-- All subsequent requests fail fast (no retry) for 30s (`recoveryTimeout`)
-- User sees: "Soroban service temporarily unavailable"
-- Operator checks: `GET /circuit-breaker/status`
-- Manual reset: `POST /circuit-breaker/:id/reset`
-
-### Configuration
-
-- **Queue name:** `nft-mint`
-- **Max concurrent per user:** Unlimited
-- **Worker concurrency:** 1 (Soroban RPC is single-threaded per user)
-- **Timeout:** 30s per job
-
-### Failure Modes
-
-| Failure | Root cause | User sees | Recovery |
-|---------|-----------|-----------|----------|
-| Soroban RPC down | Network or maintenance | Circuit open, "unavailable" | Wait for recovery (30s) or operator reset |
-| Invalid wallet | Typo in address | Job fails | User: correct wallet and retry |
-| Insufficient balance | User wallet low XLM | Tx rejection on submit | User: fund wallet and retry |
-| Contract call invalid | Bad clip metadata | Tx validation error | Developer: check contract logic |
+### Error Handling
+- Soroban RPC errors → retried 3 times (exponential backoff starting at 2 s).
+- IPFS upload failures → retried independently inside `IpfsUploadService`
+  before the BullMQ job fails.
+- `UnrecoverableError` thrown for: clip not found, already minted, invalid
+  wallet address — these are **not** retried.
 
 ---
 
-## Queue 4: email-delivery
+## 4. Payout Retry Flow
 
-**Purpose:** Send transactional emails (magic links, password resets, payout receipts)
+### Purpose
+Retries a Stellar XLM payout that previously failed (e.g. due to a transient
+Stellar node error or insufficient sequence number).
 
-**Definition:** `src/auth/email-delivery.queue.ts`
-**Processor:** `src/auth/email-delivery.processor.ts`
+### Trigger
+- Automatic: `PayoutStateMachineService` enqueues a retry when a payout
+  transitions to `status = "failed"`.
+- Manual: `POST /admin/payouts/:id/retry` (admin only).
 
-### Job Payload
+### Flow Diagram
 
+```
+ PayoutStateMachineService  (or Admin API)
+   └─ Enqueues job on  payout-retry  queue
+          │
+          ▼ (async)
+ PayoutRetryProcessor.process(job)
+   └─ Calls PayoutsService.processPayout(payoutId)
+             ├─ Fetch payout from DB
+             ├─ Re-validate amounts and limits
+             ├─ Submit Stellar XLM transfer via StellarService
+             └─ Update payout status: "completed" | "failed"
+```
+
+### Job Data Shape
+```typescript
+interface PayoutRetryJob {
+  payoutId: number;
+}
+```
+
+### Error Handling
+- Transient Stellar errors → up to 5 retry attempts with exponential backoff.
+- Permanent errors (insufficient balance, account not found) → job moves to
+  `failed` state; payout record updated with `failureReason`.
+- Final failure triggers `JobFailureNotifierService` which sends an alert
+  notification (Slack / email).
+
+---
+
+## 5. Email Delivery Flow
+
+### Purpose
+Sends transactional emails (verification, password reset, welcome, payout
+receipts) asynchronously so that HTTP handlers return immediately.
+
+### Trigger
+Various service methods call `EmailDeliveryService.queueEmail()` which enqueues
+a job on the `email-delivery` queue.
+
+### Flow Diagram
+
+```
+ AuthService / PayoutReceiptService / etc.
+   └─ EmailDeliveryService.queueEmail({ to, template, data })
+          │
+          ▼ enqueues on  email-delivery  queue
+ EmailDeliveryProcessor.process(job)
+   └─ MailService.send(template, to, data)
+             ├─ Render Handlebars / MJML template
+             └─ Submit to email provider (SMTP / SendGrid)
+```
+
+### Job Data Shape
 ```typescript
 interface EmailDeliveryJob {
-  userId: number;            // Reference to User entity
-  template: 'verification' | 'password-reset' | 'magic-link';
-  recipient: string;         // Email address
-  data: Record<string, any>; // Template variables (token, link, etc.)
+  to: string;
+  subject: string;
+  template: string;   // template name, e.g. "verify-email"
+  context: Record<string, unknown>;
 }
 ```
 
-### Lifecycle
-
-1. **Enqueue** (`MailService.sendEmail()`)
-   - Service needs to send email (e.g., auth, payouts)
-   - Creates job with template and recipient
-   - Job enqueued to `email-delivery` queue
-
-2. **Process** (`EmailDeliveryProcessor.process()`)
-   - Worker picks job
-   - Renders template with data (Handlebars or similar)
-   - Calls email provider (SendGrid, Mailgun, etc.)
-   - Logs send result
-
-3. **Retry on Failure**
-   - **Attempts:** 3
-   - **Backoff:** Exponential
-   - **Trigger reasons:**
-     - Email provider timeout
-     - Network transient
-     - Invalid recipient (no retry on permanent)
-
-4. **Final Failure** (after 3 attempts)
-   - Job moved to failed set
-   - Email not sent (user doesn't get magic link, etc.)
-   - Operator manual retry via `POST /jobs/:id/retry`
-
-### Configuration
-
-- **Queue name:** `email-delivery`
-- **Max concurrent per user:** Unlimited
-- **Worker concurrency:** 5 (email provider can handle many concurrent)
-- **Timeout:** 10s per job
+### Error Handling
+- SMTP / provider errors → 3 retries (exponential backoff).
+- Final failure is logged with the recipient address (redacted in production
+  structured logs) and the error message.
 
 ---
 
-## Monitoring and Debugging
+## 6. Anomaly Detection Flow
 
-### Queue Depth Metric
+### Purpose
+Runs statistical anomaly-detection algorithms against earnings data to flag
+potentially fraudulent activity.
 
-BullMQ queue depth is exported as Prometheus gauge:
+### Trigger
+Scheduled via `DailyEarningsAggregationService` cron (runs daily at midnight)
+or triggered via `POST /admin/earnings/detect-anomalies`.
+
+### Flow Diagram
 
 ```
-clipcash_job_queue_depth{queue="clip-generation"} 42
-clipcash_job_queue_depth{queue="clip-posting"} 5
-clipcash_job_queue_depth{queue="nft-mint"} 1
-clipcash_job_queue_depth{queue="email-delivery"} 0
+ Cron Scheduler (daily)  or  Admin API
+   └─ AnomalyDetectionService.enqueueDetection(userId)
+          │
+          ▼ enqueues on  anomaly-detection  queue
+ AnomalyDetectionProcessor.process(job)
+   ├─ Fetch recent earnings for user
+   ├─ Run z-score / IQR statistical checks
+   ├─ Compare against rolling 30-day baseline
+   └─ If anomaly detected:
+       ├─ Insert EarningAnomaly record
+       └─ Emit  earning.anomaly  event (triggers admin alert)
 ```
 
-Scraped at `GET /metrics` (requires `x-metrics-token` header).
+### Error Handling
+- Detection errors (DB timeouts, etc.) → 3 retries.
+- Anomaly records are idempotent — re-running detection for the same date/user
+  will not create duplicate records.
 
-### List Failed Jobs
+---
 
-```bash
-curl http://localhost:3000/jobs/failed?type=clip-generation \
-  -H "x-metrics-token: $METRICS_TOKEN"
+## Job Retries and Backoff
+
+All queues use **exponential backoff** to avoid thundering-herd on transient
+failures:
+
+```
+attempt 1 → immediate
+attempt 2 → wait 2 s  (base × 2^0)
+attempt 3 → wait 4 s  (base × 2^1)
+attempt 4 → wait 8 s  (base × 2^2)  [payout-retry only]
+attempt 5 → wait 16 s (base × 2^3)  [payout-retry only]
 ```
 
-Response:
+The base delay per queue:
+
+| Queue              | Base delay | Max attempts |
+|--------------------|------------|--------------|
+| `clip-generation`  | 5 000 ms   | 3            |
+| `clip-posting`     | 5 000 ms   | 3            |
+| `nft-mint`         | 2 000 ms   | 3            |
+| `payout-retry`     | 2 000 ms   | 5            |
+| `email-delivery`   | 3 000 ms   | 3            |
+| `anomaly-detection`| 5 000 ms   | 3            |
+
+Job options are defined alongside each queue constant, e.g.
+`CLIP_GENERATION_JOB_OPTIONS`, `NFT_MINT_JOB_OPTIONS`.
+
+---
+
+## Failed Jobs and Dead-Letter Handling
+
+When a job exhausts all retry attempts it transitions to BullMQ's `failed`
+state.  Failed jobs are **not** automatically removed (`removeOnFail: false`)
+so they can be inspected and manually retried.
+
+### Notifications
+`JobFailureNotifierService` subscribes to the `failed` BullMQ worker event for
+all queues and:
+1. Logs a structured `ERROR` entry with `queue`, `jobId`, `attemptsMade`, and
+   `errorMessage`.
+2. Optionally sends a Slack alert (requires `SLACK_WEBHOOK_URL` env var).
+
+### Manual Retry via Queue Dashboard
+`GET  /queue-dashboard/queues` — lists all queues with depth metrics.  
+`POST /queue-dashboard/queues/:queueName/jobs/:jobId/retry` — re-queues a
+specific failed job.
+
+### Queue Health
+`GET /queue-dashboard/health` returns a health summary per queue:
 
 ```json
 {
-  "failed": [
+  "queues": [
     {
-      "id": "abc123",
-      "type": "clip-generation",
-      "failedReason": "ENOENT: no such file or directory, open '/tmp/input.mp4'",
-      "stacktrace": "...",
-      "failureCount": 5,
-      "createdAt": "2024-01-15T10:30:00Z"
+      "name": "clip-generation",
+      "waiting": 0,
+      "active": 1,
+      "completed": 42,
+      "failed": 0,
+      "delayed": 0
     }
   ]
 }
 ```
 
-### Retry a Failed Job
+---
 
-```bash
-curl -X POST http://localhost:3000/jobs/abc123/retry \
-  -H "Authorization: Bearer $ADMIN_TOKEN"
-```
+## API Endpoints that Create Jobs
 
-### View Active Jobs
+| Method | Endpoint                          | Queue enqueued      | Async? |
+|--------|-----------------------------------|---------------------|--------|
+| POST   | `/videos/:id/generate-clips`      | `clip-generation`   | ✅     |
+| POST   | `/clips`                          | `clip-generation`   | ✅     |
+| POST   | `/clips/:id/post`                 | `clip-posting`      | ✅     |
+| POST   | `/clips/:id/mint`                 | `nft-mint`          | ✅     |
+| POST   | `/payouts/initiate-stellar`       | `payout-retry`*     | ✅     |
+| POST   | `/admin/payouts/:id/retry`        | `payout-retry`      | ✅     |
+| POST   | `/admin/earnings/detect-anomalies`| `anomaly-detection` | ✅     |
 
-```bash
-curl http://localhost:3000/jobs/active?type=clip-generation \
-  -H "x-metrics-token: $METRICS_TOKEN"
-```
+\* The `payout-retry` queue is only used for **retries**; the initial payout
+attempt is synchronous but fast-fails onto the queue if Stellar is unavailable.
 
 ---
 
-## Environment Variables
+## Job Status Endpoints
 
-| Variable | Default | Queue | Purpose |
-|----------|---------|-------|---------|
-| `REDIS_HOST` | `localhost` | All | Redis hostname |
-| `REDIS_PORT` | `6379` | All | Redis port |
-| `REDIS_PASSWORD` | _(none)_ | All | Redis password |
-| `EARNINGS_CACHE_TTL` | `3600` | - | Earnings cache expiry (seconds) |
-| `LEADERBOARD_ENABLED` | `false` | - | Enable leaderboard feature |
-| `SOROBAN_NFT_CONTRACT_ID` | _(required)_ | nft-mint | Soroban contract address |
-| `CREATOR_ROYALTY_BPS` | `1000` | nft-mint | Creator royalty (basis points) |
-| `PLATFORM_ROYALTY_BPS` | `100` | nft-mint | Platform royalty (basis points) |
-| `ADMIN_EMAILS` | _(none)_ | All | Comma-separated admin emails for alerts |
-| `TIKTOK_WEBHOOK_SECRET` | _(required)_ | clip-posting | TikTok webhook secret |
-| `YOUTUBE_WEBHOOK_SECRET` | _(required)_ | clip-posting | YouTube webhook secret |
+Poll these to check job progress without opening a WebSocket:
+
+| Method | Endpoint                                          | Description                        |
+|--------|---------------------------------------------------|------------------------------------|
+| GET    | `/jobs/:jobId`                                    | Job state, progress, result/error  |
+| GET    | `/queue-dashboard/queues`                         | All queue depths                   |
+| GET    | `/queue-dashboard/queues/:queueName/jobs/:jobId`  | Single job detail                  |
+
+Returned job states: `waiting` → `active` → `completed` | `failed` | `delayed`.
 
 ---
 
-## Scaling Considerations
+## Asynchronous Response Pattern
 
-### Horizontal Scaling
+Endpoints that enqueue jobs follow this convention:
 
-All workers are stateless. To add capacity:
-
-```bash
-# Main API + embedded workers
-node dist/main.js
-
-# Additional dedicated worker instance (same machine or different)
-node dist/main.js
-```
-
-Each instance competes for jobs from the same Redis queue. No additional configuration needed.
-
-### Separate Worker Process
-
-For production, isolate workers from API:
-
-```bash
-# Main API (no workers)
-DISABLE_WORKERS=true node dist/main.js
-
-# Dedicated clip-generation worker
-WORKER_QUEUE=clip-generation node dist/workers/clip-generation.worker.js
-
-# Dedicated nft-mint worker
-WORKER_QUEUE=nft-mint node dist/workers/nft-mint.worker.js
-```
-
-### Concurrency Tuning
-
-Adjust per-processor concurrency based on resource limits:
-
-```typescript
-@Processor(CLIP_GENERATION_QUEUE, { concurrency: 4 })
-export class ClipGenerationProcessor {
-  // ...
+**Immediate HTTP response (202 Accepted)**:
+```json
+{
+  "jobId": "clip-generation:42",
+  "status": "queued",
+  "message": "Clip generation started. Poll /jobs/clip-generation:42 for status."
 }
 ```
 
-- `clip-generation`: 2-4 (CPU-bound, memory-intensive)
-- `nft-mint`: 1-2 (I/O-bound, Soroban RPC rate limit)
-- `email-delivery`: 5-10 (I/O-bound, fast)
-- `clip-posting`: 2-3 (I/O-bound, platform rate limits)
+**Poll response when active**:
+```json
+{
+  "jobId": "clip-generation:42",
+  "status": "active",
+  "progress": 60
+}
+```
+
+**Poll response when complete**:
+```json
+{
+  "jobId": "clip-generation:42",
+  "status": "completed",
+  "result": {
+    "clipId": 123,
+    "clipUrl": "https://res.cloudinary.com/...",
+    "thumbnailUrl": "https://res.cloudinary.com/..."
+  }
+}
+```
+
+**Poll response when failed**:
+```json
+{
+  "jobId": "clip-generation:42",
+  "status": "failed",
+  "failedReason": "FFmpeg exited with code 1: invalid input file"
+}
+```
+
+For real-time updates, subscribe to the WebSocket namespace `/clips` and
+listen for `clip:progress`, `clip:ready`, and `clip:failed` events.

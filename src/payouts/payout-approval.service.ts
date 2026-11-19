@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 
-export type PayoutApprovalStatus = 'approved' | 'pending_approval';
+export type PayoutApprovalStatus =
+  | 'approved'
+  | 'pending_approval'
+  | 'under_review'
+  | 'pending_review';
 
 @Injectable()
 export class PayoutApprovalService {
@@ -20,9 +24,33 @@ export class PayoutApprovalService {
     return amount >= this.approvalThreshold;
   }
 
+  /**
+   * Large / flagged payouts enter under_review (#988 lifecycle).
+   * Smaller amounts are auto-approved.
+   */
   resolveInitialStatus(amount: number): PayoutApprovalStatus {
-    return this.requiresManualApproval(amount)
-      ? 'pending_approval'
-      : 'approved';
+    if (!this.requiresManualApproval(amount)) {
+      return 'approved';
+    }
+    return 'under_review';
+  }
+
+  canApprove(status: string): boolean {
+    return [
+      'pending',
+      'under_review',
+      'pending_review',
+      'pending_approval',
+    ].includes(status);
+  }
+
+  canReject(status: string): boolean {
+    return [
+      'pending',
+      'under_review',
+      'pending_review',
+      'pending_approval',
+      'approved',
+    ].includes(status);
   }
 }

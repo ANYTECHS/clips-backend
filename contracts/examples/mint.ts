@@ -1,26 +1,30 @@
-/**
- * Mint example. `mint` requires the contract admin's authorization, so this
- * must be signed by the admin wallet (or performed by the backend via
- * POST /nft/mint — see Swagger "nft" tag).
- */
-import { Address, nativeToScVal } from '@stellar/stellar-sdk';
-import { connectWallet, describeError, invoke, Wallet } from './config';
+import {
+  connectWallet,
+  getContract,
+  nativeToScVal,
+  reportExampleError,
+  signAndSubmit,
+} from './common.js';
 
-export async function mintClipNft(
-  adminWallet: Wallet,
-  params: { to: string; tokenId: bigint; clipId: string; contentUri: string; soulbound?: boolean },
-) {
-  const admin = await connectWallet(adminWallet);
-  try {
-    const res = await invoke(adminWallet, admin, 'mint', [
-      new Address(params.to).toScVal(),
-      nativeToScVal(params.tokenId, { type: 'u64' }),
-      nativeToScVal(params.clipId, { type: 'string' }),
-      nativeToScVal(params.contentUri, { type: 'string' }),
-      nativeToScVal(params.soulbound ?? false, { type: 'bool' }),
-    ]);
-    return { txHash: res.txHash, ledger: res.ledger };
-  } catch (err) {
-    throw new Error(`Mint failed: ${describeError(err)}`);
-  }
+export interface MintNftInput {
+  tokenId: bigint;
+  metadataUri: string;
+  royaltyBps: number;
 }
+
+export async function mintNft(input: MintNftInput): Promise<string> {
+  return reportExampleError('Soroban mint', async () => {
+    const walletAddress = await connectWallet();
+    const operation = getContract().call(
+      'mint',
+      nativeToScVal(walletAddress, { type: 'address' }),
+      nativeToScVal(input.tokenId, { type: 'u64' }),
+      nativeToScVal(input.metadataUri, { type: 'string' }),
+      nativeToScVal(input.royaltyBps, { type: 'u32' }),
+    );
+
+    return signAndSubmit(operation, walletAddress);
+  });
+}
+
+// Example: await mintNft({ tokenId: 42n, metadataUri: 'ipfs://CID', royaltyBps: 1000 });

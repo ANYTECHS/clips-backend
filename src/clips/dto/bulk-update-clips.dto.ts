@@ -13,6 +13,7 @@ import {
   IsValidRoyaltyBps,
   CLIP_ROYALTY_BPS_MAX,
 } from '../../common/validators/decorators';
+import { DEFAULT_CLIP_ROYALTY_BPS } from './create-clip.dto';
 
 export class ClipUpdatesDto {
   @ApiPropertyOptional({
@@ -39,10 +40,12 @@ export class ClipUpdatesDto {
   caption?: string;
 
   @ApiPropertyOptional({
-    description: 'NFT royalty percentage in Basis Points (BPS). 1000 BPS = 10%, range: 0-1500 (0-15%)',
+    description:
+      'NFT royalty in BPS (0–1500). 1000 = 10%. Defaults to 1000 when omitted.',
     example: 1000,
     minimum: 0,
     maximum: 1500,
+    default: DEFAULT_CLIP_ROYALTY_BPS,
   })
   @IsOptional()
   @Type(() => Number)
@@ -65,6 +68,12 @@ export class BulkUpdateClipsDto {
   @ApiProperty({
     description: 'Updates to apply to the specified clips',
     type: () => ClipUpdatesDto,
+    example: {
+      selected: true,
+      postStatus: { platform: 'tiktok', status: 'posted', postId: '12345' },
+      caption: 'A standout moment from the episode',
+      royaltyBps: 1000,
+    },
   })
   @ValidateNested()
   @Type(() => ClipUpdatesDto)

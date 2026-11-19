@@ -9,20 +9,22 @@ import {
 
 export class ResetPasswordDto {
   @ApiProperty({
-    description: 'Password reset token from email link',
-    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    description: 'Password reset token received via email',
+    example: 'd3b07384d113edec49eaa6238ad5ff00',
+    required: true,
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: 'Token must be a string' })
+  @IsNotEmpty({ message: 'Reset token is required' })
   token: string;
 
   @ApiProperty({
     description: `New password: ${PASSWORD_REQUIREMENTS}. Never returned in responses.`,
-    example: 'NewSecurePass123!',
+    example: 'NewStr0ngP@ssw0rd!2026',
     minLength: PASSWORD_MIN_LENGTH,
     maxLength: PASSWORD_MAX_LENGTH,
     format: 'password',
     writeOnly: true,
+    required: true,
   })
   @IsValidPassword()
   newPassword: string;

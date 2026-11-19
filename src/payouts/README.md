@@ -53,8 +53,23 @@ User-facing payout endpoints.
 
 **Endpoints:**
 - `POST /payouts/request` - Request payout
+- `POST /payouts/initiate-stellar` - Prepare and save an unsigned Stellar payout transaction
 - `GET /payouts` - Get payout history
 - `POST /payouts/:id/process` - Process payout
+
+`POST /payouts/initiate-stellar` accepts a payout ID and its exact amount. The
+payout must belong to the authenticated user, use the Stellar method, be in an
+initiable status, meet the configured minimum, and have a valid destination
+wallet. The response includes the unsigned transaction XDR and internal
+transaction ID. The payout remains pending; on-chain transaction fields are
+not set until the transaction has been submitted.
+
+Submitted Stellar payouts are polled through Horizon every
+`STELLAR_CONFIRMATION_INTERVAL_MS` (default 30 seconds). A successful Horizon
+result marks the payout `completed` and records `confirmedAt`/`paidAt`; a
+failed transaction or one not found after `STELLAR_CONFIRMATION_MAX_POLLS`
+(default 20) marks it `failed` with a `failureReason`. Confirmation poll count
+and last-check time are stored separately from delivery retry fields.
 
 #### `PayoutMethodController`
 User-facing payout method management.

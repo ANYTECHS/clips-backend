@@ -18,6 +18,13 @@ import { ConfigService } from '../config/config.service';
 import { PayoutReceiptService } from './payout-receipt.service';
 import { FeeService } from './fee.service';
 import { PayoutApprovalService } from './payout-approval.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { PayoutValidationService } from './payout-validation.service';
+import { PayoutProcessingService } from './payout-processing.service';
+import { PayoutLimitsService } from './payout-limits.service';
+import { CurrencyService } from '../common/services/currency.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 
 const TX_HASH = 'abc123deadbeef';
 const CONFIRMED_AT = new Date('2025-01-15T10:00:00.000Z');
@@ -47,23 +54,47 @@ const mockStellarService = {
   validateAddress: jest.fn().mockReturnValue({ valid: true }),
 };
 
+const mockStellarPayoutVerification = {
+  verifyPayoutTransaction: jest.fn(),
+};
+
 const mockQueue = {
   add: jest.fn().mockResolvedValue(undefined),
 };
 
 const mockPayoutRetryQueue = { add: jest.fn() };
 
+const mockShutdownService = {
+  register: jest.fn(),
+  registerQueue: jest.fn(),
+};
+const payoutCollaborators = [
+  PayoutValidationService,
+  PayoutProcessingService,
+  { provide: PayoutLimitsService, useValue: { getLimits: jest.fn() } },
+  { provide: CurrencyService, useValue: { convert: jest.fn() } },
+];
+
 function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingModule> {
   return Test.createTestingModule({
     providers: [
       StellarConfirmationProcessor,
       PayoutsService,
+      { provide: GracefulShutdownService, useValue: mockShutdownService },
       { provide: PrismaService, useValue: mockPrismaService },
       { provide: StellarService, useValue: mockStellarService },
+      {
+        provide: MetricsService,
+        useValue: { recordJobStart: jest.fn(), recordJobCompletion: jest.fn(), recordJobFailure: jest.fn() },
+      },
       { provide: CircuitBreakerService, useValue: { execute: jest.fn() } },
       {
         provide: PayoutReceiptService,
         useValue: { generateAndSendReceipt: jest.fn() },
+      },
+      {
+        provide: StellarPayoutVerificationService,
+        useValue: mockStellarPayoutVerification,
       },
       {
         provide: FeeService,
@@ -83,6 +114,7 @@ function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingMo
       },
       { provide: getQueueToken(STELLAR_CONFIRMATION_QUEUE), useValue: mockQueue },
       { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
+      ...payoutCollaborators,
       ...Object.entries(overrides).map(([token, useValue]) => ({ provide: token, useValue })),
     ],
   }).compile();
@@ -94,6 +126,16 @@ describe('StellarConfirmationProcessor', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockStellarPayoutVerification.verifyPayoutTransaction.mockImplementation(
+      async (txHash: string) => {
+        const result = await mockStellarService.getTransactionStatus(txHash);
+        if (!result.found) return { outcome: 'unknown', found: false };
+        return {
+          ...result,
+          outcome: result.successful ? 'confirmed' : 'failed',
+        };
+      },
+    );
     mockPrismaService.$transaction.mockImplementation(
       async (fn: (tx: typeof mockPrismaService) => Promise<unknown>) => fn(mockPrismaService),
     );
@@ -109,8 +151,14 @@ describe('StellarConfirmationProcessor', () => {
 
   describe('onModuleInit', () => {
     it('should schedule a repeatable confirmation poll job', async () => {
+      Object.defineProperty(processor, 'worker', {
+        configurable: true,
+        get: () => ({ name: STELLAR_CONFIRMATION_QUEUE }),
+      });
       await processor.onModuleInit();
 
+      expect(mockShutdownService.register).toHaveBeenCalled();
+      expect(mockShutdownService.registerQueue).toHaveBeenCalledWith(mockQueue);
       expect(mockQueue.add).toHaveBeenCalledWith(
         STELLAR_CONFIRMATION_JOB,
         {},
@@ -125,8 +173,13 @@ describe('StellarConfirmationProcessor', () => {
   describe('process', () => {
     it('should delegate to pollPendingStellarPayouts', async () => {
       const spy = jest.spyOn(payoutsService, 'pollPendingStellarPayouts').mockResolvedValue();
-      await processor.process({ id: 'job-1' } as any);
+      await processor.process({ id: 'job-1', opts: { attempts: 3 }, attemptsMade: 0 } as any);
       expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('exposes standardized failed/completed handlers (Issue #1235)', () => {
+      expect(typeof processor.onFailed).toBe('function');
+      expect(typeof processor.onCompleted).toBe('function');
     });
   });
 });
@@ -151,6 +204,10 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
           useValue: { generateAndSendReceipt: jest.fn() },
         },
         {
+          provide: StellarPayoutVerificationService,
+          useValue: mockStellarPayoutVerification,
+        },
+        {
           provide: FeeService,
           useValue: { calculateFee: jest.fn() },
         },
@@ -161,6 +218,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
         { provide: EarningsService, useValue: {} },
         { provide: ConfigService, useValue: { minStellarPayout: 5 } },
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
+        ...payoutCollaborators,
       ],
     }).compile();
 
@@ -192,6 +250,11 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
           onChainTxHash: { not: null },
           confirmedAt: null,
         },
+        select: expect.objectContaining({
+          confirmationPollCount: true,
+          finalAmount: true,
+          wallet: { select: { address: true } },
+        }),
       }),
     );
   });
@@ -199,7 +262,13 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
   describe('successful on-chain confirmation', () => {
     it('should mark payout as completed with confirmedAt from Horizon', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 1, onChainTxHash: TX_HASH, retryCount: 0, userId: 10, amount: 25 },
+        {
+          id: 1,
+          onChainTxHash: TX_HASH,
+          confirmationPollCount: 0,
+          userId: 10,
+          amount: 25,
+        },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -211,17 +280,22 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
 
       await service.pollPendingStellarPayouts();
 
-      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith({
-        where: {
-          id: 1,
-          status: { in: ['pending', 'processing'] },
-          confirmedAt: null,
-        },
-        data: {
-          status: 'completed',
-          confirmedAt: CONFIRMED_AT,
-        },
-      });
+      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            id: 1,
+            status: { in: ['pending', 'processing'] },
+            confirmedAt: null,
+          },
+          data: expect.objectContaining({
+            status: 'completed',
+            confirmedAt: CONFIRMED_AT,
+            paidAt: CONFIRMED_AT,
+            confirmationPollCount: 1,
+            lastConfirmationCheckAt: expect.any(Date),
+          }),
+        }),
+      );
 
       expect(mockPrismaService.earningsAuditLog.create).toHaveBeenCalledWith({
         data: {
@@ -235,7 +309,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
     it('should persist confirmedAt timestamp exactly as returned by Horizon', async () => {
       const horizonTimestamp = new Date('2025-03-10T08:30:00.000Z');
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 2, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 2, onChainTxHash: TX_HASH, confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -253,7 +327,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
     it('should fall back to current time when Horizon does not return confirmedAt', async () => {
       const before = new Date();
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 3, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 3, onChainTxHash: TX_HASH, confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -274,7 +348,13 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
   describe('failed on-chain transaction', () => {
     it('should mark payout as failed when transaction is rejected on-chain', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 4, onChainTxHash: TX_HASH, retryCount: 0, userId: 10, amount: 25 },
+        {
+          id: 4,
+          onChainTxHash: TX_HASH,
+          confirmationPollCount: 0,
+          userId: 10,
+          amount: 25,
+        },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -285,10 +365,17 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
 
       await service.pollPendingStellarPayouts();
 
-      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith({
-        where: { id: 4, status: { in: ['pending', 'processing'] } },
-        data: { status: 'failed' },
-      });
+      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 4, status: { in: ['pending', 'processing'] } },
+          data: expect.objectContaining({
+            status: 'failed',
+            failureReason: 'Stellar transaction failed on Horizon',
+            confirmationPollCount: 1,
+            lastConfirmationCheckAt: expect.any(Date),
+          }),
+        }),
+      );
 
       expect(mockPrismaService.earningsAuditLog.create).toHaveBeenCalledWith({
         data: {
@@ -301,7 +388,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
 
     it('should not set confirmedAt when transaction fails on-chain', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 5, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 5, onChainTxHash: TX_HASH, confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -316,25 +403,10 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
     });
   });
 
-  describe('retry behavior (transaction not yet found)', () => {
-    it('should increment retryCount when transaction is not yet on Horizon', async () => {
+  describe('confirmation polling (transaction not yet found)', () => {
+    it('should increment confirmationPollCount when transaction is not yet on Horizon', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 6, onChainTxHash: TX_HASH, retryCount: 2 },
-      ]);
-      mockStellarService.getTransactionStatus.mockResolvedValue({ found: false });
-      mockPrismaService.payout.update.mockResolvedValue({ id: 6 });
-
-      await service.pollPendingStellarPayouts();
-
-      expect(mockPrismaService.payout.update).toHaveBeenCalledWith({
-        where: { id: 6 },
-        data: { retryCount: 3, lastAttemptAt: expect.any(Date) },
-      });
-    });
-
-    it('should mark payout failed after max polls are exhausted', async () => {
-      mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 7, onChainTxHash: TX_HASH, retryCount: STELLAR_CONFIRMATION_MAX_POLLS - 1 },
+        { id: 6, onChainTxHash: TX_HASH, confirmationPollCount: 2 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({ found: false });
       mockPrismaService.payout.updateMany.mockResolvedValue({ count: 1 });
@@ -342,29 +414,73 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
       await service.pollPendingStellarPayouts();
 
       expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith({
-        where: { id: 7, status: { in: ['pending', 'processing'] } },
-        data: { status: 'failed', retryCount: STELLAR_CONFIRMATION_MAX_POLLS },
+        where: {
+          id: 6,
+          status: { in: ['pending', 'processing'] },
+          confirmedAt: null,
+        },
+        data: {
+          confirmationPollCount: 3,
+          lastConfirmationCheckAt: expect.any(Date),
+        },
+      });
+    });
+
+    it('should mark payout failed after max polls are exhausted', async () => {
+      mockPrismaService.payout.findMany.mockResolvedValue([
+        {
+          id: 7,
+          onChainTxHash: TX_HASH,
+          confirmationPollCount: STELLAR_CONFIRMATION_MAX_POLLS - 1,
+        },
+      ]);
+      mockStellarService.getTransactionStatus.mockResolvedValue({ found: false });
+      mockPrismaService.payout.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.pollPendingStellarPayouts();
+
+      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 7,
+          status: { in: ['pending', 'processing'] },
+          confirmedAt: null,
+        },
+        data: {
+          status: 'failed',
+          failureReason: `Stellar transaction was not found after ${STELLAR_CONFIRMATION_MAX_POLLS} confirmation checks`,
+          confirmationPollCount: STELLAR_CONFIRMATION_MAX_POLLS,
+          lastConfirmationCheckAt: expect.any(Date),
+        },
       });
     });
 
     it('should not mark failed when one poll below the max threshold', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 8, onChainTxHash: TX_HASH, retryCount: STELLAR_CONFIRMATION_MAX_POLLS - 2 },
+        {
+          id: 8,
+          onChainTxHash: TX_HASH,
+          confirmationPollCount: STELLAR_CONFIRMATION_MAX_POLLS - 2,
+        },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({ found: false });
-      mockPrismaService.payout.update.mockResolvedValue({ id: 8 });
+      mockPrismaService.payout.updateMany.mockResolvedValue({ count: 1 });
 
       await service.pollPendingStellarPayouts();
 
-      expect(mockPrismaService.payout.updateMany).not.toHaveBeenCalled();
-      expect(mockPrismaService.payout.update).toHaveBeenCalled();
+      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledTimes(1);
+      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: 8 }),
+          data: expect.objectContaining({ confirmationPollCount: STELLAR_CONFIRMATION_MAX_POLLS - 1 }),
+        }),
+      );
     });
   });
 
   describe('idempotency', () => {
     it('should use updateMany with status filter to prevent double-completion', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 9, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 9, onChainTxHash: TX_HASH, confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -383,7 +499,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
 
     it('should use updateMany with status filter to prevent double-failure', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 10, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 10, onChainTxHash: TX_HASH, confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus.mockResolvedValue({
         found: true,
@@ -403,8 +519,8 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
   describe('error isolation', () => {
     it('should continue processing remaining payouts when one throws a transient error', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 11, onChainTxHash: 'hash-fails', retryCount: 0 },
-        { id: 12, onChainTxHash: 'hash-ok', retryCount: 0 },
+        { id: 11, onChainTxHash: 'hash-fails', confirmationPollCount: 0 },
+        { id: 12, onChainTxHash: 'hash-ok', confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus
         .mockRejectedValueOnce(new Error('Horizon connection timeout'))
@@ -421,7 +537,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
 
     it('should not throw when all payouts encounter transient errors', async () => {
       mockPrismaService.payout.findMany.mockResolvedValue([
-        { id: 13, onChainTxHash: TX_HASH, retryCount: 0 },
+        { id: 13, onChainTxHash: TX_HASH, confirmationPollCount: 0 },
       ]);
       mockStellarService.getTransactionStatus.mockRejectedValue(
         new Error('Circuit breaker open'),

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CloudinaryService } from '../clips/cloudinary.service';
 import * as ffmpeg from '../clips/ffmpeg.util';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
  * Centralized video processing utilities service.
@@ -29,7 +30,7 @@ import * as ffmpeg from '../clips/ffmpeg.util';
 export class VideoProcessingService {
   private readonly logger = new Logger(VideoProcessingService.name);
 
-  constructor(private readonly cloudinaryService: CloudinaryService) {}
+  constructor(private readonly cloudinaryService: CloudinaryService, private readonly prisma: PrismaService) {}
 
   /**
    * Extract metadata from a video file using FFprobe.
@@ -88,6 +89,52 @@ export class VideoProcessingService {
       this.logger.error(`Failed to cut video segment: ${error.message}`);
       throw error;
     }
+  }
+
+  /**
+   * Cut a video segment and update the associated Clip record with the actual
+   * duration probed from the output file (Issue #742).
+   *
+   * FFmpeg rounding can cause the stored duration to differ from the real value
+   * by a fraction of a second. This method runs ffprobe on the output file after
+   * cutting and persists the accurate duration to the database.
+   *
+   * @param clipId - Database ID of the Clip row to update
+   * @param options - Cut options (same as cutVideoSegment)
+   * @returns Output file path
+   */
+  async cutAndUpdateClipDuration(
+    clipId: number,
+    options: ffmpeg.CutClipOptions,
+  ): Promise<string> {
+    const outputPath = await this.cutVideoSegment(options);
+
+    let actualDuration: number;
+    try {
+      // Issue #742: probe the output file to get the real duration
+      actualDuration = await ffmpeg.probeOutputDuration(outputPath);
+    } catch (probeErr) {
+      this.logger.warn(
+        `ffprobe on output failed for clip ${clipId}, falling back to (endTime - startTime): ${probeErr.message}`,
+      );
+      actualDuration = options.endTime - options.startTime;
+    }
+
+    try {
+      await this.prisma.clip.update({
+        where: { id: clipId },
+        data: { duration: actualDuration },
+      });
+      this.logger.log(
+        `Clip ${clipId} duration updated to ${actualDuration}s (probed from output)`,
+      );
+    } catch (dbErr) {
+      this.logger.error(
+        `Failed to update Clip ${clipId} duration: ${dbErr.message}`,
+      );
+    }
+
+    return outputPath;
   }
 
   /**

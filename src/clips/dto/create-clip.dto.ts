@@ -23,24 +23,24 @@ export class CreateClipDto {
     description: 'Source video ID',
     example: '123',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: 'videoId must be a string' })
+  @IsNotEmpty({ message: 'videoId is required' })
   videoId: string;
 
   @ApiProperty({
     description: 'Absolute or storage path to the input video',
     example: '/tmp/uploads/source.mp4',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: 'inputPath must be a string' })
+  @IsNotEmpty({ message: 'inputPath is required' })
   inputPath: string;
 
   @ApiProperty({
     description: 'Output path for the generated clip',
     example: '/tmp/clips/clip-123.mp4',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: 'outputPath must be a string' })
+  @IsNotEmpty({ message: 'outputPath is required' })
   outputPath: string;
 
   @ApiProperty({
@@ -48,8 +48,8 @@ export class CreateClipDto {
     example: 10.5,
     minimum: 0,
   })
-  @IsNumber()
-  @Min(0)
+  @IsNumber({}, { message: 'startTime must be a number' })
+  @Min(0, { message: 'startTime must be 0 or greater' })
   @Type(() => Number)
   startTime: number;
 
@@ -59,8 +59,8 @@ export class CreateClipDto {
     example: 25.0,
     minimum: 0,
   })
-  @IsNumber()
-  @Min(0)
+  @IsNumber({}, { message: 'endTime must be a number' })
+  @Min(0, { message: 'endTime must be 0 or greater' })
   @Type(() => Number)
   @ValidateIf((o: CreateClipDto) => {
     const duration = o.endTime - o.startTime;
@@ -80,9 +80,9 @@ export class CreateClipDto {
     minimum: 0,
     maximum: 1,
   })
-  @IsNumber()
-  @Min(0)
-  @Max(1)
+  @IsNumber({}, { message: 'positionRatio must be a number' })
+  @Min(0, { message: 'positionRatio must be at least 0' })
+  @Max(1, { message: 'positionRatio must be at most 1' })
   @Type(() => Number)
   positionRatio: number;
 
@@ -91,8 +91,8 @@ export class CreateClipDto {
     example: 600,
   })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
+  @IsNumber({}, { message: 'videoDuration must be a number' })
+  @Min(0, { message: 'videoDuration must be 0 or greater' })
   @Type(() => Number)
   videoDuration?: number;
 
@@ -101,7 +101,7 @@ export class CreateClipDto {
     example: 'Welcome to the highlight of the match...',
   })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'transcript must be a string' })
   transcript?: string;
 
   @ApiPropertyOptional({
@@ -109,7 +109,7 @@ export class CreateClipDto {
     example: 'Game-winning goal',
   })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'title must be a string' })
   title?: string;
 
   @ApiPropertyOptional({
@@ -117,8 +117,8 @@ export class CreateClipDto {
     example: 42,
   })
   @IsOptional()
-  @IsInt()
-  @Min(1)
+  @IsInt({ message: 'clipId must be an integer' })
+  @Min(1, { message: 'clipId must be a positive integer' })
   @Type(() => Number)
   clipId?: number;
 
@@ -127,8 +127,8 @@ export class CreateClipDto {
     example: 87.5,
   })
   @IsOptional()
-  @IsNumber()
-  @Min(0)
+  @IsNumber({}, { message: 'existingViralityScore must be a number' })
+  @Min(0, { message: 'existingViralityScore must be 0 or greater' })
   @Type(() => Number)
   existingViralityScore?: number;
 

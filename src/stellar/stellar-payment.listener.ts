@@ -230,15 +230,9 @@ export class StellarPaymentListener
   // ── DB writes ──────────────────────────────────────────────────────────────
 
   /**
-   * Atomically activates a subscription and creates a Payout record.
-   *
-   * The WHERE clause on the subscription update includes `stellarTxHash: null`
-   * so a second call for the same transaction will update 0 rows and return
-   * false — making the entire activation flow idempotent at the DB level.
-   *
-   * After the transaction commits, a SubscriptionRevenue record is created for
-   * accounting. The `transactionHash` unique index on that table provides a
-   * second idempotency guard.
+  * Atomically claims a pending subscription and records its payment effects.
+  * The conditional update is the idempotency boundary: only one concurrent
+  * delivery can claim the pending subscription.
    *
    * @returns true if the subscription was activated; false if it was a duplicate.
    */
@@ -258,63 +252,62 @@ export class StellarPaymentListener
     const durationDays = PLAN_DURATION_DAYS[plan.toLowerCase()] ?? 30;
     const endDate = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
 
-    // Batch transaction: subscription update + Payout creation.
-    // Idempotency is enforced upstream: handlePaymentRecord only reaches here
-    // when findFirst returned a pending subscription with stellarTxHash: null.
-    // The update sets stellarTxHash so any re-entry skips at the findFirst check.
-    await this.prisma.$transaction([
-      this.prisma.subscription.update({
-        where: { id: subscriptionId },
-        data: {
-          status: 'active',
-          stellarTxHash: txHash,
-          stellarMemo: memo,
-          paymentMethod: 'stellar',
-          startDate: now,
-          endDate,
-          updatedAt: now,
-        },
-      }),
-      this.prisma.payout.create({
-        data: {
-          userId,
-          amount: parseFloat(amount),
-          currency: this.config.assetCode,
-          method: 'stellar',
-          status: 'pending',
-          transactionId: txHash,
-          onChainTxHash: txHash,
-          confirmedAt: now,
-          paidAt: now,
-        },
-      }),
-    ]);
-
-    // Revenue record: created after the main transaction to avoid enlarging the
-    // atomic unit. The unique index on transactionHash absorbs any rare retry.
     try {
-      await this.prisma.subscriptionRevenue.create({
-        data: {
-          subscriptionId,
-          transactionHash: txHash,
-          payerAddress: senderAddress,
-          amount: parseFloat(amount),
-          assetType,
-          memo,
-          processedAt: now,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const claim = await tx.subscription.updateMany({
+          where: {
+            id: subscriptionId,
+            status: 'pending',
+            stellarTxHash: null,
+          },
+          data: {
+            status: 'active',
+            stellarTxHash: txHash,
+            stellarMemo: memo,
+            paymentMethod: 'stellar',
+            startDate: now,
+            endDate,
+            updatedAt: now,
+          },
+        });
+
+        if (claim.count !== 1) return false;
+
+        await tx.payout.create({
+          data: {
+            userId,
+            amount: parseFloat(amount),
+            currency: this.config.assetCode,
+            method: 'stellar',
+            status: 'pending',
+            transactionId: txHash,
+            onChainTxHash: txHash,
+            confirmedAt: now,
+            paidAt: now,
+          },
+        });
+
+        await tx.subscriptionRevenue.create({
+          data: {
+            subscriptionId,
+            transactionHash: txHash,
+            payerAddress: senderAddress,
+            amount: parseFloat(amount),
+            assetType,
+            memo,
+            processedAt: now,
+          },
+        });
+
+        return true;
       });
     } catch (err: unknown) {
       const e = err as { code?: string };
-      if (e?.code !== 'P2002') {
-        // P2002 = unique constraint violation (duplicate) — safe to ignore.
-        this.logger.error(
-          `Failed to create SubscriptionRevenue for tx ${txHash}: ${(err as Error).message}`,
-        );
+      if (e?.code === 'P2002') {
+        return false;
       }
+      throw err;
     }
-
-    return true;
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────

@@ -17,23 +17,27 @@ import {
   ApiBody,
   ApiParam,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
   ApiBadRequestResponse,
   ApiNotFoundResponse,
 } from '@nestjs/swagger';
+import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutMethodService } from './payout-method.service';
 import { CreatePayoutMethodDto } from './dto/create-payout-method.dto';
 import { UpdatePayoutMethodDto } from './dto/update-payout-method.dto';
+import { PayoutMethodResponseDto } from './dto/payout-responses.dto';
 import { Request } from 'express';
 
 interface RequestWithUser extends Request {
   user: { userId: number };
 }
 
-@ApiTags('payout-methods')
+@ApiTags('Payouts')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiUnauthorizedResponse({ description: 'Unauthorized - missing or invalid token' })
+@ApiForbiddenResponse({ description: 'Forbidden - can only access own payout methods' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('payout-methods')
 @Auth()
@@ -46,6 +50,7 @@ export class PayoutMethodController {
   @ApiResponse({
     status: 201,
     description: 'Payout method created successfully',
+    type: PayoutMethodResponseDto,
   })
   @ApiBadRequestResponse({ description: 'Invalid input' })
   async create(
@@ -60,6 +65,7 @@ export class PayoutMethodController {
   @ApiResponse({
     status: 200,
     description: 'List of payout methods',
+    type: [PayoutMethodResponseDto],
   })
   async findAll(@Req() req: RequestWithUser) {
     return this.payoutMethodService.findAll(req.user.userId);
@@ -70,6 +76,7 @@ export class PayoutMethodController {
   @ApiResponse({
     status: 200,
     description: 'Default payout method',
+    type: PayoutMethodResponseDto,
   })
   @ApiNotFoundResponse({ description: 'No default payout method found' })
   async getDefault(@Req() req: RequestWithUser) {
@@ -82,6 +89,7 @@ export class PayoutMethodController {
   @ApiResponse({
     status: 200,
     description: 'Payout method details',
+    type: PayoutMethodResponseDto,
   })
   @ApiNotFoundResponse({ description: 'Payout method not found' })
   async findOne(
@@ -98,6 +106,7 @@ export class PayoutMethodController {
   @ApiResponse({
     status: 200,
     description: 'Payout method updated successfully',
+    type: PayoutMethodResponseDto,
   })
   @ApiNotFoundResponse({ description: 'Payout method not found' })
   async update(

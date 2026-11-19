@@ -1,22 +1,25 @@
-# Soroban NFT frontend examples
+# Soroban frontend examples
 
-| File | Shows |
-|------|-------|
-| `config.ts` | env config, wallet connection, signing, submission, error mapping |
-| `mint.ts` | admin-signed `mint` |
-| `transfer.ts` | owner-signed `transfer` |
-| `royalty-query.ts` | read-only `get_default_royalty_bps` + `GET /nft/{mintAddress}/royalty` |
+These browser-side TypeScript examples use `@stellar/stellar-sdk` and the Freighter browser extension. They connect the user's wallet, simulate contract calls, request wallet signing, submit transactions to Soroban RPC, and report failures. The royalty query is read-only and uses RPC simulation.
 
-## Setup
-1. `npm i @stellar/stellar-sdk @stellar/freighter-api`
-2. Copy `.env.example` to `.env` and set `NFT_CONTRACT_ID`.
-3. Set the wallet (e.g. Freighter) to the same network as `STELLAR_NETWORK` and fund the account (testnet: Friendbot).
+## Configuration
 
-```ts
-import * as freighter from '@stellar/freighter-api';
-import { transferClipNft } from './transfer';
-await transferClipNft(freighter as any, 'G...RECIPIENT', 1n);
+Copy `.env.example` into the frontend application's environment file and set `VITE_SOROBAN_NFT_CONTRACT_ID` to the deployed contract for the selected network. `VITE_STELLAR_NETWORK` accepts `testnet` or `public`; use testnet while developing. `VITE_SOROBAN_RPC_URL` is optional and defaults to the matching Stellar RPC endpoint. These values are public and must not contain private keys, secret seeds, or signing material.
+
+Install the Stellar SDK in the consuming frontend (`npm install @stellar/stellar-sdk`) and install/unlock Freighter. The example expects the extension's `window.freighterApi` provider. The connected wallet must be on the same network as the configured contract and have an account funded/activated on that network. The wallet prompts for transaction approval; private keys remain in the wallet.
+
+## Examples
+
+- `mint.ts` connects the wallet and invokes `mint` with the recipient, token ID, metadata URI, and royalty basis points.
+- `transfer.ts` invokes the backend's current contract method `transfer_with_royalty` with token ID, sender, recipient, sale price in contract units, and royalty basis points.
+- `royalty-query.ts` simulates `get_royalties(token_id)` and decodes the returned address-to-basis-points map.
+
+Contract ABI note: the repository has no contract source or generated TypeScript bindings. Its mint preparation service describes a four-argument `mint` call, while a binding test describes a different three-argument call. This example follows the mint preparation service's fields; verify the deployed contract ABI before submitting mint transactions. The transfer and royalty method names and argument types follow the backend's current Soroban calls.
+
+## Compile check
+
+From the repository root, run:
+
+```sh
+npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck contracts/examples/*.ts
 ```
-
-No private keys are used; all signing happens in the wallet. Typecheck with
-`npx tsc --noEmit --strict --module commonjs --target es2020 --lib es2020,dom --skipLibCheck contracts/examples/*.ts`.

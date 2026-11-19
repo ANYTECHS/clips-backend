@@ -1,35 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { v2 as cloudinary } from 'cloudinary';
+import * as fs from 'fs/promises';
+import { Readable } from 'stream';
 import * as streamifier from 'streamifier';
-import * as fs from 'fs';
-import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
 
 export interface CloudinaryUploadResult {
   secure_url: string;
-  thumbnail_url?: string;
   public_id: string;
+  duration?: number;
+  width?: number;
+  height?: number;
+  format?: string;
+  thumbnail_url?: string;
   error?: string;
 }
 
+/**
+ * Handles uploads, deletions, and reads for Cloudinary-hosted video assets.
+ * 
+ * Issue #727: Enhanced to upload clips from buffer after FFmpeg cut,
+ * generate auto-thumbnails, and handle upload errors with retry logic.
+ */
 @Injectable()
 export class CloudinaryService {
   private readonly logger = new Logger(CloudinaryService.name);
 
-  private readonly circuitBreakerConfig: CircuitBreakerConfig = {
-    name: 'cloudinary-upload',
-    failureThreshold: 5,
-    recoveryTimeout: 30000,
-    samplingDuration: 60000,
-  };
-
-  private readonly deleteCircuitBreakerConfig: CircuitBreakerConfig = {
-    name: 'cloudinary-delete',
-    failureThreshold: 5,
-    recoveryTimeout: 30000,
-    samplingDuration: 60000,
-  };
-
-  constructor(private readonly circuitBreakerService: CircuitBreakerService) {
+  constructor() {
     cloudinary.config({
       cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
       api_key: process.env.CLOUDINARY_API_KEY,
@@ -37,129 +33,161 @@ export class CloudinaryService {
     });
   }
 
+  /**
+   * Upload a video from a buffer to Cloudinary.
+   * 
+   * Issue #727: Enhanced to generate auto-thumbnail at time=0.5
+   * and return both video URL and thumbnail URL.
+   *
+   * @param buffer    Video data buffer from FFmpeg output
+   * @param publicId  Cloudinary public ID for the video
+   * @param options   Upload options including folder and resource type
+   * @param retryAttempt Current retry attempt (for logging)
+   */
   async uploadVideoFromBuffer(
     buffer: Buffer,
     publicId: string,
-    options: {
-      folder?: string;
-      resourceType?: 'video' | 'image' | 'raw' | 'auto';
-      autoTagging?: number;
-    } = {},
-    retries: number = 2,
-  ): Promise<CloudinaryUploadResult> {
-    let attempts = 0;
-    const maxAttempts = 1 + retries;
-    let lastError: any = null;
-
-    while (attempts < maxAttempts) {
-      try {
-        attempts++;
-        this.logger.log(
-          `Starting Cloudinary upload for ${publicId} (attempt ${attempts}/${maxAttempts})`,
-        );
-
-        const result = await this.circuitBreakerService.execute(
-          this.circuitBreakerConfig,
-          () => this.performUpload(buffer, publicId, options),
-        );
-
-        if (result.error) {
-          throw new Error(result.error);
-        }
-
-        this.logger.log(`Clip uploaded successfully: ${publicId} (${result.secure_url})`);
-        return result;
-      } catch (error) {
-        lastError = error;
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        this.logger.warn(`Cloudinary upload attempt ${attempts} failed for ${publicId}: ${errorMessage}`);
-
-        if (attempts >= maxAttempts) {
-          this.logger.error(`Cloudinary upload failed after ${attempts} attempts for ${publicId}: ${errorMessage}`);
-          break;
-        }
-
-        // Delay between retries
-        await new Promise((resolve) => setTimeout(resolve, 1000 * attempts));
-      }
-    }
-
-    const finalErrorMessage = lastError instanceof Error ? lastError.message : 'Unknown error';
-    return { secure_url: '', public_id: publicId, error: finalErrorMessage };
-  }
-
-  private async performUpload(
-    buffer: Buffer,
-    publicId: string,
-    options: {
+    options?: {
       folder?: string;
       resourceType?: 'video' | 'image' | 'raw' | 'auto';
       autoTagging?: number;
     },
+    retryAttempt = 1,
   ): Promise<CloudinaryUploadResult> {
     return new Promise((resolve) => {
-      const { folder = 'clips', resourceType = 'video', autoTagging = 0.6 } = options;
+      const folder = options?.folder ?? 'clips';
+      const resourceType = options?.resourceType ?? 'video';
+
+      this.logger.log(
+        `Uploading to Cloudinary (attempt ${retryAttempt}): ${publicId} ` +
+        `(${Math.round(buffer.length / 1024)}KB to folder: ${folder})`
+      );
 
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           public_id: publicId,
           folder,
-          resource_type: resourceType as any,
-          auto_tagging: autoTagging,
-          eager: [{ streaming_profile: 'hd', format: 'mp4' }],
+          resource_type: resourceType,
+          // Auto-generate thumbnail at 0.5 seconds for videos
+          ...(resourceType === 'video' && {
+            eager: [
+              { 
+                width: 400, 
+                height: 300, 
+                crop: 'pad',
+                start_offset: 0.5,
+                format: 'jpg'
+              }
+            ]
+          }),
+          ...(options?.autoTagging ? { auto_tagging: options.autoTagging } : {}),
         },
-        (error: any, result: any) => {
-          if (error) {
-            resolve({ secure_url: '', public_id: publicId, error: error.message });
-          } else if (result) {
+        (error, result) => {
+          if (error || !result) {
+            this.logger.error(
+              `Cloudinary upload failed for ${publicId} (attempt ${retryAttempt}): ${
+                error?.message ?? 'no result'
+              }`,
+            );
             resolve({
-              secure_url: result.secure_url,
-              public_id: result.public_id,
-              thumbnail_url: this.generateThumbnailUrl(result.public_id, result.resource_type),
+              secure_url: '',
+              public_id: publicId,
+              error: error?.message ?? 'Upload failed - no result returned',
             });
-          } else {
-            resolve({ secure_url: '', public_id: publicId, error: 'Unknown error' });
+            return;
           }
+
+          // Generate thumbnail URL from the video at 0.5s
+          const thumbnailUrl = cloudinary.url(result.public_id, {
+            resource_type: 'video',
+            format: 'jpg',
+            transformation: [
+              { start_offset: '0.5' },
+              { width: 400, height: 300, crop: 'pad' }
+            ],
+          });
+
+          this.logger.log(
+            `Cloudinary upload successful (attempt ${retryAttempt}): ${publicId} → ${result.secure_url}`
+          );
+
+          resolve({
+            secure_url: result.secure_url,
+            public_id: result.public_id,
+            duration: (result as any).duration,
+            width: result.width,
+            height: result.height,
+            format: result.format,
+            thumbnail_url: thumbnailUrl,
+          });
         },
       );
 
+      // Use streamifier to create readable stream from buffer
+      // This is the recommended approach as mentioned in the technical hints
       streamifier.createReadStream(buffer).pipe(uploadStream);
     });
   }
 
-  private generateThumbnailUrl(publicId: string, resourceType: string, timeRatio = 0.5): string {
-    if (resourceType !== 'video') return '';
-    return `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/video/upload/so_${Math.round(timeRatio * 100)}p/${publicId}.jpg`;
-  }
-
+  /**
+   * Delete a clip from Cloudinary by public ID.
+   */
   async deleteClip(publicId: string): Promise<void> {
     try {
-      await this.circuitBreakerService.execute(
-        this.deleteCircuitBreakerConfig,
-        async () => {
-          await cloudinary.uploader.destroy(publicId, { resource_type: 'video' });
-          return { success: true };
-        },
-      );
-      this.logger.log(`Clip deleted from Cloudinary: ${publicId}`);
+      const result = await cloudinary.uploader.destroy(publicId, { 
+        resource_type: 'video' 
+      });
+      this.logger.log(`Deleted Cloudinary asset: ${publicId} (result: ${result.result})`);
     } catch (error) {
-      if (error.name === 'ServiceUnavailableException') throw error;
-      this.logger.error(`Failed to delete clip ${publicId}: ${error.message}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Failed to delete Cloudinary asset ${publicId}: ${errorMsg}`);
+      throw error; // Re-throw so caller can handle
     }
   }
 
+  /**
+   * Read a local file into a Buffer.
+   * Used by the clip processor to load FFmpeg output for Cloudinary upload.
+   */
+  async readFileToBuffer(filePath: string): Promise<Buffer> {
+    try {
+      const buffer = await fs.readFile(filePath);
+      this.logger.log(`Read file to buffer: ${filePath} (${Math.round(buffer.length / 1024)}KB)`);
+      return buffer;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to read file to buffer: ${filePath} - ${errorMsg}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete a local file, used for cleanup after successful Cloudinary upload.
+   * Ignores errors if file doesn't exist (idempotent operation).
+   */
   async deleteLocalFile(filePath: string): Promise<void> {
     try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        this.logger.log(`Local file deleted: ${filePath}`);
-      }
+      await fs.unlink(filePath);
+      this.logger.log(`Deleted local file: ${filePath}`);
     } catch (error) {
-      this.logger.error(`Failed to delete local file ${filePath}: ${error.message}`);
+      // File may already be gone or never existed - this is fine
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      this.logger.debug(`Could not delete local file ${filePath}: ${errorMsg}`);
     }
   }
 
-  async readFileToBuffer(filePath: string): Promise<Buffer> {
-    return fs.promises.readFile(filePath);
+  /**
+   * Generate a thumbnail URL for an existing Cloudinary video.
+   * Used as fallback if the eager transformation didn't work.
+   */
+  generateThumbnailUrl(publicId: string, timeOffset = 0.5): string {
+    return cloudinary.url(publicId, {
+      resource_type: 'video',
+      format: 'jpg',
+      transformation: [
+        { start_offset: timeOffset.toString() },
+        { width: 400, height: 300, crop: 'pad' }
+      ],
+    });
   }
 }

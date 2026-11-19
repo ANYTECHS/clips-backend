@@ -3,6 +3,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { Keypair } from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { EncryptionService } from '../encryption/encryption.service';
+import { maskAddress } from '@clipcash/shared';
 
 @Injectable()
 export class UsersService {
@@ -32,10 +33,10 @@ export class UsersService {
       },
     });
 
-    return { stellarPublicKey: publicKey, walletType: 'custodial' };
+    return { stellarPublicKey: maskAddress(publicKey), walletType: 'custodial' };
   }
 
-  /** Return the current user's profile including Stellar public key. */
+  /** Return the current user's profile including a masked Stellar public key. */
   async getMe(userId: number) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -49,10 +50,21 @@ export class UsersService {
         emailVerified: true,
         stellarPublicKey: true,
         walletType: true,
+        showOnLeaderboard: true,
         createdAt: true,
       },
     });
-    return user;
+
+    if (!user) {
+      return user;
+    }
+
+    return {
+      ...user,
+      stellarPublicKey: user.stellarPublicKey
+        ? maskAddress(user.stellarPublicKey)
+        : user.stellarPublicKey,
+    };
   }
 
   /** Partially update the profile; fields missing from the DTO are not touched. */

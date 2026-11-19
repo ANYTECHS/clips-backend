@@ -1,19 +1,25 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Currency, EarningsBreakdown } from './earnings.types';
 import { CurrencyConversionService } from './currency-conversion.service';
 import { RedisService } from '../redis/redis.service';
 import { ConfigService } from '../config/config.service';
 
+export interface EarningsBreakdownResult {
+  royalties: number;
+  subscriptions: number;
+}
+
 @Injectable()
 export class EarningsAggregationService {
   private readonly logger = new Logger(EarningsAggregationService.name);
 
   constructor(
-    private prisma: PrismaService,
-    private currencyConversion: CurrencyConversionService,
-    private redisService: RedisService,
-    private config: ConfigService,
+    private readonly prisma: PrismaService,
+    private readonly currencyConversion: CurrencyConversionService,
+    private readonly redisService: RedisService,
+    private readonly config: ConfigService,
   ) {}
 
   private getCacheKey(userId: number, targetCurrency: Currency): string {
@@ -24,7 +30,11 @@ export class EarningsAggregationService {
     const currencies = Object.values(Currency);
     for (const currency of currencies) {
       const key = this.getCacheKey(userId, currency);
-      await this.redisService.del(key);
+      try {
+        await this.redisService.del(key);
+      } catch (err) {
+        this.logger.error(`Redis error deleting cache: ${err.message}`);
+      }
     }
   }
 
@@ -36,8 +46,15 @@ export class EarningsAggregationService {
   }
 
   private validatePeriod(startDate: Date, endDate: Date) {
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      throw new BadRequestException(
+        'Invalid date range: startDate and endDate must be valid ISO 8601 dates.',
+      );
+    }
     if (startDate > endDate) {
-      throw new Error('Start date must be before end date');
+      throw new BadRequestException(
+        'Invalid date range: startDate must be on or before endDate.',
+      );
     }
   }
 
@@ -74,10 +91,14 @@ export class EarningsAggregationService {
   ) {
     const cacheKey = this.getCacheKey(userId, targetCurrency);
 
-    const cached = await this.redisService.get(cacheKey);
-    if (cached) {
-      this.logger.log(`Cache hit for user ${userId} earnings total in ${targetCurrency}`);
-      return JSON.parse(cached);
+    try {
+      const cached = await this.redisService.get(cacheKey);
+      if (cached) {
+        this.logger.log(`Cache hit for user ${userId} earnings total in ${targetCurrency}`);
+        return JSON.parse(cached);
+      }
+    } catch (err) {
+      this.logger.error(`Redis error reading cache: ${err.message}`);
     }
 
     this.logger.log(`Cache miss for user ${userId} earnings total in ${targetCurrency}`);
@@ -94,7 +115,11 @@ export class EarningsAggregationService {
       currency: targetCurrency,
     };
 
-    await this.redisService.setex(cacheKey, this.config.earningsCacheTtlSeconds, JSON.stringify(result));
+    try {
+      await this.redisService.setex(cacheKey, this.config.earningsCacheTtlSeconds ?? 3600, JSON.stringify(result));
+    } catch (err) {
+      this.logger.error(`Redis error writing cache: ${err.message}`);
+    }
 
     return result;
   }
@@ -266,59 +291,126 @@ export class EarningsAggregationService {
     }));
   }
 
-  async getEarningsByPlatform(userId: number) {
+  async getEarningsByPlatform(
+    userId: number,
+    from?: string,
+    to?: string,
+    currency?: string,
+  ) {
+    const targetCurrency = ((currency?.toUpperCase() || 'USD') as Currency);
+    if (!Object.values(Currency).includes(targetCurrency)) {
+      throw new Error(
+        `Unsupported currency: ${currency}. Supported: ${Object.values(Currency).join(', ')}`,
+      );
+    }
+    const where: any = {
+      clip: { video: { userId } },
+      deletedAt: null,
+    };
+
+    if (from || to) {
+      where.date = {};
+      if (from) {
+        where.date.gte = new Date(from);
+      }
+      if (to) {
+        where.date.lte = new Date(to);
+      }
+    }
+
     const earnings = await this.prisma.earning.findMany({
-      where: {
-        clip: { video: { userId } },
-        deletedAt: null,
-      },
+      where,
       select: {
         amount: true,
+        currency: true,
         source: true,
       },
     });
 
-    const platformMap = new Map<string, { total: number; count: number }>();
-    let totalEarnings = 0;
+    const platformMap = new Map<string, { amount: number; count: number }>();
 
     for (const earning of earnings) {
       const platform = earning.source || 'unknown';
-      const current = platformMap.get(platform) || { total: 0, count: 0 };
+      const convertedAmount = this.currencyConversion.convert(
+        earning.amount,
+        (earning.currency as Currency) || Currency.USD,
+        targetCurrency,
+      );
 
+      const prev = platformMap.get(platform) || { amount: 0, count: 0 };
       platformMap.set(platform, {
-        total: current.total + earning.amount,
-        count: current.count + 1,
+        amount: prev.amount + convertedAmount,
+        count: prev.count + 1,
       });
-
-      totalEarnings += earning.amount;
     }
 
     const data = Array.from(platformMap.entries())
-      .map(([platform, stats]) => ({
+      .map(([platform, v]) => ({
         platform,
-        totalEarnings: stats.total,
-        count: stats.count,
+        amount: v.amount,
+        currency: targetCurrency,
+        totalEarnings: v.amount,
+        count: v.count,
       }))
-      .sort((a, b) => b.totalEarnings - a.totalEarnings);
+      .sort((a, b) => b.amount - a.amount);
+
+    const totalEarnings = data.reduce((sum, d) => sum + d.amount, 0);
 
     return {
       data,
       totalEarnings,
+      currency: targetCurrency,
     };
   }
 
-  async softDelete(earningId: number, userId: number) {
-    const earning = await this.prisma.earning.findUnique({
+  async getMonthlySummary(userId: number, year: number, month: number) {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+      throw new Error('Invalid year. Use YYYY between 2000-2100.');
+    }
+    if (!Number.isInteger(month) || month < 1 || month > 12) {
+      throw new Error('Invalid month. Use 1-12.');
+    }
+    const summary = await this.prisma.monthlyEarning.findUnique({
+      where: { userId_year_month: { userId, year, month } },
+    });
+    if (!summary) {
+      // Fallback: compute live from period (UTC) when cron has not run yet
+      const from = new Date(Date.UTC(year, month - 1, 1));
+      const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+      const period = await this.getEarningsByPeriod(
+        userId,
+        from,
+        to,
+        Currency.USD,
+      );
+      return {
+        userId,
+        year,
+        month,
+        totalAmount: period.total,
+        currency: period.currency,
+        platformBreakdown: period.items.reduce(
+          (acc: Record<string, number>, i: any) => {
+            acc[i.source || 'unknown'] = (acc[i.source || 'unknown'] || 0) + i.amount;
+            return acc;
+          },
+          {},
+        ),
+        generated: false,
+      };
+    }
+    return { ...summary, generated: true };
+  }
+
+  async softDelete(earningId: number, userId: number) {    const earning = await this.prisma.earning.findUnique({
       where: { id: earningId },
-      include: { clip: { include: { video: { select: { userId: true } } } } },
+      include: {
+        clip: { include: { video: { select: { userId: true } } } },
+      },
     });
 
-    if (!earning || earning.clip.video.userId !== userId) {
-      throw new Error(`Earning ${earningId} not found`);
-    }
-
-    if (earning.deletedAt !== null) {
-      throw new Error(`Earning ${earningId} not found`);
+    if (!earning || earning.clip.video.userId !== userId || earning.deletedAt !== null) {
+      throw new NotFoundException(`Earning ${earningId} not found`);
     }
 
     await this.prisma.earning.update({
@@ -327,8 +419,48 @@ export class EarningsAggregationService {
     });
 
     await this.invalidateUserEarningsCache(userId);
-    this.logger.log(`Soft-deleted earning ${earningId} for user ${userId} and invalidated cache`);
+    this.logger.log(
+      `Soft-deleted earning ${earningId} for user ${userId} and invalidated cache`,
+    );
 
     return { message: 'Earning deleted successfully' };
+  }
+
+  /**
+   * Admin recovery: clear deletedAt so the earning re-enters normal queries
+   * and aggregation jobs.
+   */
+  async restore(earningId: number) {
+    const earning = await this.prisma.earning.findUnique({
+      where: { id: earningId },
+      include: {
+        clip: { include: { video: { select: { userId: true } } } },
+      },
+    });
+
+    if (!earning) {
+      throw new NotFoundException(`Earning ${earningId} not found`);
+    }
+
+    if (earning.deletedAt === null) {
+      throw new NotFoundException(
+        `Earning ${earningId} is not soft-deleted`,
+      );
+    }
+
+    const restored = await this.prisma.earning.update({
+      where: { id: earningId },
+      data: { deletedAt: null },
+    });
+
+    const ownerId = earning.clip.video.userId;
+    await this.invalidateUserEarningsCache(ownerId);
+    this.logger.log(`Restored earning ${earningId} for user ${ownerId}`);
+
+    return {
+      message: 'Earning restored successfully',
+      id: restored.id,
+      deletedAt: restored.deletedAt,
+    };
   }
 }

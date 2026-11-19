@@ -1,833 +1,499 @@
-# ClipCash API Contract
+# ClipCash — API Contract Reference
 
-Frontend–backend data exchange contract for ClipCash. All endpoints are relative to the base URL (e.g. `http://localhost:3000` in development).
+This document is the authoritative reference for the ClipCash REST API. It covers authentication, major endpoints, request/response shapes, error codes, and worked examples for common workflows (clip curation and NFT minting).
+
+> **Live interactive docs:** When running in development mode, Swagger UI is available at [`http://localhost:3000/api/docs`](http://localhost:3000/api/docs). In production see [docs/deployment.md](./deployment.md#swagger--api-documentation-in-production) for enabling Swagger.
 
 ---
 
 ## Table of Contents
 
-1. [Global Conventions](#1-global-conventions)
-2. [Authentication](#2-authentication)
-3. [Videos](#3-videos)
-4. [Clips](#4-clips)
-5. [Wallets](#5-wallets)
-6. [NFT Minting](#6-nft-minting)
-7. [Payouts](#7-payouts)
-8. [Subscriptions](#8-subscriptions)
-9. [Earnings](#9-earnings)
-10. [Users](#10-users)
-11. [User Platforms](#11-user-platforms)
-12. [Transactions](#12-transactions)
-13. [Webhooks](#13-webhooks)
-14. [Health](#14-health)
-15. [Metrics](#15-metrics)
-16. [WebSocket Gateway](#16-websocket-gateway)
-17. [Error Shape](#17-error-shape)
+1. [Base URL & Versioning](#base-url--versioning)
+2. [Authentication](#authentication)
+3. [Common Headers](#common-headers)
+4. [Common Error Responses](#common-error-responses)
+5. [Endpoints](#endpoints)
+   - [Auth](#auth)
+   - [Users](#users)
+   - [Videos](#videos)
+   - [Clips](#clips)
+   - [Wallets](#wallets)
+   - [Earnings](#earnings)
+   - [Payouts](#payouts)
+   - [NFT / Mint](#nft--mint)
+   - [Subscriptions](#subscriptions)
+   - [Health & Metrics](#health--metrics)
+6. [Workflows](#workflows)
+   - [Clip Curation](#clip-curation-workflow)
+   - [NFT Minting](#nft-minting-workflow)
+7. [Pagination](#pagination)
+8. [API Versioning](#api-versioning)
 
 ---
 
-## 1. Global Conventions
+## Base URL & Versioning
 
-### Base URL
+| Environment | Base URL |
+|---|---|
+| Local development | `http://localhost:3000` |
+| Production | `https://api.clipcash.app` (example) |
 
-| Environment | URL |
-|-------------|-----|
-| Development | `http://localhost:3000` |
-| Production  | Configured via deployment |
-
-### Authentication
-
-Protected endpoints require a JWT Bearer token:
-
-```
-Authorization: Bearer <accessToken>
-```
-
-Tokens are issued by the auth endpoints. The access token expires after a short TTL; use `POST /auth/refresh` to rotate it.
-
-### Cookie Mode
-
-Append `?use_cookies=true` to `signup`, `login`, `refresh`, and `verify-magic` to receive tokens in `HttpOnly` cookies instead of the response body. Google OAuth always uses cookies.
-
-### CSRF
-
-On login and Google OAuth, the server sets a CSRF cookie and returns a `csrfToken` in the response body. State-mutating requests from a browser must include this value in the `x-csrf-token` header.
-
-### Rate Limits
-
-| Throttle bucket | Limit |
-|-----------------|-------|
-| `auth` | 10 req / 60 s |
-| `sensitive` (forgot-password) | 3 req / 15 min |
-| `nftMint` | 5 req / 60 s |
-| `walletConnect` / `walletDisconnect` | 10 req / 60 s |
-| `transactionSend` | 5 req / 60 s |
-| `walletBalance` | 30 req / 60 s |
-
-Exceeding a limit returns **429 Too Many Requests**.
-
-### Pagination
-
-List endpoints that support pagination accept:
-
-| Query param | Type | Default | Description |
-|-------------|------|---------|-------------|
-| `page` | integer | `1` | Page number (1-indexed) |
-| `limit` | integer | `20` | Items per page |
-
-Paginated responses follow the shape:
-
-```json
-{
-  "data": [ ...items ],
-  "total": 42,
-  "page": 1,
-  "limit": 20
-}
-```
+The API does **not** currently use URL versioning (e.g. `/v1/`). All endpoints are served from the root path.
 
 ---
 
-## 2. Authentication
+## Authentication
 
-### POST /auth/signup
+Most endpoints require a JWT Bearer token. Obtain one via `POST /auth/login` or `POST /auth/signup`.
 
-Register a new user account.
+### Sending the Token
 
-**Request**
+```http
+Authorization: Bearer <access_token>
+```
+
+### Token Lifecycle
+
+| Property | Value |
+|---|---|
+| Access token TTL | Configurable via `JWT_EXPIRES` (default: 3600 s) |
+| Refresh token TTL | Configurable via `JWT_REFRESH_EXPIRES_DAYS` (default: 14 days) |
+
+Use `POST /auth/refresh` with the refresh token to obtain a new access token without re-authenticating.
+
+### Authenticating in Swagger UI
+
+1. Click the **Authorize** button (🔓) at the top of the Swagger UI page.
+2. Enter `Bearer <your_token>` in the `access-token` (http, Bearer) field.
+3. Click **Authorize** and close the dialog.
+
+---
+
+## Common Headers
+
+| Header | Required | Description |
+|---|---|---|
+| `Authorization` | Yes (protected routes) | `Bearer <jwt_access_token>` |
+| `Content-Type` | Yes (POST/PATCH) | `application/json` |
+| `x-metrics-token` | Yes (`GET /metrics`) | Prometheus metrics token |
+
+---
+
+## Common Error Responses
+
+All error responses follow this schema:
 
 ```json
 {
-  "name": "John Doe",
-  "email": "john@example.com",
-  "password": "SecurePass123!"
+  "statusCode": 400,
+  "message": "Validation error description",
+  "error": "Bad Request"
 }
 ```
 
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `name` | string | Yes | 2–50 characters |
-| `email` | string | Yes | Valid email format |
-| `password` | string | Yes | 8–32 characters |
+| HTTP Status | Meaning |
+|---|---|
+| `400 Bad Request` | Invalid request body or query parameters |
+| `401 Unauthorized` | Missing or invalid JWT token |
+| `403 Forbidden` | Authenticated but insufficient role/permission |
+| `404 Not Found` | Resource does not exist |
+| `409 Conflict` | Duplicate resource or conflicting state |
+| `422 Unprocessable Entity` | Validation failed on specific fields |
+| `429 Too Many Requests` | Rate limit exceeded |
+| `500 Internal Server Error` | Unexpected server error |
 
-**Response `201`**
+---
+
+## Endpoints
+
+### Auth
+
+All auth endpoints are **public** (no JWT required) unless noted.
+
+#### `POST /auth/signup`
+
+Register a new user with email and password.
+
+**Request body:**
 
 ```json
 {
+  "email": "user@example.com",
+  "password": "StrongP@ssw0rd!",
+  "name": "Jane Doe"
+}
+```
+
+**Response `201`:**
+
+```json
+{
+  "accessToken": "eyJhbGci...",
+  "refreshToken": "eyJhbGci...",
   "user": {
     "id": 1,
-    "name": "John Doe",
-    "email": "john@example.com",
-    "emailVerified": false
-  },
-  "tokens": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    "email": "user@example.com",
+    "name": "Jane Doe"
   }
 }
 ```
 
-**Errors:** `400` invalid input or email already registered · `429` rate limit
-
 ---
 
-### POST /auth/login
+#### `POST /auth/login`
 
-Authenticate and receive tokens.
-
-**Request**
+**Request body:**
 
 ```json
 {
-  "email": "john@example.com",
-  "password": "SecurePass123!",
-  "totpCode": "123456"
+  "email": "user@example.com",
+  "password": "StrongP@ssw0rd!"
 }
 ```
 
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `email` | string | Yes | Valid email |
-| `password` | string | Yes | Min 8 characters |
-| `totpCode` | string | No | 6-digit TOTP code (required when MFA is enabled) |
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
-  "user": {
-    "id": 1,
-    "name": "John Doe",
-    "email": "john@example.com",
-    "emailVerified": true
-  },
-  "tokens": {
-    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  },
-  "csrfToken": "csrf-token-value"
-}
-```
-
-**Errors:** `400` invalid credentials · `401` authentication failed · `429` brute-force protection
-
----
-
-### POST /auth/refresh
-
-Rotate access token using a refresh token.
-
-**Request**
-
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-Alternatively, when using cookie mode the refresh token is read from the `refresh_token` cookie and the body can be empty `{}`.
-
-**Response `200`**
-
-```json
-{
-  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-**Errors:** `400` missing or expired refresh token
-
----
-
-### POST /auth/logout
-
-Revoke refresh token and clear cookies.
-
-**Request**
-
-```json
-{
-  "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-**Response `204`** — no body
-
----
-
-### POST /auth/magic-link
-
-Request a passwordless login link.
-
-**Request**
-
-```json
-{
-  "email": "john@example.com"
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "message": "If that email exists, a magic link has been sent."
-}
-```
-
-Always returns `200` to prevent email enumeration.
-
----
-
-### GET /auth/verify-magic?token=\<token\>
-
-Verify a magic link token and receive access tokens.
-
-| Query param | Required | Description |
-|-------------|----------|-------------|
-| `token` | Yes | Token from the magic link email |
-| `use_cookies` | No | `true` to receive tokens in cookies |
-
-**Response `200`** — same shape as login response
-
-**Errors:** `400` invalid or expired token
-
----
-
-### GET /auth/verify-email?token=\<token\>
-
-Confirm an email verification token.
-
-**Response `200`**
-
-```json
-{
-  "message": "Email verified successfully."
-}
-```
-
-**Errors:** `400` invalid or expired token
-
----
-
-### POST /auth/forgot-password
-
-Send a password reset link.
-
-**Request**
-
-```json
-{
-  "email": "john@example.com"
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "message": "If that email exists, a reset link has been sent."
-}
-```
-
-Rate limited: 3 requests per 15 minutes.
-
----
-
-### POST /auth/reset-password
-
-Set a new password using a reset token.
-
-**Request**
-
-```json
-{
-  "token": "reset-token-from-email",
-  "newPassword": "NewSecurePass456!"
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "message": "Password reset successful."
-}
-```
-
-**Errors:** `400` invalid token or password does not meet requirements
-
----
-
-### GET /auth/google
-
-Initiates Google OAuth flow. Redirects the browser to Google. No request body.
-
-**Response `302`** — redirect to Google
-
----
-
-### GET /auth/google/callback
-
-Handles Google OAuth redirect. Returns tokens in cookies.
-
-**Response `200`**
-
-```json
-{
-  "user": {
-    "id": 1,
-    "name": "John Doe",
-    "email": "john@example.com"
-  },
-  "csrfToken": "csrf-token-value"
+  "accessToken": "eyJhbGci...",
+  "refreshToken": "eyJhbGci..."
 }
 ```
 
 ---
 
-### POST /auth/mfa/setup _(requires JWT)_
+#### `POST /auth/refresh`
 
-Generate a TOTP secret and QR code.
+Exchange a refresh token for a new access token.
 
-**Response `200`**
+**Request body:**
+
+```json
+{ "refreshToken": "eyJhbGci..." }
+```
+
+**Response `200`:**
+
+```json
+{ "accessToken": "eyJhbGci..." }
+```
+
+---
+
+#### `POST /auth/logout`
+
+Revoke the current refresh token. Requires `Authorization` header.
+
+**Response `200`:** `{ "message": "Logged out successfully" }`
+
+---
+
+#### `POST /auth/forgot-password`
+
+Send a password-reset email.
+
+**Request body:** `{ "email": "user@example.com" }`
+
+**Response `200`:** `{ "message": "Password reset email sent" }`
+
+---
+
+#### `POST /auth/reset-password`
+
+**Request body:**
 
 ```json
 {
-  "secret": "JBSWY3DPEHPK3PXP",
-  "otpauthUrl": "otpauth://totp/ClipCash:john@example.com?secret=JBSWY3DPEHPK3PXP&issuer=ClipCash",
-  "qrCode": "data:image/png;base64,..."
+  "token": "<reset-token-from-email>",
+  "password": "NewP@ssw0rd!"
+}
+```
+
+**Response `200`:** `{ "message": "Password updated successfully" }`
+
+---
+
+### Users
+
+All user endpoints require `Authorization: Bearer <token>`.
+
+#### `GET /users/me`
+
+Returns the authenticated user's profile, including a masked `stellarPublicKey`.
+
+**Response `200`:**
+
+```json
+{
+  "id": 1,
+  "email": "user@example.com",
+  "name": "Jane Doe",
+  "role": "user",
+  "stellarPublicKey": "GABF...KJ93XD",
+  "walletType": "custodial",
+  "showOnLeaderboard": false
 }
 ```
 
 ---
 
-### POST /auth/mfa/enable _(requires JWT)_
+#### `POST /users/wallet/create`
 
-Enable MFA after verifying the setup code.
+Generate a custodial Stellar wallet for the authenticated user.
 
-**Request**
-
-```json
-{
-  "code": "123456"
-}
-```
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
-  "enabled": true
+  "stellarPublicKey": "GABF...KJ93XD",
+  "walletType": "custodial"
 }
 ```
 
-**Errors:** `400` invalid verification code
+**Response `409`:** Wallet already exists.
 
 ---
 
-### POST /auth/mfa/disable _(requires JWT)_
+### Videos
 
-Disable MFA for the authenticated user.
+All video endpoints require `Authorization: Bearer <token>`.
 
-**Response `200`**
-
-```json
-{
-  "enabled": false
-}
-```
-
----
-
-## 3. Videos
-
-All video endpoints require `Authorization: Bearer <accessToken>`.
-
-### GET /videos
+#### `GET /videos`
 
 List videos for the authenticated user.
 
-**Response `200`**
-
-```json
-{
-  "message": "Videos endpoint"
-}
-```
-
-> Endpoint is present; full pagination will be added in a future release.
+**Response `200`:** Array of video objects.
 
 ---
 
-### POST /videos/upload
-
-Upload a video file for clip generation. Uses `multipart/form-data`.
-
-**Request** (`Content-Type: multipart/form-data`)
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `file` | binary | Yes | `.mp4`, `.mov`, `.avi`, `.webm` — max 500 MB |
-| `title` | string | No | Optional video title |
-
-**Response `202`**
-
-```json
-{
-  "jobId": "job_abc123xyz",
-  "videoId": 123,
-  "status": "accepted",
-  "message": "Video upload accepted and queued for processing",
-  "estimatedProcessingTime": 120
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `jobId` | string | BullMQ job ID for status polling |
-| `videoId` | number | Database ID assigned to the video |
-| `status` | `"accepted"` \| `"rejected"` | Upload acceptance status |
-| `estimatedProcessingTime` | number | Seconds (approximate) |
-
-**Errors:** `400` invalid file format or no file uploaded · `401` unauthorized
-
----
-
-### POST /videos/:id/cancel
+#### `POST /videos/:id/cancel`
 
 Cancel ongoing clip generation for a video.
 
-**Response `200`**
+**Path params:** `id` — Video ID (integer)
 
-```json
-{
-  "message": "Video processing cancelled",
-  "videoId": "123"
-}
-```
+**Response `200`:** `{ "message": "Video <id> processing has been cancelled" }`
 
-**Errors:** `401` unauthorized · `404` video not found
+**Response `400`:** Video not in `pending` or `processing` state.
+
+**Response `404`:** Video not found.
 
 ---
 
-## 4. Clips
+### Clips
 
-All clips endpoints require `Authorization: Bearer <accessToken>`.
+All clip endpoints require `Authorization: Bearer <token>`.
 
-### POST /clips/generate
+#### `GET /clips`
 
-Enqueue a clip-generation job. Returns a job ID immediately; processing is asynchronous. Listen for progress via the [WebSocket gateway](#16-websocket-gateway).
+List clips with pagination and optional filtering.
 
-Limited to **5 active jobs** per user (returns `429` when exceeded).
+**Query parameters:**
 
-**Request**
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `videoId` | integer (string) | — | Filter to a specific source video |
+| `page` | integer | `1` | Page number (1-based) |
+| `limit` | integer | `20` | Results per page (1–100) |
+| `sortBy` | string | `createdAt` | `viralityScore` \| `createdAt` \| `duration` |
+| `order` | string | `desc` | `asc` \| `desc` |
 
-```json
-{
-  "videoId": "123",
-  "inputPath": "/tmp/uploads/source.mp4",
-  "outputPath": "/tmp/clips/clip-123-10-40.mp4",
-  "startTime": 10.5,
-  "endTime": 40.0,
-  "positionRatio": 0.15,
-  "videoDuration": 600,
-  "transcript": "This is the most exciting part of the video",
-  "title": "Game-winning goal",
-  "clipId": null,
-  "existingViralityScore": null,
-  "royaltyBps": 1000
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `videoId` | string | Yes | ID of the source video |
-| `inputPath` | string | Yes | Absolute path to the source video file |
-| `outputPath` | string | Yes | Desired output path for the clip |
-| `startTime` | number | Yes | Start time in seconds (≥ 0) |
-| `endTime` | number | Yes | End time in seconds (> `startTime`); duration must be 5–300 s |
-| `positionRatio` | number | Yes | Relative position in source video (0–1) |
-| `videoDuration` | number | No | Full source video duration in seconds |
-| `transcript` | string | No | Transcript text for the clip segment |
-| `title` | string | No | Clip title |
-| `clipId` | number | No | Existing clip ID when regenerating |
-| `existingViralityScore` | number | No | Score to preserve when regenerating |
-| `royaltyBps` | number | No | NFT royalty in BPS (0–1500); default `1000` (10%) |
-
-**Response `201`**
-
-```json
-{
-  "jobId": "bull:clip-generation:1234",
-  "status": "queued"
-}
-```
-
-**Errors:** `400` invalid data · `429` queue rate limit exceeded
-
----
-
-### GET /clips
-
-List clips with optional filtering and sorting.
-
-| Query param | Type | Default | Description |
-|-------------|------|---------|-------------|
-| `videoId` | string | — | Filter to a specific source video |
-| `sort` | string | `viralityScore:desc` | Combined sort: `field:order` (e.g. `createdAt:asc`) |
-| `sortBy` | string | — | Legacy: `viralityScore` \| `createdAt` \| `duration` |
-| `order` | string | — | Legacy: `asc` \| `desc` |
-| `page` | integer | `1` | Page number |
-| `limit` | integer | `20` | Items per page |
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
   "data": [
     {
-      "id": "123-10.5-40.0",
-      "videoId": "123",
-      "userId": "1",
-      "startTime": 10.5,
-      "endTime": 40.0,
-      "duration": 30,
-      "positionRatio": 0.15,
-      "transcript": "This is the most exciting part...",
-      "viralityScore": 87.5,
-      "clipUrl": "https://res.cloudinary.com/example/video/upload/v1/clip.mp4",
-      "thumbnail": "https://res.cloudinary.com/example/image/upload/v1/clip.jpg",
-      "status": "success",
-      "error": null,
+      "id": 42,
+      "videoId": 7,
+      "clipUrl": "https://res.cloudinary.com/demo/video/upload/clip-42.mp4",
+      "thumbnail": "https://res.cloudinary.com/demo/image/upload/clip-42-thumb.jpg",
+      "title": "Epic moment",
+      "caption": "#viral #shorts",
+      "startTime": 12.5,
+      "endTime": 42.0,
+      "duration": 29.5,
+      "viralityScore": 0.87,
+      "royaltyBps": 1000,
       "selected": false,
       "postStatus": null,
-      "caption": "Game-winning goal 🎬",
-      "royaltyBps": 1000,
-      "mintAddress": null,
-      "mintedAt": null,
       "nftStatus": "none",
-      "createdAt": "2026-06-01T12:00:00.000Z",
-      "updatedAt": "2026-06-01T12:01:00.000Z"
+      "status": "ready",
+      "createdAt": "2026-08-28T12:00:00.000Z",
+      "updatedAt": "2026-08-28T12:00:00.000Z"
     }
   ],
-  "total": 42,
-  "page": 1,
-  "limit": 20
+  "meta": {
+    "total": 47,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 3
+  }
 }
 ```
 
-**Clip object fields**
+---
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `id` | string | Clip ID |
-| `videoId` | string | Source video ID |
-| `userId` | string | Owner user ID |
-| `startTime` | number | Start time in seconds |
-| `endTime` | number | End time in seconds |
-| `duration` | number | Actual clip duration in seconds |
-| `positionRatio` | number | 0–1 position in source video |
-| `viralityScore` | number \| null | AI engagement score (0–100); null until generated |
-| `clipUrl` | string \| null | Cloudinary CDN URL for the clip video |
-| `thumbnail` | string \| null | Cloudinary CDN URL for the thumbnail |
-| `status` | string | `pending` \| `processing` \| `success` \| `failed` \| `upload_failed` \| `upload_processed` |
-| `selected` | boolean | Whether the user has curated this clip |
-| `postStatus` | string \| object \| null | `pending` \| `posted` \| `failed`, or platform-specific JSON |
-| `caption` | string \| null | Auto-generated caption; editable by user |
-| `royaltyBps` | number \| null | NFT royalty in BPS (0–1500); default 1000 |
-| `mintAddress` | string \| null | On-chain token ID after successful mint |
-| `mintedAt` | string \| null | ISO timestamp of confirmed on-chain mint |
-| `nftStatus` | string | `none` \| `minting` \| `minted` \| `failed` |
+#### `GET /clips/:id`
+
+Fetch a single clip by ID.
+
+**Response `200`:** Single clip object (same shape as list items).
+
+**Response `404`:** Clip not found.
 
 ---
 
-### GET /clips/:id
+#### `POST /clips/generate`
 
-Get a single clip by ID.
+Enqueue a clip generation job.
 
-**Response `200`** — single clip object (same shape as above)
+**Request body:**
 
-**Errors:** `404` clip not found
+```json
+{
+  "videoId": "7",
+  "platforms": ["tiktok", "instagram"]
+}
+```
+
+**Response `201`:** `{ "jobId": "abc123", "message": "Clip generation queued" }`
+
+**Response `429`:** Too many active jobs (max 5 per user).
 
 ---
 
-### POST /clips/bulk-update
+#### `POST /clips/bulk-update`
 
-Bulk-update `selected`, `postStatus`, `caption`, or `royaltyBps` for multiple clips in one transaction. All clip IDs must belong to the requesting user.
+Bulk update `selected`, `postStatus`, `caption`, or `royaltyBps` for multiple clips.
 
-**Request**
+**Request body:**
 
 ```json
 {
   "clipIds": [1, 2, 3],
   "updates": {
-    "selected": true,
-    "postStatus": "pending",
-    "caption": "Check out this clip! 🎬",
-    "royaltyBps": 800
+    "selected": true
   }
 }
 ```
 
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `clipIds` | number[] | Yes | Non-empty array of integer clip IDs |
-| `updates.selected` | boolean | No | Mark clips as curated/selected |
-| `updates.postStatus` | string \| object | No | `pending` \| `posted` \| `failed` or platform-specific JSON |
-| `updates.caption` | string | No | Override auto-generated caption |
-| `updates.royaltyBps` | number | No | NFT royalty in BPS (0–1500) |
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
-  "updated": 3,
+  "updatedCount": 3,
   "notFoundIds": []
 }
 ```
 
 ---
 
-### POST /clips/bulk-delete
+#### `POST /clips/bulk-delete`
 
-Soft-delete multiple rejected clips.
+Delete multiple clips (and their Cloudinary assets) owned by the authenticated user.
 
-**Request**
+**Request body:**
+
+```json
+{ "clipIds": [4, 5, 6] }
+```
+
+**Response `200`:**
 
 ```json
 {
-  "clipIds": [4, 5, 6]
+  "deleted": 3,
+  "skipped": 0,
+  "skippedIds": []
 }
 ```
 
-**Response `200`**
-
-```json
-{
-  "deleted": 3
-}
-```
+**Response `403`:** None of the clips belong to the requesting user.
 
 ---
 
-### POST /clips/:id/regenerate
+#### `POST /clips/:id/regenerate`
 
-Re-run FFmpeg cut for a single clip using its original timestamps.
+Re-run FFmpeg for a clip using its original timestamps and upload a new version to Cloudinary.
 
-Limited to **5 active jobs** per user.
-
-**Response `200`**
-
-```json
-{
-  "jobId": "bull:clip-generation:5678",
-  "status": "queued"
-}
-```
-
-**Errors:** `404` clip not found · `429` queue rate limit exceeded
+**Response `200`:** Updated clip object with new `clipUrl` and `thumbnail`.
 
 ---
 
-### PATCH /clips/:id/caption
+#### `PATCH /clips/:id/caption`
 
-Update the auto-generated caption for a clip.
+Update a clip's caption.
 
-**Request**
+**Request body:** `{ "caption": "#viral #gaming" }`
 
-```json
-{
-  "caption": "My custom caption for TikTok 🚀"
-}
-```
-
-**Response `200`** — updated clip object
-
-**Errors:** `400` caption missing or not a string · `404` clip not found
+**Response `200`:** Updated clip object.
 
 ---
 
-### PATCH /clips/:id/royalty
+#### `PATCH /clips/:id/royalty`
 
-Configure the NFT royalty for a clip before minting.
+Set the NFT royalty in basis points (BPS) for a clip. Range: 0–1500 (0–15%). Default: 1000 (10%).
 
-**Request**
+**Request body:**
 
 ```json
-{
-  "royaltyBps": 800
-}
+{ "royaltyBps": 750 }
 ```
 
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `royaltyBps` | number | Yes | 0–1500 BPS (0–15%); defaults to `1000` when omitted |
+**Response `200`:**
 
-**Response `200`** — updated clip object
+```json
+{ "id": 42, "royaltyBps": 750 }
+```
 
-**Errors:** `400` invalid royaltyBps · `403` not the clip owner · `404` clip not found
+**Response `400`:** `royaltyBps` out of range.
+
+**Response `403`:** Clip not owned by the requesting user.
 
 ---
 
-## 5. Wallets
+### Wallets
 
-All wallet endpoints require `Authorization: Bearer <accessToken>`.
+All wallet endpoints require `Authorization: Bearer <token>`.
 
-> Wallet addresses are **partially masked** in all responses. Only the last 6 characters are shown (e.g. `******KPRQ6A`).
+> Wallet addresses are **partially masked** in all responses (e.g. `GABF...KJ93XD`).
 
-### POST /wallets/connect
+#### `GET /wallets`
 
-Connect or re-activate a wallet for the authenticated user. If a wallet with the same address + chain already exists it is re-activated.
+List all wallets for the authenticated user.
 
-Rate limited: 10 requests / 60 s.
-
-**Request**
-
-```json
-{
-  "address": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "chain": "stellar",
-  "type": "freighter",
-  "publicKey": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "signature": "abc123==",
-  "signedMessage": "Connect ClipCash wallet 1719266696836"
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `address` | string | Yes | Wallet address for the chosen chain |
-| `chain` | string | No | `stellar` \| `solana` \| `base`; defaults to `stellar` |
-| `type` | string | Yes | `freighter` \| `lobstr` \| `albedo` \| `phantom` \| `solflare` \| `backpack` \| `metamask` \| `coinbase` \| `walletconnect` |
-| `publicKey` | string | Yes | Stellar ED25519 public key — starts with `G`, exactly 56 Base32 chars |
-| `signature` | string | Yes | Base64-encoded signature of `signedMessage` |
-| `signedMessage` | string | Yes | The plaintext nonce that was signed (proves key ownership) |
-
-**Response `200`**
-
-```json
-{
-  "id": 7,
-  "address": "******UHTZF3",
-  "chain": "stellar",
-  "type": "freighter",
-  "connectedAt": "2026-06-01T12:00:00.000Z"
-}
-```
-
-**Errors:** `400` invalid data or signature verification failed
-
----
-
-### GET /wallets
-
-List all active wallets for the authenticated user.
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 [
   {
-    "id": 7,
-    "address": "******UHTZF3",
+    "id": 1,
+    "address": "GABF...KJ93XD",
     "chain": "stellar",
     "type": "freighter",
-    "connectedAt": "2026-06-01T12:00:00.000Z"
+    "connectedAt": "2026-08-01T10:00:00.000Z"
   }
 ]
 ```
 
 ---
 
-### GET /wallets/:id
+#### `GET /wallets/:id`
 
-Get a single wallet by ID. The wallet must belong to the authenticated user.
+Get a single wallet by ID.
 
-**Response `200`**
+**Response `200`:** Single wallet object.
 
-```json
-{
-  "id": 7,
-  "address": "******UHTZF3",
-  "chain": "stellar",
-  "type": "freighter",
-  "connectedAt": "2026-06-01T12:00:00.000Z"
-}
-```
-
-**Errors:** `404` wallet not found
+**Response `404`:** Wallet not found or belongs to another user.
 
 ---
 
-### GET /wallets/:id/balance
+#### `GET /wallets/:id/balance`
 
-Get the current native XLM balance for a wallet.
+Get the current XLM balance for a wallet.
 
-Rate limited: 30 requests / 60 s.
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
@@ -836,1137 +502,515 @@ Rate limited: 30 requests / 60 s.
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `balance` | number | Available XLM balance |
-| `warning` | boolean | `true` when balance is below 2 XLM (may cause mint failures) |
-
-**Errors:** `400` invalid wallet address · `404` wallet not found or Stellar account does not exist · `500` Horizon network request failed
+`warning: true` when balance is below the 2 XLM threshold required for NFT minting.
 
 ---
 
-### DELETE /wallets/:id
+#### `POST /wallets/connect`
 
-Soft-delete (disconnect) a wallet. Blocked when the wallet has pending payouts or active NFTs.
+Connect a new wallet.
 
-Rate limited: 10 requests / 60 s.
-
-**Response `200`**
+**Request body:**
 
 ```json
 {
-  "message": "Wallet disconnected successfully",
-  "walletId": 7
+  "address": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "chain": "stellar",
+  "type": "freighter",
+  "signature": "<signed-challenge>"
 }
 ```
 
-**Errors:** `400` pending payouts or active NFTs exist · `409` wallet already disconnected · `404` wallet not found
+**Response `200`:** Connected wallet object.
 
 ---
 
-## 6. NFT Minting
+#### `DELETE /wallets/:id`
 
-### Clip Curation and Mint Flow
+Disconnect (soft-delete) a wallet. Blocked if active NFTs or pending payouts exist.
 
-The typical frontend workflow for minting a clip as an NFT:
+**Response `200`:** `{ "message": "Wallet disconnected successfully", "walletId": 1 }`
 
-1. **Curate** — User reviews clips from `GET /clips` and selects the best ones via `POST /clips/bulk-update`.
-2. **Set royalty** _(optional)_ — Call `PATCH /clips/:id/royalty` to configure the creator royalty (0–1500 BPS).
-3. **Prepare mint** — Call `POST /nfts/prepare-mint` to receive an unsigned Soroban transaction XDR.
-4. **Sign** — The frontend passes the XDR to Freighter or Albedo for user signing. No private keys leave the browser.
-5. **Confirm mint** — Call `POST /nfts/confirm-mint` with the clip ID and on-chain mint address to persist the result.
-6. **Verify ownership** _(optional)_ — Call `POST /nfts/verify-ownership` to verify on-chain ownership at any time.
-
-> Clips with `postStatus = "posted"` cannot be minted and return `400`.
+**Response `409`:** Wallet has pending payouts or active NFTs.
 
 ---
 
-### POST /nfts/mint _(requires JWT + NftMintGuard)_
+#### `GET /wallets/:address/nfts`
 
-Build metadata, upload to IPFS if needed, and mint in one call.
+List NFT token IDs owned by a Stellar wallet address. Public endpoint — no auth required.
 
-Rate limited: 5 requests / 60 s.
+**Query parameters:** `page` (default: 1), `limit` (default: 20, max: 100)
 
-**Request**
-
-```json
-{
-  "clipId": 42,
-  "creatorWallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "metadataUri": "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-  "royaltyBps": 1000,
-  "creatorLabel": "Creator",
-  "royaltyDescription": "10% creator royalty + 2% platform fee on every secondary sale."
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `clipId` | number | Yes | Integer clip ID (≥ 1) |
-| `creatorWallet` | string | Yes | Stellar wallet address of the NFT creator |
-| `metadataUri` | string | No | IPFS / Arweave URI; built automatically when omitted |
-| `royaltyBps` | number | No | Creator royalty in BPS (0–1500); default `1000` (10%) |
-| `creatorLabel` | string | No | Human-readable label for creator royalty recipient |
-| `royaltyDescription` | string | No | Description of royalty arrangement for NFT metadata |
-
-**Response `201`**
+**Response `200`:**
 
 ```json
 {
-  "clipId": "42",
-  "creatorWallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "metadataUri": "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
-  "royaltyBps": 1000,
-  "royalties": [
-    { "wallet": "GC6XOTK6L...UHTZF3", "bps": 1000, "label": "creator" },
-    { "wallet": "GPLATFORM...ABCD12", "bps": 100,  "label": "platform" }
-  ],
-  "status": "minted"
+  "address": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "tokenIds": [42, 51, 99],
+  "total": 3,
+  "page": 1,
+  "limit": 20,
+  "hasNextPage": false
 }
 ```
-
-**Errors:** `400` invalid payload · `403` mint guard rejected
 
 ---
 
-### POST /nfts/prepare-mint _(requires JWT)_
+### Earnings
 
-Prepare an unsigned Soroban mint transaction and return XDR for client-side signing.
+#### `GET /earnings` 🔒
 
-Rate limited: 5 requests / 60 s.
+Get the authenticated user's earnings with optional date filtering.
 
-**Request**
+**Query parameters:** `startDate` (ISO 8601), `endDate` (ISO 8601)
 
-```json
-{
-  "clipId": 42,
-  "walletAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `clipId` | number | Yes | Integer clip ID (≥ 1) |
-| `walletAddress` | string | Yes | Stellar wallet that will sign the transaction |
-
-**Response `201`**
-
-```json
-{
-  "xdr": "AAAAAgAAAAA...",
-  "clipId": 42,
-  "metadataUri": "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG"
-}
-```
-
-Pass `xdr` to the user's Freighter/Albedo wallet for signing, then call `POST /nfts/confirm-mint`.
-
-**Errors:** `400` invalid clip or wallet · `403` caller does not own the clip · `401` unauthorized
+**Response `200`:** Array of earning records with clip titles.
 
 ---
 
-### POST /nfts/confirm-mint _(requires JWT)_
+#### `GET /earnings/aggregate` 🔒
 
-Record a completed on-chain NFT mint. Call this after the user signs and submits the transaction.
+Get aggregated earnings totals.
 
-Rate limited: 10 requests / 60 s.
-
-**Request**
+**Response `200`:**
 
 ```json
 {
-  "clipId": 42,
-  "mintAddress": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4"
+  "totalAmount": 1500.00,
+  "totalAmountInBaseCurrency": 1500.00,
+  "baseCurrency": "USD",
+  "count": 42
 }
 ```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `clipId` | number | Yes | Clip ID that was minted |
-| `mintAddress` | string | Yes | On-chain contract token identifier |
-
-**Response `200`**
-
-```json
-{
-  "id": 42,
-  "mintAddress": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4",
-  "mintedAt": "2026-06-01T12:05:00.000Z",
-  "nftStatus": "minted"
-}
-```
-
-**Errors:** `400` clip already minted or invalid request · `404` clip not found
 
 ---
 
-### POST /nfts/verify-ownership
+#### `GET /earnings/leaderboard`
 
-Verify on-chain NFT ownership via the Soroban `owner_of` contract method. Does not require authentication.
+Public leaderboard of top earning creators who have opted in.
 
-**Request**
+**Query parameters:** `limit` (default: 100, max: 500)
 
-```json
-{
-  "mintAddress": "42",
-  "walletAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
-}
-```
-
-**Response `200`**
-
-```json
-{
-  "valid": true
-}
-```
-
-When the wallet does not own the token:
-
-```json
-{
-  "valid": false,
-  "error": "NFT is not owned by the specified wallet"
-}
-```
-
-**Errors:** `400` invalid address format · `404` token not found on-chain · `500` Soroban RPC failure
-
----
-
-### GET /nfts/:clipId/metadata
-
-Get OpenSea-compatible NFT metadata for a clip. Does not require authentication.
-
-**Response `200`**
-
-```json
-{
-  "name": "Game-winning goal",
-  "description": "ClipCash generated clip 42",
-  "image": "https://cdn.example.com/thumbs/42.jpg",
-  "animation_url": "https://cdn.example.com/clips/42.mp4",
-  "seller_fee_basis_points": 1000
-}
-```
-
-**Errors:** `404` clip not found or not ready (missing `clipUrl`)
-
----
-
-### GET /nfts/:mintAddress/royalty _(requires JWT)_
-
-Query on-chain royalty info for a minted NFT. Results are cached in Redis for 5 minutes.
-
-**Response `200`**
-
-```json
-{
-  "royaltyBps": 1000,
-  "recipient": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
-}
-```
-
-**Errors:** `404` royalty data not found for the given mint address
-
----
-
-## 7. Payouts
-
-All payout endpoints require `Authorization: Bearer <accessToken>`.
-
-### Payout Lifecycle
-
-```
-pending → pending_approval → approved → processing → completed
-                                      ↘ failed
-       ↘ canceled  (user-initiated before approval)
-       ↘ rejected  (admin-initiated)
-```
-
-### POST /payouts/request
-
-Request a creator payout.
-
-**Request**
-
-```json
-{
-  "amount": 100.0,
-  "currency": "USD",
-  "method": "stellar"
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `amount` | number | Yes | Minimum `0.01`; must meet `MIN_PAYOUT_USD` (default 5 USD) |
-| `currency` | string | Yes | Currency code (e.g. `"USD"`) |
-| `method` | string | Yes | `"fiat"` \| `"stellar"` |
-
-**Response `201`**
-
-```json
-{
-  "id": 15,
-  "amount": 100.0,
-  "currency": "USD",
-  "method": "stellar",
-  "status": "pending",
-  "onChainTxHash": null,
-  "createdAt": "2026-06-01T12:00:00.000Z"
-}
-```
-
-**Errors:** `400` invalid request or insufficient balance · `409` pending payout already exists
-
----
-
-### POST /payouts/initiate-stellar
-
-Prepare an unsigned Stellar payout transaction XDR for client-side signing.
-
-**Request**
-
-```json
-{
-  "payoutId": 15,
-  "amount": 100.0
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `payoutId` | number | Yes | Integer payout record ID (≥ 1) |
-| `amount` | number | Yes | Payout amount (≥ 0.01) |
-
-**Response `201`**
-
-```json
-{
-  "payoutId": 15,
-  "xdr": "AAAAAgAAAADh1...",
-  "status": "pending"
-}
-```
-
-Pass `xdr` to the user's Stellar wallet for signing, then submit the signed transaction on-chain.
-
-**Errors:** `400` invalid request or insufficient balance · `404` payout not found
-
----
-
-### GET /payouts
-
-List payouts for the authenticated user.
-
-| Query param | Type | Description |
-|-------------|------|-------------|
-| `status` | string | Filter by status: `pending` \| `pending_approval` \| `approved` \| `processing` \| `completed` \| `failed` \| `rejected` \| `canceled` |
-
-**Response `200`**
-
-```json
-[
-  {
-    "id": 15,
-    "amount": 100.0,
-    "currency": "USD",
-    "method": "stellar",
-    "status": "completed",
-    "onChainTxHash": "a1b2c3d4e5f6...",
-    "confirmedAt": "2026-06-01T12:05:00.000Z",
-    "retryCount": 1,
-    "createdAt": "2026-06-01T12:00:00.000Z"
-  }
-]
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `onChainTxHash` | string \| null | Stellar transaction hash once submitted |
-| `confirmedAt` | string \| null | Timestamp when the transaction was confirmed on Horizon |
-| `retryCount` | number | Number of on-chain confirmation poll attempts |
-
----
-
-### GET /payouts/:id
-
-Get a specific payout by ID.
-
-**Response `200`**
-
-```json
-{
-  "id": 15,
-  "amount": 100.0,
-  "currency": "USD",
-  "method": "stellar",
-  "status": "pending",
-  "onChainTxHash": null,
-  "confirmedAt": null,
-  "retryCount": 0,
-  "stellarXdr": "AAAAAgAAAADh1...",
-  "createdAt": "2026-06-01T12:00:00.000Z"
-}
-```
-
-`stellarXdr` is present while the payout is awaiting a user signature.
-
-**Errors:** `404` payout not found
-
----
-
-### POST /payouts/:id/process
-
-Trigger the Stellar transfer and verify the on-chain transaction. Typically called by an admin or internal job.
-
-**Response `200`**
-
-```json
-{
-  "id": 15,
-  "status": "completed",
-  "onChainTxHash": "a1b2c3d4e5f6...",
-  "confirmedAt": "2026-06-01T12:05:00.000Z"
-}
-```
-
-**Errors:** `400` payout not approved or verification failed · `404` payout not found
-
----
-
-### POST /payouts/:id/cancel
-
-Cancel a pending payout request.
-
-**Response `200`**
-
-```json
-{
-  "id": 15,
-  "status": "canceled",
-  "createdAt": "2026-06-01T12:00:00.000Z"
-}
-```
-
-**Errors:** `400` payout cannot be canceled (already processing or completed) · `404` payout not found
-
----
-
-## 8. Subscriptions
-
-All subscription endpoints require `Authorization: Bearer <accessToken>`.
-
-### POST /subscriptions/create-stellar
-
-Create a Stellar payment intent for a subscription. Supports XLM, USDC, and custom Stellar assets.
-
-`POST /subscriptions/create-intent` is an alias for this endpoint.
-
-**Request**
-
-```json
-{
-  "plan": "pro",
-  "asset": "xlm",
-  "amount": 10,
-  "walletId": "wallet_abc123",
-  "destinationAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "memo": "sub-pro-2026-07",
-  "assetCode": null,
-  "assetIssuer": null
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `plan` | string | Yes | Subscription plan identifier (e.g. `"pro"`) |
-| `asset` | string | Yes | `"xlm"` \| `"usdc"` \| `"custom"` |
-| `amount` | number | Yes | Payment amount in the selected asset |
-| `walletId` | string | No | Connected Stellar wallet ID |
-| `destinationAddress` | string | No | Override destination Stellar address |
-| `memo` | string | No | Payment memo for tracking |
-| `assetCode` | string | Required when `asset = "custom"` | Stellar asset code (e.g. `"EURC"`) |
-| `assetIssuer` | string | Required when `asset = "custom"` | Issuing account public key |
-
-**Response `201`** (success) or **`202`** (pending confirmation)
-
-```json
-{
-  "id": "pi_01HXYZ",
-  "amount": 10,
-  "asset": "xlm",
-  "destination": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "memo": "sub-pro-2026-07",
-  "expiresAt": "2026-07-27T14:15:00.000Z",
-  "status": "pending",
-  "assetIssuer": null
-}
-```
-
-**Errors:** `400` invalid input or unsupported asset
-
----
-
-### GET /subscriptions/stellar/pending
-
-Get all pending Stellar payment intents for the authenticated user.
-
-**Response `200`** — array of payment intent objects (same shape as above)
-
----
-
-### POST /subscriptions/stellar/verify
-
-Verify a Stellar payment by transaction hash and activate the subscription if confirmed.
-
-| Query param | Required | Description |
-|-------------|----------|-------------|
-| `paymentIntentId` | Yes | Payment intent ID |
-| `transactionHash` | Yes | Stellar transaction hash |
-
-**Response `200`** — payment verified and subscription activated:
-
-```json
-{
-  "verified": true
-}
-```
-
-**Response `202`** — verification still pending:
-
-```json
-{
-  "verified": false
-}
-```
-
-**Errors:** `400` missing parameters · `404` payment intent not found
-
----
-
-## 9. Earnings
-
-All earnings endpoints require `Authorization: Bearer <accessToken>`, except `GET /earnings/leaderboard` which is public.
-
-### GET /earnings/metrics
-
-Get aggregated earnings dashboard metrics.
-
-| Query param | Type | Default | Description |
-|-------------|------|---------|-------------|
-| `currency` | string | `USD` | `USD` \| `XLM` |
-
-**Response `200`**
-
-```json
-{
-  "totalEarnings": 1250.50,
-  "currency": "USD",
-  "periodEarnings": 320.00,
-  "earningsByPlatform": {
-    "tiktok": 800.00,
-    "youtube": 450.50
-  },
-  "pendingPayouts": 50.00
-}
-```
-
-**Errors:** `400` invalid currency parameter
-
----
-
-### GET /earnings/export
-
-Export earnings data as a CSV file download.
-
-| Query param | Type | Description |
-|-------------|------|-------------|
-| `startDate` | string | Start date filter `YYYY-MM-DD` |
-| `endDate` | string | End date filter `YYYY-MM-DD` |
-| `format` | string | Export format — only `csv` is supported |
-
-**Response `200`** — CSV file with headers:
-
-```
-Content-Type: text/csv; charset=utf-8
-Content-Disposition: attachment; filename="earnings-2026-07.csv"
-```
-
-**Errors:** `400` unsupported format or invalid parameters
-
----
-
-### GET /earnings
-
-Get paginated earnings data.
-
-| Query param | Type | Default | Description |
-|-------------|------|---------|-------------|
-| `page` | integer | `1` | Page number |
-| `limit` | integer | `20` | Items per page |
-| `currency` | string | `USD` | `USD` \| `XLM` |
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
   "data": [
-    {
-      "id": 101,
-      "amount": 25.00,
-      "currency": "USD",
-      "platform": "tiktok",
-      "clipId": "42",
-      "createdAt": "2026-06-01T12:00:00.000Z"
-    }
+    { "rank": 1, "userId": 123, "username": "creator123", "totalEarnings": 5000 }
   ],
-  "total": 42,
-  "page": 1,
-  "limit": 20
+  "updatedAt": "2026-08-28T00:00:00.000Z"
 }
 ```
 
 ---
 
-### DELETE /earnings/:id
+#### `GET /earnings/leaderboard/rank` 🔒
 
-Soft-delete an earning record by ID.
+Get the authenticated user's leaderboard rank.
 
-**Response `200`**
-
-```json
-{
-  "id": 101,
-  "deletedAt": "2026-07-27T14:00:00.000Z"
-}
-```
-
-**Errors:** `400` invalid earning ID · `404` earning record not found
-
----
-
-### GET /earnings/leaderboard _(public)_
-
-Get the top earners leaderboard. No authentication required.
-
-| Query param | Type | Default | Max |
-|-------------|------|---------|-----|
-| `limit` | integer | `10` | `100` |
-
-**Response `200`**
-
-```json
-[
-  {
-    "rank": 1,
-    "userId": 5,
-    "totalEarnings": 4200.00,
-    "currency": "USD"
-  }
-]
-```
-
----
-
-### GET /earnings/by-platform
-
-Get earnings breakdown by social platform.
-
-**Response `200`**
+**Response `200`:**
 
 ```json
 {
-  "tiktok": 800.00,
-  "youtube": 450.50,
-  "instagram": 200.00
+  "rank": 5,
+  "totalEarnings": 2500,
+  "showOnLeaderboard": true
 }
 ```
 
 ---
 
-### GET /earnings/summary
+#### `POST /earnings/leaderboard/visibility` 🔒
 
-Get a summary of total earnings.
+Toggle leaderboard visibility for the authenticated user.
 
-| Query param | Type | Default | Description |
-|-------------|------|---------|-------------|
-| `currency` | string | `USD` | `USD` \| `XLM` |
+**Request body:** `{ "showOnLeaderboard": true }`
 
-**Response `200`**
+**Response `200`:** `{ "showOnLeaderboard": true }`
+
+---
+
+### Payouts
+
+All payout endpoints require `Authorization: Bearer <token>`.
+
+#### `GET /payouts/balance`
+
+Get available balance for payout. Formula: `totalEarned - totalPaidOut - totalPending`.
+
+**Response `200`:**
 
 ```json
 {
-  "total": 1250.50,
+  "available": 350.00,
+  "currency": "USD"
+}
+```
+
+---
+
+#### `POST /payouts/request`
+
+Request a payout.
+
+**Request body:**
+
+```json
+{
+  "amount": 100.00,
   "currency": "USD",
-  "periodStart": "2026-06-01T00:00:00.000Z",
-  "periodEnd": "2026-07-27T00:00:00.000Z"
+  "method": "stellar",
+  "walletId": 1
+}
+```
+
+**Response `201`:** Created payout object.
+
+**Response `400`:** Amount below minimum (`MIN_PAYOUT_USD`) or exceeds available balance.
+
+---
+
+#### `POST /payouts/initiate-stellar`
+
+Prepare a Stellar XDR transaction for signing.
+
+**Request body:**
+
+```json
+{
+  "payoutId": 5,
+  "amount": 100.00
+}
+```
+
+**Response `200`:**
+
+```json
+{
+  "id": 5,
+  "status": "pending",
+  "amount": 100.00,
+  "transactionId": "tx_...",
+  "stellarXdr": "AAAAAQAA..."
+}
+```
+
+**Response `400`:** Payout not in approvable state or amount mismatch.
+
+---
+
+#### `GET /payouts/:id/receipt`
+
+Download a payout receipt PDF (only available for completed payouts).
+
+**Response `200`:** PDF file stream (`application/pdf`).
+
+**Response `400`:** Payout not completed.
+
+**Response `404`:** Payout or receipt not found.
+
+---
+
+### NFT / Mint
+
+All mint endpoints require `Authorization: Bearer <token>`.
+
+#### `POST /nfts/:tokenId/burn`
+
+Prepare an unsigned burn transaction. The authenticated user must own the clip, and `walletAddress` must be the on-chain NFT owner and signer.
+
+```json
+{
+  "walletAddress": "GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF",
+  "refundRoyalties": true
+}
+```
+
+`refundRoyalties` defaults to `false`. When enabled, the response includes the configured royalty recipient and the current unclaimed balance as an exact decimal string in stroops. This is an estimate at preparation time; the contract must atomically re-read and refund the balance, clear it, emit `Refunded`, and prevent replay when the transaction executes.
+
+**Response `200`:** Unsigned transaction XDR, token ID, required signer, contract/network, refund option, recipient, and estimated refund amount.
+
+**Responses:** `400` invalid wallet or royalty data; `401` missing/invalid bearer JWT; `403` authenticated user or wallet is not the owner; `404` clip not found; `409` token is already burned or contract refund state conflicts.
+
+### NFT approvals (SEP-0050 draft interface)
+
+#### `POST /nfts/tokens/:tokenId/approve`
+
+Prepare an unsigned per-token approval transaction. `liveUntilLedger` is a required positive `u32` ledger number. Pass an empty or omitted `spenderAddress`, or the owner's own address, to revoke the approval.
+
+```json
+{
+  "ownerAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "spenderAddress": "GDESTINATION...",
+  "liveUntilLedger": 1234567
+}
+```
+
+#### `POST /nfts/approvals/operator`
+
+Prepare an unsigned collection-wide operator approval. Set `liveUntilLedger` to `0` to revoke; otherwise it is the expiry ledger.
+
+```json
+{
+  "ownerAddress": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "operatorAddress": "GDESTINATION...",
+  "liveUntilLedger": 1234567
+}
+```
+
+Both endpoints return an unsigned transaction XDR for the wallet to sign. They use the SEP-0050 approval function shapes; the configured deployed contract must expose the matching methods. SEP-0050 is a draft and contract-level compatibility is not verified in this repository.
+
+### NFT Freeze Administration
+
+Freeze administration endpoints require `x-admin-secret: <ADMIN_SECRET>`. The request body supplies the Stellar admin wallet that will sign the returned unsigned transaction; the NFT contract independently authorizes that wallet when the transaction is submitted.
+
+#### `POST /admin/nfts/:tokenId/freeze`
+
+Prepare an unsigned `freeze(token_id)` Soroban transaction for an existing NFT.
+
+#### `POST /admin/nfts/:tokenId/unfreeze`
+
+Prepare an unsigned `unfreeze(token_id)` Soroban transaction for a frozen NFT.
+
+Both POST requests use this body:
+
+```json
+{
+  "adminAddress": "GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
+}
+```
+
+**Response `200`:** Unsigned transaction XDR, action, token ID, contract ID, and network. The admin wallet must sign and submit the XDR before the on-chain state changes.
+
+**Response `403`:** Missing or invalid `x-admin-secret`. The Soroban contract also enforces contract-admin authorization when the signing wallet submits the transaction.
+
+**Response `404`:** Token ID is not minted.
+
+**Response `409`:** Freeze requested for an already-frozen NFT, or unfreeze requested for an unfrozen NFT.
+
+The Soroban contract source and WASM are maintained outside this repository. Deploy a contract version that stores the per-token freeze state, emits freeze/unfreeze events, exposes `is_frozen(token_id)`, and rejects transfers of frozen tokens before enabling these endpoints.
+
+#### `GET /nfts/:tokenId/freeze-status`
+
+Read the token's current on-chain freeze status. Returns `{ "tokenId": 42, "frozen": false }`; returns `404` when the token does not exist.
+
+#### `POST /nft/prepare-mint`
+
+Prepare a Soroban mint transaction XDR for client-side signing. The clip must:
+- not already be minted or minting
+- not have been auto-posted to a social platform
+
+**Request body:**
+
+```json
+{
+  "clipId": 42,
+  "creatorWallet": "GC6XOTK6...",
+  "royaltyBps": 1000
+}
+```
+
+**Response `200`:**
+
+```json
+{
+  "xdr": "AAAAAQAA...",
+  "contractId": "C...",
+  "clipId": 42
+}
+```
+
+**Response `400`:** Clip already posted to social — cannot mint.
+
+**Response `409`:** Clip already minted or minting.
+
+---
+
+#### `POST /nft/confirm-mint`
+
+Submit the signed Stellar XDR to complete the mint.
+
+**Request body:**
+
+```json
+{
+  "clipId": 42,
+  "signedXdr": "AAAAAQAA...",
+  "walletAddress": "GC6XOTK6..."
+}
+```
+
+**Response `200`:**
+
+```json
+{
+  "mintAddress": "token-id-on-chain",
+  "clipId": 42,
+  "status": "minted"
 }
 ```
 
 ---
 
-## 10. Users
+#### `POST /nft/batch-mint`
 
-All user endpoints require `Authorization: Bearer <accessToken>`.
+Mint multiple clips as NFTs in a single operation.
 
-### GET /users/me
-
-Get the current user's profile.
-
-**Response `200`**
+**Request body:**
 
 ```json
 {
-  "id": 1,
-  "name": "John Doe",
-  "email": "john@example.com",
-  "emailVerified": true,
-  "stellarPublicKey": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "walletType": "freighter",
-  "createdAt": "2026-01-01T00:00:00.000Z"
-}
-```
-
----
-
-### POST /users/wallet/create
-
-Generate a custodial Stellar wallet for the authenticated user. The backend holds the keys.
-
-**Response `200`**
-
-```json
-{
-  "stellarPublicKey": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
-}
-```
-
-**Errors:** `409` wallet already exists
-
----
-
-## 11. User Platforms
-
-All user-platform endpoints require `Authorization: Bearer <accessToken>`. The controller is available at both `/user-platforms` and `/user-platform`.
-
-### POST /user-platforms
-
-Connect a social media platform.
-
-**Request**
-
-```json
-{
-  "platform": "tiktok",
-  "accessToken": "tiktok-oauth-token",
-  "refreshToken": "tiktok-refresh-token",
-  "expiresAt": "2026-12-31T23:59:59.000Z"
-}
-```
-
-**Response `201`**
-
-```json
-{
-  "id": 3,
-  "platform": "tiktok",
-  "userId": 1,
-  "createdAt": "2026-06-01T12:00:00.000Z"
-}
-```
-
-**Errors:** `400` invalid input
-
----
-
-### GET /user-platforms
-
-List all connected social platforms for the authenticated user.
-
-**Response `200`** — array of platform connection objects
-
----
-
-### GET /user-platforms/platform/:platform
-
-Find a platform connection by platform name.
-
-**Response `200`** — platform connection object
-
-**Errors:** `404` platform not connected
-
----
-
-### GET /user-platforms/:id
-
-Get a platform connection by its database ID.
-
-**Response `200`** — platform connection object
-
-**Errors:** `404` not found
-
----
-
-### PUT /user-platforms/:id
-
-Update an existing platform connection (e.g. refresh an OAuth token).
-
-**Response `200`** — updated platform connection object
-
-**Errors:** `400` invalid input · `404` not found
-
----
-
-### DELETE /user-platforms/:id
-
-Disconnect (remove) a platform connection.
-
-**Response `204`** — no body
-
-**Errors:** `404` not found
-
----
-
-## 12. Transactions
-
-Requires `Authorization: Bearer <accessToken>`.
-
-### POST /transactions/send
-
-Send XLM from the user's custodial wallet. The backend builds, signs, and submits the Stellar transaction — the frontend only supplies the destination and amount.
-
-Use the `Idempotency-Key` header to safely retry without double-spending.
-
-Rate limited: 5 requests / 60 s.
-
-**Headers**
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `Authorization` | Yes | `Bearer <accessToken>` |
-| `Idempotency-Key` | No | Unique string to make retries safe |
-
-**Request**
-
-```json
-{
-  "destination": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
-  "amount": "10.5"
-}
-```
-
-| Field | Type | Required | Rules |
-|-------|------|----------|-------|
-| `destination` | string | Yes | Valid Stellar public key (`G...`, 56 chars) |
-| `amount` | string | Yes | Decimal string, 0.0000001–10 000 XLM, max 7 decimal places |
-
-**Limits**
-
-- Per-transaction maximum: **10 000 XLM**
-- Rolling 24-hour limit: **50 000 XLM**
-
-**Response `200`**
-
-```json
-{
-  "hash": "a1b2c3d4e5f6...",
-  "status": "submitted"
-}
-```
-
-**Errors:** `400` invalid destination or amount / self-send attempt · `404` no custodial wallet found · `422` daily volume limit reached · `429` rate limit exceeded
-
----
-
-## 13. Webhooks
-
-Webhook endpoints are **public** (no JWT required) but are protected by HMAC signature verification.
-
-### POST /webhooks/tiktok
-
-Receive TikTok webhook events.
-
-**Headers**
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `x-tiktok-signature` | Yes | TikTok HMAC signature of the payload |
-
-**Response `200`**
-
-```json
-{ "received": true }
-```
-
-**Errors:** `400` invalid signature or payload
-
----
-
-### POST /webhooks/youtube
-
-Receive YouTube PubSub webhook events.
-
-**Headers**
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `x-hub-signature-256` | Yes | YouTube HMAC-SHA256 signature |
-
-**Response `200`**
-
-```json
-{ "received": true }
-```
-
-**Errors:** `400` invalid signature or payload
-
----
-
-## 14. Health
-
-Health check endpoints are **public** (no JWT required).
-
-### GET /health/redis-memory
-
-Check Redis memory utilisation. Returns `503` when usage exceeds the 80% alert threshold.
-
-**Response `200`**
-
-```json
-{
-  "status": "ok",
-  "stats": {
-    "usedMemoryMb": 45.2,
-    "maxMemoryMb": 256.0,
-    "usagePercent": 17.7,
-    "isAboveThreshold": false,
-    "alert": null,
-    "unavailable": false
-  }
-}
-```
-
-**Response `503`** — degraded (same shape, `status: "degraded"`)
-
----
-
-### GET /health/redis
-
-Check Redis connection and round-trip latency.
-
-**Response `200`**
-
-```json
-{
-  "status": "ok",
-  "connected": true,
-  "latencyMs": 2
-}
-```
-
-**Response `503`** — Redis unreachable
-
----
-
-### GET /health/queues
-
-Queue health metrics for all BullMQ queues.
-
-**Response `200`**
-
-```json
-{
-  "status": "healthy",
-  "queues": [
-    {
-      "name": "clip-generation",
-      "waiting": 0,
-      "active": 1,
-      "completed": 120,
-      "failed": 3,
-      "failureRate": 0.024
-    }
-  ]
-}
-```
-
-**Response `503`** — one or more queues unhealthy
-
----
-
-### GET /health/queues/statistics
-
-Detailed BullMQ queue statistics.
-
-**Response `200`** — extended queue stats including processing times and failure analysis.
-
----
-
-## 15. Metrics
-
-Prometheus-compatible metrics endpoint. Protected by a static token, **not** JWT.
-
-### GET /metrics
-
-**Headers**
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `x-metrics-token` | Yes | Value of the `METRICS_TOKEN` environment variable |
-
-**Response `200`** — Prometheus text format
-
-Tracked metrics include:
-
-| Metric | Labels | Description |
-|--------|--------|-------------|
-| `clipcash_clips_generated_total` | `status=success\|failure` | Total clip generation attempts |
-| `clipcash_nft_mints_total` | `status=success\|failure` | Total NFT mint attempts |
-| `clipcash_job_queue_depth` | `queue=clip-generation` | Current queue depth |
-| `clipcash_http_request_duration_seconds` | `method, route, status_code` | HTTP request durations histogram |
-| `clipcash_stellar_rpc_errors_total` | — | Soroban RPC error count |
-| `clipcash_cloudinary_upload_errors_total` | — | Cloudinary upload error count |
-
-**Response `403`** — missing or invalid `x-metrics-token`
-
----
-
-## 16. WebSocket Gateway
-
-Real-time clip-generation progress events are delivered over Socket.IO.
-
-### Connection
-
-**Namespace:** `/clips`
-
-**URL (development):** `ws://localhost:3000/clips`
-
-### Authentication
-
-Pass a valid JWT using one of these methods at handshake time:
-
-```js
-// Option 1 — handshake auth object (recommended)
-const socket = io('/clips', {
-  auth: { token: '<accessToken>' }
-});
-
-// Option 2 — query param
-const socket = io('/clips?token=<accessToken>');
-
-// Option 3 — Authorization header (server-to-server)
-// Set handshake headers: { Authorization: 'Bearer <accessToken>' }
-```
-
-Once authenticated, the socket is automatically joined to the room `user:<userId>` and only receives events for that user's jobs.
-
-**`connected` event** (emitted by server on successful join):
-
-```json
-{ "room": "user:1" }
-```
-
-Unauthenticated clients are immediately disconnected.
-
----
-
-### Events Emitted by Server
-
-#### `clip.progress`
-
-Fired periodically during clip generation.
-
-```json
-{
-  "jobId": "bull:clip-generation:1234",
-  "videoId": "123",
-  "percent": 60,
-  "step": "ffmpeg_cut",
-  "currentClip": {
-    "id": "123-10.5-40.0",
-    "startTime": 10.5,
-    "endTime": 40.0,
-    "positionRatio": 0.15
-  }
-}
-```
-
-#### `clip.completed`
-
-Fired when a clip is successfully generated and uploaded.
-
-```json
-{
-  "jobId": "bull:clip-generation:1234",
-  "videoId": "123",
-  "clipId": "123-10.5-40.0",
-  "clipUrl": "https://res.cloudinary.com/example/video/upload/v1/clip.mp4",
-  "thumbnail": "https://res.cloudinary.com/example/image/upload/v1/clip.jpg",
-  "status": "success"
-}
-```
-
-#### `clip.failed`
-
-Fired when clip generation fails after all retries.
-
-```json
-{
-  "jobId": "bull:clip-generation:1234",
-  "videoId": "123",
-  "reason": "FFmpeg process exited with code 1",
-  "attemptsMade": 5
-}
-```
-
----
-
-## 17. Error Shape
-
-All API errors return a consistent JSON body:
-
-```json
-{
-  "statusCode": 400,
-  "message": "Descriptive error message",
-  "error": "Bad Request"
-}
-```
-
-Validation errors may return `message` as an array of strings:
-
-```json
-{
-  "statusCode": 400,
-  "message": [
-    "password must be at least 8 characters long",
-    "email must be an email"
+  "clips": [
+    { "clipId": 42, "royaltyBps": 1000 },
+    { "clipId": 43, "royaltyBps": 500 }
   ],
-  "error": "Bad Request"
+  "creatorWallet": "GC6XOTK6..."
 }
 ```
 
-### HTTP Status Code Reference
-
-| Status | Meaning |
-|--------|---------|
-| `200` | OK |
-| `201` | Created |
-| `202` | Accepted (async processing) |
-| `204` | No Content |
-| `400` | Validation error or business rule violation |
-| `401` | Missing or invalid JWT |
-| `403` | Forbidden (wrong user, missing role, or guard rejected) |
-| `404` | Resource not found |
-| `409` | Conflict (duplicate resource) |
-| `422` | Unprocessable Entity (limit exceeded) |
-| `429` | Rate limit exceeded |
-| `500` | Internal server error |
-| `503` | Service unavailable (Redis/queue unhealthy) |
+**Response `200`:** Array of mint results per clip.
 
 ---
 
-> **Interactive reference:** Swagger UI is available at `http://localhost:3000/api/docs` when running in development mode (`NODE_ENV !== production`).
-> The OpenAPI JSON spec is at `http://localhost:3000/api/docs-json` and can be imported into Postman or Insomnia.
+### Subscriptions
+
+#### `POST /subscriptions/stellar/create-intent`
+
+Create a Stellar payment intent for a subscription plan.
+
+**Request body:**
+
+```json
+{
+  "plan": "pro",
+  "walletAddress": "GC6XOTK6..."
+}
+```
+
+**Response `201`:** Payment intent with memo and destination address.
+
+---
+
+### Health & Metrics
+
+#### `GET /health`
+
+Overall health check (database, Redis, queue). No authentication required.
+
+**Response `200`:** Health status object.
+
+---
+
+#### `GET /metrics`
+
+Prometheus metrics. Protected by `x-metrics-token` header.
+
+**Response `200`:** Plain text Prometheus metrics.
+
+---
+
+## Workflows
+
+### Clip Curation Workflow
+
+A typical flow for creating and curating clips from a long video:
+
+```
+1. Upload / link video
+   POST /videos  →  { videoId: 7 }
+
+2. Trigger clip generation
+   POST /clips/generate  →  { jobId: "abc123" }
+   (Connect via WebSocket /clips-gateway to receive real-time progress events)
+
+3. List generated clips
+   GET /clips?videoId=7&sortBy=viralityScore&order=desc
+
+4. Select the best clips
+   POST /clips/bulk-update
+   { "clipIds": [42, 43, 45], "updates": { "selected": true } }
+
+5. Delete unwanted clips
+   POST /clips/bulk-delete
+   { "clipIds": [44, 46, 47] }
+
+6. (Optional) Customise royalty before minting
+   PATCH /clips/42/royalty
+   { "royaltyBps": 750 }
+
+7. Publish selected clips to social platforms
+   POST /clips/42/publish
+   { "platforms": ["tiktok", "instagram"] }
+```
+
+---
+
+### NFT Minting Workflow
+
+Mint a clip as an NFT on the Stellar Soroban network:
+
+```
+1. Ensure the clip is ready and NOT posted to social media
+   GET /clips/42
+   { nftStatus: "none", postStatus: null }
+
+2. Connect / verify wallet balance
+   GET /wallets/1/balance
+   { balance: 5.2, warning: false }
+
+3. Prepare the mint transaction (server builds Soroban XDR)
+   POST /nft/prepare-mint
+   { clipId: 42, creatorWallet: "GC6X...", royaltyBps: 1000 }
+   →  { xdr: "AAAAAQAA...", contractId: "C..." }
+
+4. User signs the XDR in browser with Freighter / Albedo wallet
+
+5. Submit the signed transaction to complete minting
+   POST /nft/confirm-mint
+   { clipId: 42, signedXdr: "AAAAAQAA...", walletAddress: "GC6X..." }
+   →  { mintAddress: "token-id", status: "minted" }
+```
+
+**Important constraints:**
+- A clip that has been auto-posted (`postStatus = "posted"`) **cannot** be minted. This is enforced at both the guard and service layer.
+- A clip can only be minted once. Attempting to mint a clip in `minting` or `minted` state returns `409 Conflict`.
+- The creator wallet must hold at least 2 XLM to cover Stellar fees. The guard pre-checks this and returns `400` if the balance is insufficient.
+
+---
+
+## Pagination
+
+List endpoints that return multiple records use a consistent pagination envelope:
+
+```json
+{
+  "data": [ ... ],
+  "meta": {
+    "total": 47,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 3
+  }
+}
+```
+
+**Query parameters:**
+
+| Param | Type | Default | Max | Description |
+|---|---|---|---|---|
+| `page` | integer | `1` | — | 1-based page number |
+| `limit` | integer | `20` | `100` | Items per page |
+
+If `limit > 100` or `limit < 1` the API returns `400 Bad Request`.
+
+---
+
+## API Versioning
+
+The ClipCash API does not currently use URL versioning. All endpoints are served from the root path (e.g. `GET /clips`, not `GET /v1/clips`).
+
+Breaking changes will be communicated via the changelog before being deployed.
+
+For Swagger/OpenAPI interactive documentation see:
+- **Development:** `http://localhost:3000/api/docs`
+- **OpenAPI JSON:** `http://localhost:3000/api/docs-json` or `openapi.json` (export with `npm run openapi:export`)

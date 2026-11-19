@@ -14,18 +14,26 @@ import { URL } from 'url';
 export class SlackNotificationService {
   private readonly logger = new Logger(SlackNotificationService.name);
   private readonly webhookUrl = process.env.SLACK_WEBHOOK_URL;
+  private readonly targetChannel =
+    process.env.SLACK_CHANNEL || process.env.SLACK_DEFAULT_CHANNEL;
 
   /**
    * Sends a message to Slack.
    * @param message The plain‑text message that will appear in the Slack channel.
+   * @param channel Optional override for the target Slack channel.
    */
-  async notify(message: string): Promise<void> {
+  async notify(message: string, channel?: string): Promise<void> {
     if (!this.webhookUrl) {
       this.logger.warn('SLACK_WEBHOOK_URL not set – Slack notification skipped');
       return;
     }
 
-    const payload = JSON.stringify({ text: message });
+    const payload = JSON.stringify({
+      text: message,
+      ...(channel || this.targetChannel
+        ? { channel: channel || this.targetChannel }
+        : {}),
+    });
     const url = new URL(this.webhookUrl);
 
     const options: https.RequestOptions = {
