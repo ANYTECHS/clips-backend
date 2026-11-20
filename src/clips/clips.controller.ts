@@ -86,6 +86,7 @@ export class ClipsController {
    * Rate-limited to 5 active jobs per user.
    */
   @Post('generate')
+  @HttpCode(HttpStatus.ACCEPTED)
   @UseGuards(QueueRateLimitGuard)
   @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
   @ApiOperation({
@@ -95,8 +96,11 @@ export class ClipsController {
       'Returns the BullMQ job ID immediately; processing happens asynchronously.',
   })
   @ApiResponse({
-    status: 201,
-    description: 'Clip generation job queued successfully',
+    status: 202,
+    description: 'Clip generation job accepted and queued for processing',
+    schema: {
+      example: { jobId: 'clip-job-123', delayed: false, delayMs: 0 },
+    },
   })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
   @ApiResponse({ status: 429, description: 'Too many active jobs (max 5)' })
