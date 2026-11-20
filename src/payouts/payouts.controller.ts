@@ -31,6 +31,8 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
+import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
+import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import {
   FeePreviewResponseDto,
   PayoutOnChainStatusResponseDto,
