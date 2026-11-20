@@ -1,6 +1,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsISO8601, IsOptional, IsString, Length } from 'class-validator';
+import { IsISO8601, IsOptional, IsString } from 'class-validator';
 import { TrimString } from '../../common/decorators/trim-string.decorator';
+import {
+  IsSupportedCurrency,
+  CURRENCY_API_PROPERTY_OPTIONAL,
+} from '../../common/validators/decorators';
 
 /**
  * Query filters for GET /earnings/daily (Issue #979).
@@ -23,12 +27,13 @@ export class DailyEarningsQueryDto {
   to?: string;
 
   @ApiPropertyOptional({
-    description: 'ISO 4217 currency filter (e.g. USD, XLM)',
+    ...CURRENCY_API_PROPERTY_OPTIONAL,
+    description: 'Filter by currency. Supported: USD, EUR, GBP, XLM, USDC.',
     example: 'USD',
   })
   @IsOptional()
   @TrimString()
   @IsString()
-  @Length(3, 3)
+  @IsSupportedCurrency()
   currency?: string;
 }

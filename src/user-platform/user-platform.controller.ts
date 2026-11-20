@@ -33,6 +33,7 @@ import {
   toUserPlatformResponseDto,
 } from './dto/user-platform-response.dto';
 import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
+import { ParsePositiveIntPipe } from '../common/pipes';
 
 @ApiTags('user-platforms')
 @ApiBearerAuth('access-token')
@@ -139,16 +140,17 @@ export class UserPlatformController {
     summary: 'Get platform by ID',
     description: 'Returns a specific platform connection by its ID',
   })
-  @ApiParam({ name: 'id', description: 'Platform connection ID' })
+  @ApiParam({ name: 'id', description: 'Positive integer platform connection ID', type: Number, example: 1 })
   @ApiResponse({
     status: 200,
     description: 'Platform connection',
     type: UserPlatformResponseDto,
   })
+  @ApiBadRequestResponse({ description: 'Invalid ID — must be a positive integer' })
   @ApiNotFoundResponse({ description: 'Platform connection not found' })
-  async findOne(@Request() req: any, @Param('id') id: string) {
+  async findOne(@Request() req: any, @Param('id', ParsePositiveIntPipe) id: number) {
     const found = await this.userPlatformService.findOne(
-      Number(id),
+      id,
       req.user.id,
     );
     return toUserPlatformResponseDto(found);
@@ -171,14 +173,14 @@ export class UserPlatformController {
       },
     },
   })
-  @ApiParam({ name: 'id', description: 'Platform connection ID' })
+  @ApiParam({ name: 'id', description: 'Positive integer platform connection ID', type: Number, example: 1 })
   @ApiResponse({
     status: 200,
     description: 'Platform connection updated',
     type: UserPlatformResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Validation failed: supplied fields must be non-empty strings',
+    description: 'Invalid ID or validation failed on supplied fields',
     type: ValidationErrorResponseDto,
     schema: {
       example: {
@@ -197,11 +199,11 @@ export class UserPlatformController {
   @ApiNotFoundResponse({ description: 'Platform connection not found' })
   async update(
     @Request() req: any,
-    @Param('id') id: string,
+    @Param('id', ParsePositiveIntPipe) id: number,
     @Body() data: UpdateUserPlatformDto,
   ) {
     const updated = await this.userPlatformService.update(
-      Number(id),
+      id,
       data,
       req.user.id,
     );
@@ -214,11 +216,12 @@ export class UserPlatformController {
     summary: 'Disconnect platform',
     description: 'Removes a social platform connection',
   })
-  @ApiParam({ name: 'id', description: 'Platform connection ID' })
+  @ApiParam({ name: 'id', description: 'Positive integer platform connection ID', type: Number, example: 1 })
   @ApiResponse({ status: 204, description: 'Platform disconnected' })
+  @ApiBadRequestResponse({ description: 'Invalid ID — must be a positive integer' })
   @ApiNotFoundResponse({ description: 'Platform connection not found' })
-  async remove(@Request() req: any, @Param('id') id: string) {
-    await this.userPlatformService.remove(Number(id), req.user.id);
+  async remove(@Request() req: any, @Param('id', ParsePositiveIntPipe) id: number) {
+    await this.userPlatformService.remove(id, req.user.id);
   }
 
   @Post('migrate')
