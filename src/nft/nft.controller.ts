@@ -1,21 +1,27 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   NotFoundException,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
+  Query,
   Req,
   UseGuards,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiQuery,
   ApiBody,
   ApiBearerAuth,
   ApiInternalServerErrorResponse,
@@ -23,39 +29,169 @@ import {
   ApiBadRequestResponse,
   ApiNotFoundResponse,
   ApiForbiddenResponse,
+  ApiConflictResponse,
   ApiOkResponse,
+  ApiServiceUnavailableResponse,
+  ApiTooManyRequestsResponse,
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
+import {
+  QueueRateLimitGuard,
+  QueueRateLimit,
+} from '../common/guards/queue-rate-limit.guard';
+import { ParseStellarAddressPipe } from '../common/pipes';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
 import { CreateMintPreparationDto } from './dto/prepare-mint.dto';
 import { ConfirmMintDto } from './dto/confirm-mint.dto';
+import { UploadClipMetadataDto } from './dto/upload-metadata.dto';
+import { BatchMintDto, BatchMintResponseDto } from './dto/batch-mint.dto';
+import {
+  UpdateTokenUriDto,
+  UpdateTokenUriResponseDto,
+  TokenUriOwnershipErrorDto,
+} from './dto/update-token-uri.dto';
+
 import {
   NftMetadataResponseDto,
-  NftMintResponseDto,
   NftOwnershipResultDto,
   NftPrepareMintResponseDto,
-  NftRoyaltyResponseDto,
+  NftUploadMetadataResponseDto,
+  NftMintConflictDto,
+  NftMintNotFoundDto,
+  NftPrepareMintBadRequestDto,
   VerifyNftOwnershipDto,
+  NftOwnerResponseDto,
+  WalletNftsResponseDto,
+  NftMintResponseDto,
 } from './dto/nft-swagger.dto';
 import {
   RoyaltyQueryResponseDto,
   RoyaltyNotFoundDto,
   RoyaltyUnauthorizedDto,
+  RoyaltyEstimateQueryDto,
+  RoyaltyEstimateResponseDto,
+  RoyaltyOverflowErrorDto,
 } from './dto/royalty-query.dto';
+import {
+  SetPlatformFeeDto,
+  SetDefaultRoyaltyDto,
+  AdminConfigTxResponseDto,
+  AdminConfigValueResponseDto,
+} from './dto/admin-config.dto';
+import {
+  ApproveNftDto,
+  SetApprovalForAllDto,
+  ApproveNftResponseDto,
+  SetApprovalForAllResponseDto,
+  GetApprovedResponseDto,
+  IsApprovedForAllResponseDto,
+  RevokeNftApprovalDto,
+  RevokeNftApprovalResponseDto,
+  RevokeAllNftApprovalsResponseDto,
+} from './dto/nft-approval.dto';
+import { AdminConfigService } from './admin-config.service';
+import { NftApprovalService } from './nft-approval.service';
+import {
+  BurnNftDto,
+  BurnNftResponseDto,
+  BurnForbiddenDto,
+  BurnNotFoundDto,
+} from './dto/burn-nft.dto';
+import {
+  RoyaltySplitsResponseDto,
+  UpdateRoyaltySplitsDto,
+  UpdateRoyaltySplitsResponseDto,
+  RoyaltySplitsValidationErrorDto,
+} from './dto/royalty-splits.dto';
+import {
+  ClaimRoyaltiesDto,
+  ClaimRoyaltiesResponseDto,
+  ClaimRoyaltiesInsufficientBalanceDto,
+} from './dto/claim-royalties.dto';
+import {
+  GetClaimableRoyaltiesResponseDto,
+  GetClaimableRoyaltiesQueryDto,
+} from './dto/get-claimable-royalties.dto';
+import {
+  RoyaltyClaimHistoryQueryDto,
+  RoyaltyClaimHistoryResponseDto,
+} from './dto/royalty-claim-history.dto';
+import { PrepareTransferDto, PrepareTransferResponseDto } from './dto/prepare-transfer.dto';
 import { NftMintService } from '../clips/nft-mint.service';
-import { NftMetadataService } from './nft-metadata.service';
+import {
+  collectClipPlatforms,
+  NftMetadataService,
+} from './nft-metadata.service';
 import { IpfsUploadService } from './ipfs-upload.service';
 import { RoyaltyQueryService, RoyaltyInfo } from './royalty-query.service';
 import { NftOwnershipVerificationService } from './nft-ownership-verification.service';
+import { NftOwnershipService } from './nft-ownership.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
-import { LoginGuard } from '../auth/guards/login.guard';
+import { MintSignatureVerificationService } from './mint-signature-verification.service';
+import {
+  MintStatusResponseDto,
+  MintStatusNotFoundDto,
+} from './dto/mint-status-response.dto';
+import {
+  MetadataValidationResponseDto,
+  ValidateNftMetadataDto,
+  MetadataValidationBadRequestDto,
+} from './dto/metadata-validation.dto';
 import { NftMintGuard } from './guards/nft-mint.guard';
+import { AdminGuard } from '../common/guards/admin.guard';
+import { Auth } from '../auth/decorators/auth.decorator';
+import { LoginGuard } from '../auth/guards/login.guard';
+import { ClaimRoyaltyService } from './claim-royalty.service';
+import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
+import { PrepareContractPauseDto } from './dto/prepare-mint.dto';
+import { maskAddress } from '@clipcash/shared';
+import {
+  UpdateRoyaltyRecipientDto,
+  UpdateRoyaltyRecipientResponseDto,
+} from './dto/update-royalty-recipient.dto';
+import { DeploymentStatusResponseDto } from './dto/deployment-status.dto';
+import { CollectionInfoResponseDto } from './dto/collection-info.dto';
+import { TotalSupplyResponseDto } from './dto/total-supply.dto';
+import { GasStatsResponseDto } from './dto/gas-stats.dto';
+import { GasMetricsService } from './gas-metrics.service';
+import { NftMintEnqueueService } from '../clips/nft-mint-enqueue.service';
+import {
+  UpdateMetadataDto,
+  UpdateMetadataResponseDto,
+  MetadataUpdateLimitErrorDto,
+} from './dto/update-metadata.dto';
+import {
+  RefreshMetadataDto,
+  RefreshMetadataResponseDto,
+  MetadataRefreshCooldownErrorDto,
+} from './dto/refresh-metadata.dto';
+import {
+  GetUserTokensQueryDto,
+  PaginatedUserTokensResponseDto,
+} from './dto/paginated-user-tokens.dto';
+import {
+  GetNftTransfersQueryDto,
+  PaginatedNftTransfersResponseDto,
+} from './dto/nft-transfer-history.dto';
+import {
+  TransferNftDto,
+  TransferNftResponseDto,
+  TransferOwnershipErrorDto,
+  TransferSoulboundErrorDto,
+} from './dto/transfer-nft.dto';
+import { NftTransferService } from './nft-transfer.service';
+import { NftTransferHistoryService } from './nft-transfer-history.service';
+import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
+import {
+  DEFAULT_NFT_COLLECTION_ID,
+  isSupportedNftCollectionId,
+} from './nft-collections.constants';
 
-@ApiTags('nft')
+@ApiTags('NFTs')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('nfts')
 export class NftController {
@@ -66,18 +202,318 @@ export class NftController {
     private readonly ipfsUploadService: IpfsUploadService,
     private readonly royaltyQueryService: RoyaltyQueryService,
     private readonly ownershipVerificationService: NftOwnershipVerificationService,
+    private readonly nftOwnershipService: NftOwnershipService,
     private readonly prisma: PrismaService,
     private readonly royaltyConfigurationService: RoyaltyConfigurationService,
+    private readonly mintSignatureVerification: MintSignatureVerificationService,
+    private readonly adminContractService: AdminContractService,
+    private readonly adminConfigService: AdminConfigService,
+    private readonly nftApprovalService: NftApprovalService,
+    private readonly gasMetricsService: GasMetricsService,
+    private readonly nftTransferService: NftTransferService,
+    private readonly nftTransferHistoryService: NftTransferHistoryService,
+    private readonly nftMetadataRefreshService: NftMetadataRefreshService,
+    private readonly claimRoyaltyService: ClaimRoyaltyService,
+    private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
+    private readonly nftMintEnqueueService: NftMintEnqueueService,
   ) {}
 
+  @Auth()
   @UseGuards(NftMintGuard)
+  @Get(':id/owner')
+  @ApiOperation({
+    summary: 'Get the current owner of an NFT',
+    description:
+      'Queries the on-chain Soroban contract to find the current owner of the given token ID. ' +
+      'Returns null if the token has not been minted.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Owner address returned successfully',
+    type: NftOwnerResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID format' })
+  async getOwner(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<NftOwnerResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    const owner = await this.nftOwnershipService.getOwner(id.toString());
+    let clipId: number | null = null;
+    try {
+      const clip = await this.adminContractService.getClipId(id);
+      clipId = clip.clipId != null ? Number(clip.clipId) : null;
+      if (!Number.isFinite(clipId)) clipId = null;
+    } catch {
+      clipId = null;
+    }
+    return { owner, clipId };
+  }
+
+  @Get(':tokenId/freeze-status')
+  @ApiOperation({
+    summary: 'Get an NFT freeze status',
+    description:
+      'Reads the token-specific frozen state from the Soroban NFT contract.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'u32 NFT token ID', example: 42 })
+  @ApiOkResponse({ schema: { example: { tokenId: 42, frozen: false } } })
+  @ApiNotFoundResponse({ description: 'NFT token does not exist' })
+  async getFreezeStatus(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+  ): Promise<{ tokenId: number; frozen: boolean }> {
+    return this.adminContractService.getFreezeStatus(tokenId);
+  }
+
+  /**
+   * GET /nfts/:id/exists
+   * Lightweight token existence check (Issue #688).
+   * Returns { exists: true } when the token has been minted, { exists: false } otherwise.
+   * Does not require authentication — the frontend uses this before any wallet interaction.
+   */
+  @Get(':id/exists')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Check whether an NFT token has been minted (Issue #688)',
+    description:
+      'Lightweight query that returns a boolean indicating whether the token with the given ' +
+      'ID exists on-chain. Uses an efficient Soroban storage lookup (owner_of). ' +
+      'Existing tokens return { exists: true }; non-existent tokens return { exists: false }. ' +
+      'No authentication required.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Token existence check result',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'number', example: 42 },
+        exists: {
+          type: 'boolean',
+          description: 'true when the token has been minted, false otherwise',
+          example: true,
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID format' })
+  async tokenExists(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<{ id: number; exists: boolean }> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    const exists = await this.nftOwnershipService.tokenExists(id.toString());
+    return { id, exists };
+  }
+
+  @Get('/wallets/:address/nfts')
+  @ApiOperation({
+    summary: 'Get paginated NFTs owned by a wallet (Issue #838)',
+    description:
+      'Calls on-chain get_user_tokens(owner, limit, cursor) when available, with a safe ' +
+      'ledger fallback. Returns token IDs plus nextCursor for large collections without ' +
+      'loading the entire owner vector into the API response.',
+  })
+  @ApiParam({
+    name: 'address',
+    description: '56-character Stellar G... wallet address',
+    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Maximum number of token IDs to return (1-100, default 20)',
+    example: 20,
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      "Offset into the owner's token list for pagination (0-based, default 0)",
+    example: 0,
+  })
+  @ApiOkResponse({
+    description: 'Paginated NFTs returned successfully',
+    type: PaginatedUserTokensResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid Stellar wallet address or pagination parameters',
+  })
+  async getWalletNfts(
+    @Param('address', ParseStellarAddressPipe) address: string,
+    @Query() query: GetUserTokensQueryDto,
+  ): Promise<PaginatedUserTokensResponseDto> {
+    const limit = query.limit ?? 20;
+    const cursor = query.cursor ?? 0;
+
+    if (limit < 1 || limit > 100) {
+      throw new BadRequestException('limit must be between 1 and 100');
+    }
+    if (cursor < 0) {
+      throw new BadRequestException('cursor must be >= 0');
+    }
+
+    const result = await this.nftOwnershipService.getUserTokensPaginated(
+      address,
+      limit,
+      cursor,
+    );
+
+    return {
+      address,
+      tokenIds: result.tokenIds,
+      nextCursor: result.nextCursor,
+      total: result.total,
+      limit,
+      cursor,
+    };
+  }
+
+  /**
+   * GET /nfts/:id/transfers
+   * Paginated ownership transfer history indexed from Soroban Transfer events (Issue #841).
+   */
+  @Get(':id/transfers')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get paginated NFT transfer history (Issue #841)',
+    description:
+      'Returns indexed Transfer events for the given token ID, ordered by transferredAt ' +
+      'descending. Includes sender, recipient, token ID, transaction hash, and timestamp. ' +
+      'Supports limit/cursor pagination.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Page size (1-100, default 20)',
+    example: 20,
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description: 'Offset cursor (0-based, default 0)',
+    example: 0,
+  })
+  @ApiOkResponse({
+    description: 'Paginated transfer history',
+    type: PaginatedNftTransfersResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid token ID or pagination parameters',
+  })
+  async getNftTransfers(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: GetNftTransfersQueryDto,
+  ): Promise<PaginatedNftTransfersResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    return this.nftTransferHistoryService.getTransfers(id, query);
+  }
+
+  /**
+   * POST /nfts/:id/transfer
+   * Prepare an unsigned transfer_with_royalty Soroban transaction (Issue #843).
+   */
+  @UseGuards(LoginGuard)
+  @Post(':id/transfer')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Prepare an unsigned NFT transfer transaction (Issue #843)',
+    description:
+      'Validates on-chain ownership, recipient address, and soulbound restrictions, then ' +
+      'builds an unsigned Soroban transfer_with_royalty transaction. Returns XDR for the ' +
+      'owner wallet to sign. Soulbound NFTs cannot be transferred.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: TransferNftDto })
+  @ApiOkResponse({
+    description: 'Unsigned transfer XDR returned',
+    type: TransferNftResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid recipient, soulbound NFT, or validation error',
+    type: TransferSoulboundErrorDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the NFT on-chain',
+    type: TransferOwnershipErrorDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  async prepareTransfer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TransferNftDto,
+  ): Promise<TransferNftResponseDto> {
+    return this.nftTransferService.prepareTransferTx(
+      id,
+      dto.fromWallet,
+      dto.toWallet,
+      dto.salePrice,
+      dto.royaltyBpsOverride,
+    );
+  }
+
+  /**
+   * POST /nfts/upload-metadata
+   * Builds OpenSea-compatible metadata, uploads to IPFS, and persists metadataUri on the clip.
+   */
+  @Auth()
+  @Post('upload-metadata')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Upload clip NFT metadata to IPFS before minting',
+    description:
+      'Builds metadata from the clip, uploads it to IPFS (Pinata or nft.storage), ' +
+      'persists the metadata URI on the clip, and returns the IPFS CID and URI.',
+  })
+  @ApiBody({ type: UploadClipMetadataDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Metadata uploaded to IPFS and saved on the clip',
+    type: NftUploadMetadataResponseDto,
+    schema: {
+      example: {
+        clipId: 42,
+        cid: 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+        metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description: 'Clip is not ready for metadata upload (e.g. missing clipUrl)',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async uploadMetadata(
+    @Body() dto: UploadClipMetadataDto,
+    @Req() req: Request,
+  ): Promise<NftUploadMetadataResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    const collectionId = dto.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    return this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId);
+  }
+
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
   @Post('mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Mint a clip as an NFT',
     description:
-      'Builds metadata, uploads to IPFS when needed, then mints with split royalties.',
+      'Builds metadata, uploads to IPFS when needed, then mints with split royalties. ' +
+      'The authenticated caller must own the clip being minted. collectionId selects one of the supported clip collections.',
   })
   @ApiBody({ type: MintNftDto })
   @ApiResponse({
@@ -85,28 +521,235 @@ export class NftController {
     description: 'NFT minted successfully',
     type: NftMintResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid mint payload' })
-  @ApiForbiddenResponse({ description: 'Mint guard rejected the request' })
-  async mint(@Body() dto: MintNftDto): Promise<MintResult> {
+  @ApiBadRequestResponse({
+    description:
+      'Invalid mint payload or collectionId, an unsupported collection, exhausted collection supply, or a clip that is already minting/minted or has already been posted to a social platform.',
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Unsupported collectionId: unknown-collection',
+        error: 'Bad Request',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Unauthorized — Bearer JWT required, or wallet signature invalid (Issue #1165)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
+  })
+  @ApiForbiddenResponse({
+    description:
+      'Caller does not own the clip, or the mint guard rejected the request',
+    schema: {
+      example: {
+        statusCode: 403,
+        message: 'You do not own this clip',
+        error: 'Forbidden',
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description:
+      'Duplicate mint request - a mint job for this clip already exists (Issue #923). ' +
+      'The nft-mint queue deduplicates by jobId (`nft-mint-clip-{clipId}`); resubmit only after the existing job completes or fails.',
+    schema: {
+      example: {
+        statusCode: 409,
+        message:
+          'Mint job already exists for clip 42 (jobId: nft-mint-clip-42).',
+        error: 'Conflict',
+      },
+    },
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Queue rate limit exceeded - nftMint throttle is 5 requests per 60s (Issue #923). ' +
+      'Wallet mint cooldown also applies; retry after retryAfterSeconds or the Retry-After header.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'Wallet mint cooldown is active. Retry in 60 second(s).',
+        error: 'Too Many Requests',
+        retryAfterSeconds: 60,
+        retryAt: '2026-10-19T12:01:00.000Z',
+      },
+    },
+  })
+  async mint(
+    @Body() dto: MintNftDto,
+    @Req() req: Request,
+  ): Promise<MintResult> {
+    const userId = Number((req as any).user?.id ?? 0);
+
+    // Reject mint requests for clips that don't exist or don't belong to the caller.
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    await this.nftMintService.assertMintCooldown(dto.creatorWallet);
+
+    // Signature check (Issue #1165): when the caller provides a wallet
+    // signature, verify it before any state change so unauthorized mints
+    // fail fast with 401.
+    if (dto.walletSignature) {
+      this.mintSignatureVerification.verify(
+        dto.clipId,
+        dto.creatorWallet,
+        dto.walletSignature,
+      );
+    }
+
+    const collectionId = dto.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    if (!isSupportedNftCollectionId(collectionId)) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    const collection = await this.prisma.nftCollection.findUnique({
+      where: { collectionId },
+    });
+    if (!collection) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    if (collection.maxSupply !== null) {
+      const supply = await this.prisma.clip.count({
+        where: {
+          collectionId,
+          mintAddress: { not: null },
+          nftStatus: { not: 'burned' },
+        },
+      });
+      if (supply >= collection.maxSupply) {
+        throw new BadRequestException(
+          `Collection '${collectionId}' has reached its maximum supply`,
+        );
+      }
+    }
+
     const metadataUri =
       dto.metadataUri ??
-      (await this.nftMintService.uploadMetadataToIPFS(dto.clipId)).metadataUri;
+      (await this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId))
+        .metadataUri;
 
-    return this.nftService.mintClip({
+    await this.prisma.clip.update({
+      where: { id: dto.clipId },
+      data: {
+        collectionId,
+        ...(dto.royaltyBps === undefined && collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
+      },
+    });
+
+    const result = await this.nftService.mintClip({
       clipId: String(dto.clipId),
+      collectionId,
       creatorWallet: dto.creatorWallet,
       metadataUri,
-      royaltyBps: dto.royaltyBps,
+      royaltyBps: dto.royaltyBps ?? collection.royaltyBps ?? undefined,
     });
+    await this.nftMintService.recordSuccessfulMint(dto.creatorWallet);
+    return result;
   }
 
-  @UseGuards(LoginGuard, NftMintGuard)
+  @UseGuards(QueueRateLimitGuard)
+  @Post('batch-mint')
+  @HttpCode(HttpStatus.CREATED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
+  @ApiOperation({
+    summary: 'Mint multiple clip NFTs in a single transaction (Issue #671)',
+    description:
+      'Mint multiple clip NFTs in one call. Validates array lengths, enforces gas-limit safeguards (max 50 clips), ' +
+      'emits BatchMint event, and handles partial failures gracefully.',
+  })
+  @ApiBody({ type: BatchMintDto })
+  @ApiResponse({
+    status: 201,
+    description: 'Batch minting process completed',
+    type: BatchMintResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Mismatched arrays, invalid payload, or batch size exceeded limit. ' +
+      'Individual clips that cannot be minted — including clips already posted ' +
+      'to a social platform (Issue #764) — are reported per-clip in ' +
+      '`partialFailures` rather than failing the whole batch.',
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Too many active NFT mint jobs for this user. Retry after the number of seconds in the Retry-After header.',
+  })
+  async batchMint(@Body() dto: BatchMintDto): Promise<BatchMintResponseDto> {
+    await this.nftMintService.assertMintCooldown(dto.creatorWallet);
+    const result = await this.nftService.batchMintClips(dto);
+    if (result.mintedCount > 0) {
+      await this.nftMintService.recordSuccessfulMint(dto.creatorWallet);
+    }
+    return result;
+  }
+
+  @Auth()
+  @Patch(':id/token-uri')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update custom token URI per clip (Issue #670)',
+    description:
+      'Stores a custom metadata token URI for the specified NFT token ID. Restricts updates strictly to the NFT owner.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: UpdateTokenUriDto })
+  @ApiOkResponse({
+    description: 'Custom token URI updated successfully',
+    type: UpdateTokenUriResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Only the NFT owner can update token URI',
+    type: TokenUriOwnershipErrorDto,
+  })
+  @ApiNotFoundResponse({ description: 'NFT token not found' })
+  async updateTokenUri(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTokenUriDto,
+    @Req() req: Request,
+  ): Promise<UpdateTokenUriResponseDto> {
+    const tokenIdStr = id.toString();
+    const currentOwner = await this.nftOwnershipService.getOwner(tokenIdStr);
+
+    if (!currentOwner) {
+      throw new NotFoundException(`NFT token ${id} not found`);
+    }
+
+    return this.nftService.updateTokenUri(tokenIdStr, dto.uri);
+  }
+
+  /**
+   * POST /nfts/prepare-mint
+   * Builds a Soroban mint transaction and returns the XDR for the frontend to sign.
+   * The authenticated user must own the clip being minted.
+   */
+  @Auth()
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
   @Post('prepare-mint')
   @HttpCode(HttpStatus.CREATED)
   @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
   @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Prepare a Soroban mint transaction (returns XDR for signing)',
+    description:
+      'Builds an unsigned Soroban mint transaction XDR against the currently configured Stellar network ' +
+      '(testnet or public/mainnet, per STELLAR_NETWORK). Request body requires clipId and walletAddress. ' +
+      'For a standalone Node.js reference implementation of this same XDR-building flow (useful when ' +
+      'integrating outside this API, e.g. from an ops script or another backend service), see ' +
+      'contracts/nft-contract/examples/mint-from-backend.ts.',
   })
   @ApiBody({ type: CreateMintPreparationDto })
   @ApiResponse({
@@ -115,20 +758,173 @@ export class NftController {
     type: NftPrepareMintResponseDto,
   })
   @ApiUnauthorizedResponse({
-    description: 'Unauthorized — Bearer JWT required',
+    description: 'Unauthorized - Bearer JWT required',
   })
-  @ApiBadRequestResponse({ description: 'Invalid clip or wallet' })
-  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid clipId, walletAddress, or collectionId; unsupported collection; exhausted collection supply; clip not ready; or posted clip.',
+    type: NftPrepareMintBadRequestDto,
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Unauthorized — Bearer JWT required, or wallet signature invalid (Issue #1165)',
+    schema: {
+      example: {
+        statusCode: 401,
+        message: 'Mint signature is invalid — wallet authorization failed',
+        error: 'Unauthorized',
+      },
+    },
+      'Unauthorized — Bearer JWT required, or wallet signature invalid',
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+  })
+  @ApiNotFoundResponse({
+    description: 'Clip not found',
+    type: NftMintNotFoundDto,
+  })
+  @ApiConflictResponse({
+    description: 'Clip is already minting or has already been minted',
+    type: NftMintConflictDto,
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Queue throttles and the wallet mint cooldown apply. Cooldown responses include retryAfterSeconds and retryAt.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'Wallet mint cooldown is active. Retry in 60 second(s).',
+        error: 'Too Many Requests',
+        retryAfterSeconds: 60,
+        retryAt: '2026-10-19T12:01:00.000Z',
+      },
+    },
+  })
   async prepareMint(
     @Body() dto: CreateMintPreparationDto,
     @Req() req: Request,
   ) {
     const userId = Number((req as any).user?.id ?? 0);
+
+    // 1. Ownership check: clip must belong to the authenticated user.
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
-    return this.nftMintService.prepareMintTx(dto.clipId, dto.walletAddress);
+
+    // 2. Signature check: when the caller provides a wallet signature, verify
+    //    it before building the XDR.  This proves the caller controls the
+    //    private key for walletAddress, preventing mints on behalf of others.
+    if (dto.walletSignature) {
+      this.mintSignatureVerification.verify(
+        dto.clipId,
+        dto.walletAddress,
+        dto.walletSignature,
+      );
+    }
+
+    return this.nftMintService.prepareMintTx(
+      dto.clipId,
+      dto.walletAddress,
+      dto.collectionId,
+    );
   }
 
-  @UseGuards(LoginGuard)
+  @Auth()
+  @UseGuards(NftMintGuard, QueueRateLimitGuard)
+  @Post('enqueue-mint')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ nftMint: { limit: 5, ttl: 60000 } })
+  @QueueRateLimit({ queue: 'nft-mint', maxJobs: 5 })
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Enqueue an NFT mint job on the dedicated nft-mint queue',
+    description:
+      'Moves Soroban mint processing off the request path into the dedicated nft-mint BullMQ queue ' +
+      '(own worker, concurrency and retry policy), so video processing never blocks minting. ' +
+      'Returns the BullMQ jobId immediately; use GET /nfts/mint-status/:jobId to track transaction states. ' +
+      'Duplicate active jobs for the same clip return 409.',
+  })
+  @ApiBody({ type: MintNftDto })
+  @ApiResponse({
+    status: 202,
+    description: 'Mint job enqueued; returns jobId for status tracking',
+    schema: {
+      example: { jobId: 'nft-mint-clip-42', delayed: false, delayMs: 0 },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid mint payload' })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description: 'A mint job for this clip is already queued or running (duplicate prevented)',
+    type: NftMintConflictDto,
+  })
+  @ApiTooManyRequestsResponse({
+    description:
+      'Too many active NFT mint jobs or wallet mint cooldown. Cooldown responses include retryAfterSeconds and retryAt.',
+    schema: {
+      example: {
+        statusCode: 429,
+        message: 'Wallet mint cooldown is active. Retry in 60 second(s).',
+        error: 'Too Many Requests',
+        retryAfterSeconds: 60,
+        retryAt: '2026-10-19T12:01:00.000Z',
+      },
+    },
+  })
+  async enqueueMint(
+    @Body() dto: MintNftDto,
+    @Req() req: Request,
+  ): Promise<{ jobId: string; delayed: boolean; delayMs: number }> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(dto.clipId, userId);
+    await this.nftMintService.assertMintCooldown(dto.creatorWallet);
+    return this.nftMintEnqueueService.enqueueMint({
+      clipId: dto.clipId,
+      walletAddress: dto.creatorWallet,
+      userId,
+    });
+  }
+
+  @Auth()
+  @Get('mint-status/:jobId')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get NFT mint job transaction status',
+    description:
+      'Tracks a BullMQ mint job (returned by enqueue-mint) through pending → confirmed/failed states. ' +
+      'pending covers waiting/active/delayed; confirmed means the mint transaction completed; ' +
+      'failed includes the failure reason.',
+  })
+  @ApiParam({ name: 'jobId', description: 'BullMQ job ID returned by enqueue-mint', example: 'nft-mint-clip-42' })
+  @ApiResponse({
+    status: 200,
+    description: 'Mint job status with transaction state',
+    schema: {
+      example: {
+        jobId: 'nft-mint-clip-42',
+        state: 'completed',
+        txState: 'confirmed',
+        attemptsMade: 1,
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiNotFoundResponse({ description: 'Mint job not found' })
+  async mintJobStatus(@Param('jobId') jobId: string) {
+    return this.nftMintEnqueueService.getMintStatus(jobId);
+  }
+
+  @Auth()
   @Post('confirm-mint')
   @HttpCode(HttpStatus.OK)
   @Throttle({ nftMint: { limit: 10, ttl: 60000 } })
@@ -146,10 +942,26 @@ export class NftController {
     description: 'Unauthorized — Bearer JWT required',
   })
   @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiConflictResponse({
+    description:
+      'Mint transaction is not confirmed on-chain, or the token owner differs from the wallet used to prepare the mint',
+  })
   async confirmMint(@Body() dto: ConfirmMintDto, @Req() req: Request) {
     const userId = Number((req as any).user?.id ?? 0);
     await this.nftMintService.validateClipOwner(dto.clipId, userId);
-    return this.nftMintService.confirmMint(dto.clipId, dto.mintAddress);
+    const onChainOwnerAddress = await this.nftOwnershipService.getOwner(
+      String(dto.clipId),
+    );
+    if (!onChainOwnerAddress) {
+      throw new ConflictException(
+        `Mint for clip ${dto.clipId} is not confirmed on-chain`,
+      );
+    }
+    return this.nftMintService.confirmMint(
+      dto.clipId,
+      dto.mintAddress,
+      onChainOwnerAddress,
+    );
   }
 
   @Post('verify-ownership')
@@ -158,7 +970,8 @@ export class NftController {
     summary: 'Verify on-chain NFT ownership',
     description:
       'Checks whether the given Stellar wallet owns the NFT token via Soroban owner_of. ' +
-      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise.',
+      'Returns { valid: true } when the wallet owns the token, or { valid: false, error: string } otherwise. ' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiBody({ type: VerifyNftOwnershipDto })
   @ApiResponse({
@@ -193,12 +1006,42 @@ export class NftController {
     status: 200,
     description: 'NFT metadata returned',
     type: NftMetadataResponseDto,
+    schema: {
+      example: {
+        name: 'Game-winning goal',
+        description: 'ClipCash generated clip 42',
+        image: 'https://cdn.example.com/thumbs/42.jpg',
+        thumbnail: 'https://cdn.example.com/thumbs/42.jpg',
+        animation_url: 'https://cdn.example.com/clips/42.mp4',
+        attributes: [
+          { trait_type: 'Clip Duration', value: 34 },
+          { trait_type: 'Virality Score', value: 87 },
+          { trait_type: 'Creation Date', value: '2026-07-20T09:30:00.000Z' },
+          { trait_type: 'Royalty BPS', value: 1000 },
+          { trait_type: 'Royalty Percent', value: 10 },
+        ],
+        seller_fee_basis_points: 1000,
+        fee_recipient: 'GABF...KJ93XD',
+        royalty: {
+          bps: 1000,
+          percent: 10,
+          recipient: 'GABF...KJ93XD',
+        },
+        duration: 34,
+        viralityScore: 87,
+        createdAt: '2026-07-20T09:30:00.000Z',
+        platforms: ['tiktok', 'youtube'],
+      },
+    },
   })
   @ApiNotFoundResponse({ description: 'Clip not found or not ready' })
   async getMetadata(
     @Param('clipId', ParseIntPipe) clipId: number,
   ): Promise<NftMetadataResponseDto> {
-    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { clipPosts: { select: { platform: true } } },
+    });
     if (!clip) {
       throw new NotFoundException(`Clip with ID ${clipId} not found`);
     }
@@ -213,7 +1056,11 @@ export class NftController {
     );
     let royaltyRecipient: string | undefined;
     try {
-      royaltyRecipient = this.royaltyConfigurationService.getPlatformWallet();
+      const platformWallet =
+        this.royaltyConfigurationService.getPlatformWallet();
+      royaltyRecipient = platformWallet
+        ? maskAddress(platformWallet)
+        : undefined;
     } catch {
       royaltyRecipient = undefined;
     }
@@ -229,7 +1076,90 @@ export class NftController {
       createdAt: clip.createdAt,
       royaltyBps,
       royaltyRecipient,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
     });
+  }
+
+  /**
+   * GET /nfts/royalty/estimate
+   * Estimates the royalty owed on a given sale price without requiring a
+   * minted token, using the same BPS math the Soroban contract's
+   * `calculate_royalty` helper uses (Issue #680). Useful for showing a
+   * "you'll receive ~X" estimate in the UI before a resale actually happens.
+   */
+  @Get('royalty/estimate')
+  @ApiOperation({
+    summary: 'Estimate the royalty owed on a sale price (Issue #680)',
+    description:
+      "Pure calculation — does not touch the chain. Mirrors the Soroban contract's " +
+      '`calculate_royalty(sale_price, royalty_bps)` helper so estimates match what the ' +
+      'contract actually pays out on `transfer_with_royalty`. Rounds down (truncates toward ' +
+      'zero) any fractional stroop. When `royaltyBps` is omitted, the configured creator ' +
+      'royalty rate is used.',
+  })
+  @ApiQuery({
+    name: 'salePrice',
+    description: 'Sale price in stroops (1 XLM = 10,000,000 stroops)',
+    example: 100_000_000,
+  })
+  @ApiQuery({
+    name: 'royaltyBps',
+    description:
+      'Royalty rate in basis points (100 = 1%). Defaults to the platform creator royalty rate.',
+    example: 1000,
+    required: false,
+  })
+  @ApiOkResponse({
+    description: 'Royalty estimate calculated successfully',
+    type: RoyaltyEstimateResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid salePrice / royaltyBps, or computed royalty exceeds Number.MAX_SAFE_INTEGER ' +
+      '(Issue #836 checked arithmetic).',
+    type: RoyaltyOverflowErrorDto,
+  })
+  getRoyaltyEstimate(
+    @Query() query: RoyaltyEstimateQueryDto,
+  ): RoyaltyEstimateResponseDto {
+    const royaltyBps = this.royaltyConfigurationService.getCreatorRoyaltyBps(
+      query.royaltyBps,
+    );
+    const royaltyAmount = this.royaltyConfigurationService.calculateRoyalty(
+      query.salePrice,
+      royaltyBps,
+    );
+    return { salePrice: query.salePrice, royaltyBps, royaltyAmount };
+  }
+
+  /**
+   * POST /nfts/prepare-transfer
+   * Prepares a Soroban NFT transfer transaction with royalty enforcement.
+   * Calculates creator and platform royalties, verifies payment distribution,
+   * generates the RoyaltyPaid event payload, and returns XDR with royalty breakdown.
+   */
+  @Post('prepare-transfer')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ nftTransfer: { limit: 10, ttl: 60000 } })
+  @ApiOperation({
+    summary: 'Prepare an NFT transfer with royalty enforcement',
+    description:
+      'Overrides standard transfer logic to enforce automatic secondary sale royalty distribution. Calculates creator and platform royalties, emits the RoyaltyPaid event, and returns transaction XDR with complete royalty breakdown.',
+  })
+  @ApiBody({ type: PrepareTransferDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Transfer prepared successfully with royalty breakdown',
+    type: PrepareTransferResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad Request - Invalid addresses or sale price',
+  })
+  async prepareTransfer(
+    @Body() dto: PrepareTransferDto,
+  ): Promise<PrepareTransferResponseDto> {
+    return this.nftService.prepareTransferWithRoyalty(dto);
   }
 
   /**
@@ -240,13 +1170,14 @@ export class NftController {
    *
    * Response: { royaltyBps: number, recipient: string }
    */
-  @UseGuards(LoginGuard)
+  @Auth()
   @Get(':mintAddress/royalty')
-  @ApiBearerAuth()
+  @ApiBearerAuth('access-token')
   @ApiOperation({
     summary: 'Get on-chain royalty info for an NFT',
     description:
-      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes.',
+      'Reads royalty BPS and recipient from the Soroban get_royalties contract method. Results are cached in Redis for 5 minutes. ' +
+      'Queries the currently configured Stellar network (testnet or public/mainnet, per STELLAR_NETWORK).',
   })
   @ApiParam({
     name: 'mintAddress',
@@ -269,5 +1200,1806 @@ export class NftController {
     @Param('mintAddress') mintAddress: string,
   ): Promise<RoyaltyInfo> {
     return this.royaltyQueryService.getRoyaltyInfo(mintAddress);
+  }
+
+  /**
+   * POST /nfts/:id/burn
+   * Prepares a Soroban transaction that permanently burns a minted clip NFT.
+   * Only the clip owner (authenticated user) may request this, and only the
+   * on-chain token owner's wallet can sign the returned transaction.
+   */
+  @Auth()
+  @Post(':id/burn')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Burn a minted clip NFT',
+    description:
+      'Builds an unsigned Soroban transaction that calls burn(owner, token_id, refund_royalties), ' +
+      'permanently destroying the token. The caller and supplied wallet must own the clip and ' +
+      'on-chain NFT. When refundRoyalties is true, the response includes the configured royalty ' +
+      'recipient and a balance estimate in stroops; the contract must recalculate and refund it ' +
+      'atomically when the owner signs and submits the transaction, clear the claimed balance, ' +
+      'emit `Refunded`, and prevent replay/double refunds.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Clip ID / token ID to burn',
+    example: 42,
+  })
+  @ApiBody({
+    type: BurnNftDto,
+    examples: {
+      burnWithoutRefund: {
+        summary: 'Burn without royalty refund',
+        value: {
+          walletAddress:
+            'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF',
+        },
+      },
+      burnWithRefund: {
+        summary: 'Burn and request royalty refund',
+        value: {
+          walletAddress:
+            'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF',
+          refundRoyalties: true,
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned burn transaction XDR returned successfully',
+    type: BurnNftResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid wallet/royalty recipient, clip not yet minted, or unsafe royalty balance',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({
+    description: 'Caller does not own the clip being burned',
+    type: BurnForbiddenDto,
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found', type: BurnNotFoundDto })
+  @ApiConflictResponse({
+    description:
+      'NFT is already burned or the contract detects a refund-state conflict when the transaction is submitted.',
+  })
+  async burn(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: BurnNftDto,
+    @Req() req: Request,
+  ): Promise<BurnNftResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+    const ownership = await this.nftOwnershipService.verifyNFTOwnership(
+      id.toString(),
+      dto.walletAddress,
+    );
+    if (!ownership.isOwner) {
+      throw new ForbiddenException(
+        ownership.error || 'Wallet does not own this NFT on-chain',
+      );
+    }
+
+    const refundRoyalties = dto.refundRoyalties === true;
+    let refundRecipient: string | null = null;
+    let refundAmount = 0n;
+    if (refundRoyalties) {
+      try {
+        const royaltyInfo = await this.royaltyQueryService.getRoyaltyInfo(
+          id.toString(),
+        );
+        refundRecipient = royaltyInfo.recipient;
+        refundAmount = await this.claimRoyaltyService.getClaimableBalanceExact(
+          id,
+          refundRecipient,
+        );
+        if (refundAmount < 0n) {
+          throw new BadRequestException(
+            'Claimable royalty balance cannot be negative',
+          );
+        }
+      } catch (error) {
+        if (!(error instanceof NotFoundException)) {
+          throw error;
+        }
+      }
+    }
+
+    const transaction = await this.nftMintService.prepareBurnTx(
+      id,
+      dto.walletAddress,
+      refundRoyalties,
+    );
+    return {
+      ...transaction,
+      refundRoyalties,
+      refundRecipient,
+      refundAmount: String(refundAmount),
+    };
+  }
+
+  /**
+   * GET /nfts/:id/royalties/history
+   * Paginated royalty claim history for an NFT (Issue #840).
+   */
+  @Get(':id/royalties/history')
+  @ApiOperation({
+    summary: 'Get royalty claim history for an NFT',
+    description:
+      'Returns paginated historical royalty claims for the given token. ' +
+      'Each record is created when a RoyaltyClaimed contract event is indexed ' +
+      'and includes the Stellar transaction hash.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiOkResponse({
+    description: 'Paginated royalty claim history',
+    type: RoyaltyClaimHistoryResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid token ID or pagination params',
+  })
+  async getRoyaltyClaimHistory(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: RoyaltyClaimHistoryQueryDto,
+  ): Promise<RoyaltyClaimHistoryResponseDto> {
+    if (id <= 0) {
+      throw new BadRequestException('Token ID must be a positive integer');
+    }
+    return this.royaltyClaimHistoryService.getHistory(
+      id,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
+  }
+
+  /**
+   * GET /nfts/:id/royalties
+   * Returns the full multi-recipient royalty split configured for a token.
+   */
+  @Get(':id/royalties')
+  @ApiOperation({
+    summary: 'Get the multi-recipient royalty split for an NFT',
+    description:
+      'Reads the full royalty split (recipient -> basis points) from the Soroban get_royalties ' +
+      'contract method. Falls back to the default royalty/platform fee configuration when no ' +
+      'per-token override has been set.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID / token ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Royalty split returned successfully',
+    type: RoyaltySplitsResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid token ID' })
+  @ApiNotFoundResponse({
+    description: 'No royalty split configured for this token',
+  })
+  async getRoyaltySplits(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<RoyaltySplitsResponseDto> {
+    const shares = await this.royaltyQueryService.getRoyaltySplits(id);
+    return {
+      tokenId: id,
+      shares: shares.map((s) => ({
+        recipient: s.recipient,
+        bps: s.royaltyBps,
+      })),
+      totalBps: shares.reduce((sum, s) => sum + s.royaltyBps, 0),
+    };
+  }
+
+  /**
+   * PATCH /nfts/:id/royalties
+   * Prepares a Soroban transaction that configures a token's royalty split
+   * across multiple recipients.
+   */
+  @Auth()
+  @Patch(':id/royalties')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Configure a multi-recipient royalty split for an NFT',
+    description:
+      'Builds an unsigned Soroban transaction that calls set_royalties(token_id, royalties), ' +
+      'splitting future royalty payouts across multiple recipients. Combined shares must not ' +
+      "exceed 10000 BPS (100%). The returned XDR must be signed by the NFT owner's wallet.",
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID / token ID', example: 42 })
+  @ApiBody({ type: UpdateRoyaltySplitsDto })
+  @ApiOkResponse({
+    description: 'Unsigned set_royalties transaction XDR returned successfully',
+    type: UpdateRoyaltySplitsResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Invalid wallet address, clip not yet minted, or combined shares exceed 10000 BPS',
+    type: RoyaltySplitsValidationErrorDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({ description: 'Caller does not own the clip' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  async updateRoyaltySplits(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateRoyaltySplitsDto,
+    @Req() req: Request,
+  ): Promise<UpdateRoyaltySplitsResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+    return this.nftMintService.prepareSetRoyaltiesTx(
+      id,
+      dto.walletAddress,
+      dto.shares,
+    );
+  }
+
+  /**
+   * GET /nfts/contract/info
+   *
+   * Returns the currently deployed Soroban NFT contract details:
+   * contractId, network, rpcUrl, and networkPassphrase.
+   *
+   * This is useful for frontends and tooling that need to know which
+   * contract to interact with on the currently configured network.
+   */
+  @Get('contract/info')
+  @ApiOperation({
+    summary: 'Get deployed Soroban NFT contract info',
+    description:
+      'Returns the contract ID and network details for the currently deployed ' +
+      'ClipCash NFT Soroban contract. Network is driven by the STELLAR_NETWORK ' +
+      'environment variable (testnet | public).',
+  })
+  @ApiOkResponse({
+    description: 'Contract info returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        network: 'testnet',
+        rpcUrl: 'https://soroban-testnet.stellar.org',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        explorerUrl:
+          'https://stellar.expert/explorer/testnet/contract/CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+      },
+    },
+  })
+  getContractInfo(): {
+    contractId: string;
+    network: string;
+    rpcUrl: string;
+    networkPassphrase: string;
+    explorerUrl: string;
+  } {
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const network = (process.env.STELLAR_NETWORK ?? 'testnet').toLowerCase();
+    const isMainnet = network === 'public';
+
+    const rpcUrl = isMainnet
+      ? 'https://soroban-rpc.stellar.org'
+      : 'https://soroban-testnet.stellar.org';
+
+    const networkPassphrase = isMainnet
+      ? 'Public Global Stellar Network ; September 2015'
+      : 'Test SDF Network ; September 2015';
+
+    const explorerBase = isMainnet
+      ? 'https://stellar.expert/explorer/public/contract'
+      : 'https://stellar.expert/explorer/testnet/contract';
+
+    return {
+      contractId,
+      network,
+      rpcUrl,
+      networkPassphrase,
+      explorerUrl: `${explorerBase}/${contractId}`,
+    };
+  }
+
+  /**
+   * GET /nfts/contract/version
+   *
+   * Reads the deployed contract's semantic version via the on-chain,
+   * read-only `version()` call (Issue #692). Unlike `contract/info`
+   * (which is derived from env vars), this reflects what's actually
+   * running in the deployed WASM.
+   */
+  @Get('contract/version')
+  @ApiOperation({
+    summary: 'Get the deployed Soroban NFT contract version',
+    description:
+      'Calls the read-only version() function on the currently deployed ' +
+      'ClipCash NFT Soroban contract and returns its semantic version ' +
+      'alongside the contract ID it was read from.',
+  })
+  @ApiOkResponse({
+    description: 'Contract version returned successfully',
+    schema: {
+      example: {
+        contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+        version: '1.1.0',
+      },
+    },
+  })
+  async getContractVersion(): Promise<{ contractId: string; version: string }> {
+    return this.adminContractService.getContractVersion();
+  }
+
+  /**
+   * GET /nfts/admin/pause-status
+   * Reads the contract's current pause state via Soroban `is_paused`.
+   */
+  @Get('admin/pause-status')
+  @ApiOperation({
+    summary: 'Get the Soroban NFT contract pause status',
+    description:
+      'Reads the current pause state from the contract via the read-only is_paused call.',
+  })
+  @ApiOkResponse({
+    description: 'Pause status returned successfully',
+    schema: { example: { paused: false } },
+  })
+  async getPauseStatus(): Promise<{ paused: boolean }> {
+    return this.adminContractService.getPauseStatus();
+  }
+
+  /**
+   * POST /nfts/admin/pause
+   * Builds (but does not sign) a Soroban `pause` transaction. The admin
+   * wallet signs the returned XDR and submits it, mirroring prepare-mint.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/pause')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare a Soroban pause() transaction (returns XDR for signing)',
+    description:
+      'Emergency control: pauses minting and transfers on the NFT contract. ' +
+      'Requires the x-admin-secret header. The admin wallet must then sign and submit the returned XDR.',
+  })
+  @ApiBody({ type: PrepareContractPauseDto })
+  @ApiOkResponse({ description: 'Pause transaction XDR returned' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid x-admin-secret header',
+  })
+  async preparePause(@Body() dto: PrepareContractPauseDto) {
+    return this.adminContractService.preparePauseTx(dto.adminAddress, true);
+  }
+
+  /**
+   * POST /nfts/admin/unpause
+   * Builds (but does not sign) a Soroban `unpause` transaction.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/unpause')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary:
+      'Prepare a Soroban unpause() transaction (returns XDR for signing)',
+    description:
+      'Restores minting and transfers on the NFT contract. Requires the x-admin-secret header. ' +
+      'The admin wallet must then sign and submit the returned XDR.',
+  })
+  @ApiBody({ type: PrepareContractPauseDto })
+  @ApiOkResponse({ description: 'Unpause transaction XDR returned' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid x-admin-secret header',
+  })
+  async prepareUnpause(@Body() dto: PrepareContractPauseDto) {
+    return this.adminContractService.preparePauseTx(dto.adminAddress, false);
+  }
+
+  /**
+   * POST /nfts/admin/config/platform-fee
+   * Prepare set_platform_fee() — contract owner only (Issue #835).
+   * On-chain success emits ConfigUpdated.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/config/platform-fee')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare set_platform_fee() admin config tx (Issue #835)',
+    description:
+      'Builds an unsigned Soroban `set_platform_fee(bps)` transaction. ' +
+      'Requires x-admin-secret. Only the contract owner wallet can successfully ' +
+      'submit on-chain. Emits `ConfigUpdated` (local + on-chain).',
+  })
+  @ApiBody({
+    type: SetPlatformFeeDto,
+    examples: {
+      setFee: {
+        summary: 'Set platform fee to 2%',
+        value: {
+          adminAddress:
+            'GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          platformFeeBps: 200,
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned set_platform_fee XDR returned',
+    type: AdminConfigTxResponseDto,
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Missing or invalid x-admin-secret / not contract owner on-chain',
+  })
+  @ApiBadRequestResponse({ description: 'Invalid address or BPS out of range' })
+  async prepareSetPlatformFee(
+    @Body() dto: SetPlatformFeeDto,
+  ): Promise<AdminConfigTxResponseDto> {
+    return this.adminConfigService.prepareSetPlatformFee(
+      dto.adminAddress,
+      dto.platformFeeBps,
+    );
+  }
+
+  /**
+   * POST /nfts/admin/config/default-royalty
+   * Prepare set_default_royalty() — contract owner only (Issue #835).
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/config/default-royalty')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare set_default_royalty() admin config tx (Issue #835)',
+    description:
+      'Builds an unsigned Soroban `set_default_royalty(bps)` transaction. ' +
+      'Requires x-admin-secret. Only the contract owner can submit on-chain. ' +
+      'Emits `ConfigUpdated` (local + on-chain).',
+  })
+  @ApiBody({
+    type: SetDefaultRoyaltyDto,
+    examples: {
+      setRoyalty: {
+        summary: 'Set default royalty to 10%',
+        value: {
+          adminAddress:
+            'GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          defaultRoyaltyBps: 1000,
+        },
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned set_default_royalty XDR returned',
+    type: AdminConfigTxResponseDto,
+  })
+  @ApiUnauthorizedResponse({
+    description:
+      'Missing or invalid x-admin-secret / not contract owner on-chain',
+  })
+  @ApiBadRequestResponse({ description: 'Invalid address or BPS out of range' })
+  async prepareSetDefaultRoyalty(
+    @Body() dto: SetDefaultRoyaltyDto,
+  ): Promise<AdminConfigTxResponseDto> {
+    return this.adminConfigService.prepareSetDefaultRoyalty(
+      dto.adminAddress,
+      dto.defaultRoyaltyBps,
+    );
+  }
+
+  @Get('admin/config/platform-fee')
+  @ApiOperation({
+    summary: 'Read on-chain platform fee BPS (Issue #835)',
+    description: 'Queries get_platform_fee() on the Soroban NFT contract.',
+  })
+  @ApiOkResponse({ type: AdminConfigValueResponseDto })
+  async getPlatformFeeConfig(): Promise<AdminConfigValueResponseDto> {
+    return this.adminConfigService.getPlatformFee();
+  }
+
+  @Get('admin/config/default-royalty')
+  @ApiOperation({
+    summary: 'Read on-chain default royalty BPS (Issue #835)',
+    description: 'Queries get_default_royalty() on the Soroban NFT contract.',
+  })
+  @ApiOkResponse({ type: AdminConfigValueResponseDto })
+  async getDefaultRoyaltyConfig(): Promise<AdminConfigValueResponseDto> {
+    return this.adminConfigService.getDefaultRoyalty();
+  }
+
+  /**
+   * POST /nfts/approve-all
+   * Grant or revoke operator approval for all tokens (Issue #842).
+   */
+  @UseGuards(LoginGuard)
+  @Post('approve-all')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Approve or revoke an operator for all NFTs (Issue #842)',
+    description:
+      'Prepares unsigned SEP-0050 `approve_for_all(owner, operator, live_until_ledger)` XDR. ' +
+      'Set liveUntilLedger to 0 to revoke the operator approval.',
+  })
+  @ApiBody({ type: SetApprovalForAllDto })
+  @ApiOkResponse({
+    description: 'Unsigned approve_for_all XDR',
+    type: SetApprovalForAllResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid address or body' })
+  async approveAll(
+    @Body() dto: SetApprovalForAllDto,
+  ): Promise<SetApprovalForAllResponseDto> {
+    return this.nftApprovalService.prepareSetApprovalForAll(
+      dto.ownerAddress,
+      dto.operatorAddress,
+      dto.liveUntilLedger,
+    );
+  }
+
+  @Auth()
+  @Delete('approvals')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Revoke all NFT approvals',
+    description:
+      'Prepares unsigned XDR for `revoke_all_approvals()`. The authenticated owner must sign and submit it; Soroban verifies owner authorization on-chain.',
+  })
+  @ApiBody({ type: RevokeNftApprovalDto })
+  @ApiOkResponse({
+    description: 'Unsigned global approval-revocation XDR',
+    type: RevokeAllNftApprovalsResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'Only the NFT owner may revoke approvals' })
+  @ApiNotFoundResponse({ description: 'No approvals or owner record found' })
+  @ApiConflictResponse({ description: 'Approval state changed before submission' })
+  async revokeAllApprovals(
+    @Body() dto: RevokeNftApprovalDto,
+  ): Promise<RevokeAllNftApprovalsResponseDto> {
+    return this.nftApprovalService.prepareRevokeAllApprovals(dto.ownerAddress);
+  }
+
+  /**
+   * GET /nfts/:id/approved — get_approved(token_id) (Issue #842).
+   */
+  @Get(':id/approved')
+  @ApiOperation({
+    summary: 'Get the approved spender for an NFT (Issue #842)',
+    description:
+      'Calls Soroban `get_approved(token_id)`. Returns null when none.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiOkResponse({ type: GetApprovedResponseDto })
+  @ApiBadRequestResponse({ description: 'Invalid token ID' })
+  async getApproved(
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<GetApprovedResponseDto> {
+    return this.nftApprovalService.getApproved(id);
+  }
+
+  @Auth()
+  @Delete(':tokenId/approval')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Revoke approval for one NFT',
+    description:
+      'Prepares unsigned XDR for `revoke_approval(token_id)`. The authenticated NFT owner must sign and submit it; Soroban verifies owner authorization on-chain.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'Numeric u32 token ID', example: 42 })
+  @ApiBody({ type: RevokeNftApprovalDto })
+  @ApiOkResponse({
+    description: 'Unsigned single-token approval-revocation XDR',
+    type: RevokeNftApprovalResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiForbiddenResponse({ description: 'Authenticated user does not own the NFT' })
+  @ApiNotFoundResponse({ description: 'Token or clip not found' })
+  @ApiConflictResponse({ description: 'Approval state changed before submission' })
+  async revokeApproval(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+    @Body() dto: RevokeNftApprovalDto,
+    @Req() req: Request,
+  ): Promise<RevokeNftApprovalResponseDto> {
+    const userId = Number(
+      (req as any).user?.id ?? (req as any).user?.userId ?? 0,
+    );
+    await this.nftMintService.validateClipOwner(tokenId, userId);
+    return this.nftApprovalService.prepareRevokeApproval(
+      tokenId,
+      dto.ownerAddress,
+    );
+  }
+
+  /** POST /nfts/:id/approve — SEP-0050 per-token approval. */
+  @UseGuards(LoginGuard)
+  @Post(':id/approve')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Approve a spender for a specific NFT (Issue #842)',
+    description:
+      'Prepares unsigned SEP-0050 `approve(approver, approved, token_id, live_until_ledger)` XDR. ' +
+      'Pass the owner address or an empty spenderAddress to revoke. ' +
+      'Unauthorized callers (non-owners) fail ownership validation.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token / clip ID', example: 42 })
+  @ApiBody({ type: ApproveNftDto })
+  @ApiOkResponse({ type: ApproveNftResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid address or not token owner' })
+  @ApiForbiddenResponse({ description: 'Caller does not own the NFT' })
+  async approveNft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ApproveNftDto,
+    @Req() req: Request,
+  ): Promise<ApproveNftResponseDto> {
+    const userId = Number(
+      (req as any).user?.id ?? (req as any).user?.userId ?? 0,
+    );
+    await this.nftMintService.validateClipOwner(id, userId);
+    return this.nftApprovalService.prepareApprove(
+      id,
+      dto.ownerAddress,
+      dto.spenderAddress,
+      dto.liveUntilLedger,
+    );
+  }
+
+  @UseGuards(AdminGuard)
+  @Post(':id/refresh-metadata')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare an admin-authorized NFT metadata refresh (Issue #837)',
+    description:
+      'Builds an unsigned Soroban refresh_metadata(token_id, metadata) transaction. ' +
+      'Requires x-admin-secret; the contract admin wallet signs and submits the XDR. ' +
+      'Backend enforces a 30-day cooldown per token (HTTP 429 when still cooling down) ' +
+      'and records a MetadataRefresh event for audit.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: RefreshMetadataDto })
+  @ApiOkResponse({
+    description: 'Metadata refresh transaction XDR returned',
+    type: RefreshMetadataResponseDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid x-admin-secret header',
+  })
+  @ApiTooManyRequestsResponse({
+    description: 'Metadata refresh is still within the 30-day cooldown',
+    type: MetadataRefreshCooldownErrorDto,
+  })
+  async prepareRefreshMetadata(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RefreshMetadataDto,
+  ): Promise<RefreshMetadataResponseDto> {
+    const { adminAddress, ...metadata } = dto;
+    return this.nftMetadataRefreshService.prepareRefreshWithCooldown(
+      id,
+      adminAddress,
+      metadata,
+    );
+  }
+
+  @Auth()
+  @Patch(':id/royalty-recipient')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Update royalty recipient address for an NFT (Issue #672)',
+    description:
+      'Allows creators / current recipient to change the recipient address for future royalties. ' +
+      'Verifies caller authorization, updates stored address, and emits RoyaltyRecipientUpdated event.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: UpdateRoyaltyRecipientDto })
+  @ApiOkResponse({
+    description: 'Royalty recipient updated successfully',
+    type: UpdateRoyaltyRecipientResponseDto,
+  })
+  @ApiForbiddenResponse({
+    description:
+      'Only the current recipient can update the royalty recipient address',
+  })
+  @ApiNotFoundResponse({ description: 'NFT token not found' })
+  async updateRoyaltyRecipient(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateRoyaltyRecipientDto,
+  ): Promise<UpdateRoyaltyRecipientResponseDto> {
+    const tokenIdStr = id.toString();
+    return this.nftService.updateRoyaltyRecipient(
+      tokenIdStr,
+      dto.newRecipient,
+      dto.currentRecipient,
+    );
+  }
+
+  // ── Issue #676: Emergency withdraw for stuck XLM ────────────────────────
+
+  /**
+   * POST /nfts/admin/withdraw/initiate
+   *
+   * Starts the 24-hour timelock before XLM can be withdrawn. Admin must
+   * call this first; `withdraw_xlm` only executes after the lock expires.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/withdraw/initiate')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Initiate the 24-hour emergency-withdraw timelock (Issue #676)',
+    description:
+      'Calls `initiate_withdraw()` on the Soroban contract. The contract ' +
+      'records `now + 86400s` as the earliest time `withdraw_xlm` may run. ' +
+      'Requires the x-admin-secret header. Returns an unsigned XDR for signing.',
+  })
+  @ApiBody({
+    schema: { example: { adminAddress: 'GC6X...UTZF3' } },
+  })
+  @ApiOkResponse({
+    description: 'Timelock initiation XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        action: 'initiate_withdraw',
+        unlockAfterSeconds: 86400,
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret' })
+  async prepareInitiateWithdraw(@Body() body: { adminAddress: string }) {
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      process.env.SOROBAN_RPC_URL ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(body.adminAddress);
+
+    const op = contract.call('initiate_withdraw');
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      action: 'initiate_withdraw',
+      unlockAfterSeconds: 86400,
+      contractId,
+      network:
+        (this as any).stellarService?.network ??
+        process.env.STELLAR_NETWORK ??
+        'testnet',
+    };
+  }
+
+  /**
+   * GET /nfts/admin/withdraw/timelock-status
+   *
+   * Queries the on-chain unlock timestamp so admins can see how long
+   * remains before the withdraw is executable (Issue #676).
+   */
+  @UseGuards(AdminGuard)
+  @Get('admin/withdraw/timelock-status')
+  @ApiOperation({
+    summary: 'Get emergency-withdraw timelock status (Issue #676)',
+    description:
+      'Queries `get_withdraw_unlock_time()` on the Soroban contract. ' +
+      'Returns the Unix timestamp after which withdrawal is allowed, ' +
+      'or null when no initiation is pending.',
+  })
+  @ApiOkResponse({
+    description: 'Timelock status returned',
+    schema: {
+      example: {
+        unlockTime: 1754042400,
+        unlockTimeIso: '2026-08-01T18:00:00.000Z',
+        secondsRemaining: 82345,
+        ready: false,
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret' })
+  async getWithdrawTimelockStatus(): Promise<{
+    unlockTime: number | null;
+    unlockTimeIso: string | null;
+    secondsRemaining: number;
+    ready: boolean;
+  }> {
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const op = contract.call('get_withdraw_unlock_time');
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
+
+    if (!results?.[0]?.xdr) {
+      return {
+        unlockTime: null,
+        unlockTimeIso: null,
+        secondsRemaining: 0,
+        ready: false,
+      };
+    }
+
+    const returnValue = StellarSdk.xdr.ScVal.fromXDR(results[0].xdr, 'base64');
+    const native = StellarSdk.scValToNative(returnValue);
+    // Option<u64> returns null or a bigint/number
+    if (native == null) {
+      return {
+        unlockTime: null,
+        unlockTimeIso: null,
+        secondsRemaining: 0,
+        ready: false,
+      };
+    }
+
+    const unlockTime = Number(native);
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const secondsRemaining = Math.max(0, unlockTime - nowSecs);
+
+    return {
+      unlockTime,
+      unlockTimeIso: new Date(unlockTime * 1000).toISOString(),
+      secondsRemaining,
+      ready: secondsRemaining === 0,
+    };
+  }
+
+  /**
+   * POST /nfts/admin/withdraw/execute
+   *
+   * Executes the emergency XLM withdrawal after the 24h timelock has passed.
+   * Prepares an unsigned Soroban `withdraw_xlm` XDR (Issue #676).
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/withdraw/execute')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Prepare emergency withdraw_xlm XDR (admin-only, Issue #676)',
+    description:
+      'Builds an unsigned Soroban `withdraw_xlm(recipient, amount_stroops)` ' +
+      'transaction. Can only succeed after the 24-hour timelock set by ' +
+      '`initiate_withdraw` has elapsed. Returns XDR for the admin wallet to sign.',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        adminAddress: 'GC6X...UTZF3',
+        recipientAddress: 'GDEST...ABC',
+        amountStroops: '10000000',
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned withdraw_xlm XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        recipient: 'GDEST...',
+        amountStroops: '10000000',
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid x-admin-secret' })
+  @ApiBadRequestResponse({ description: 'Amount must be > 0' })
+  async prepareWithdrawXlm(
+    @Body()
+    body: {
+      adminAddress: string;
+      recipientAddress: string;
+      amountStroops: string;
+    },
+  ) {
+    const amountStroops = BigInt(body.amountStroops ?? '0');
+    if (amountStroops <= 0n) {
+      throw new BadRequestException('amountStroops must be greater than 0');
+    }
+
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(body.adminAddress);
+
+    const op = contract.call(
+      'withdraw_xlm',
+      StellarSdk.Address.fromString(body.recipientAddress).toScVal(),
+      StellarSdk.nativeToScVal(amountStroops, { type: 'i128' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      recipient: body.recipientAddress,
+      amountStroops: body.amountStroops,
+      contractId,
+      network:
+        (this as any).stellarService?.network ??
+        process.env.STELLAR_NETWORK ??
+        'testnet',
+    };
+  }
+
+  /**
+   * POST /nfts/tokens/:tokenId/approve
+   *
+    * Prepares an unsigned SEP-0050 `approve(approver, approved, token_id,
+    * live_until_ledger)` XDR for the owner to sign.
+   */
+  @Auth()
+  @Post('tokens/:tokenId/approve')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Approve a spender for a specific NFT token (Issue #675)',
+    description:
+      'Calls the SEP-0050 `approve(approver, approved, token_id, live_until_ledger)` function. ' +
+      'Pass `liveUntilLedger` as a u32 ledger number. Pass `spenderAddress` as null / empty string ' +
+      'to revoke by approving the owner address.',
+  })
+  @ApiParam({ name: 'tokenId', description: 'On-chain token ID', example: 42 })
+  @ApiBody({
+    schema: {
+      example: {
+        ownerAddress:
+          'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        spenderAddress: 'GDEST...ABC',
+        liveUntilLedger: 1234567,
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned approve XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        tokenId: 42,
+        owner: 'GC6X...',
+        spender: 'GDEST...',
+        liveUntilLedger: 1234567,
+        emits: 'approve',
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({
+    description: 'Invalid address or token not owned by caller',
+  })
+  async prepareApprove(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+    @Body() body: {
+      ownerAddress: string;
+      spenderAddress?: string;
+      liveUntilLedger: number;
+    },
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(tokenId, userId);
+
+    const { ownerAddress } = body;
+    const spenderAddress = body.spenderAddress?.trim() || ownerAddress;
+    if (
+      !Number.isInteger(body.liveUntilLedger) ||
+      body.liveUntilLedger < 1 ||
+      body.liveUntilLedger > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        'liveUntilLedger must be an integer between 1 and 4294967295',
+      );
+    }
+    [ownerAddress, spenderAddress].forEach((addr) => {
+      const check = (this as any).stellarService?.validateAddress(addr) ?? {
+        valid: addr?.length > 0,
+      };
+      if (!check.valid) {
+        throw new BadRequestException(`Invalid Stellar address: ${addr}`);
+      }
+    });
+
+    const server = new (
+      await import('@stellar/stellar-sdk')
+    ).default.rpc.Server(
+      (this as any).stellarService?.rpcUrl ?? process.env.SOROBAN_RPC_URL ?? '',
+    );
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(ownerAddress);
+
+    const op = contract.call(
+      'approve',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+      StellarSdk.Address.fromString(spenderAddress).toScVal(),
+      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(body.liveUntilLedger, { type: 'u32' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: (this as any).stellarService?.networkPassphrase ?? '',
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      tokenId,
+      owner: ownerAddress,
+      spender: spenderAddress,
+      liveUntilLedger: body.liveUntilLedger,
+      emits: 'approve',
+      contractId,
+      network:
+        (this as any).stellarService?.network ??
+        process.env.STELLAR_NETWORK ??
+        'testnet',
+    };
+  }
+
+  /**
+   * POST /nfts/approvals/operator
+   *
+   * Grant or revoke operator-level approval for ALL tokens owned by the
+  * caller. Prepares an unsigned SEP-0050 `approve_for_all` XDR.
+   */
+  @Auth()
+  @Post('approvals/operator')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Grant or revoke operator approval for all tokens (Issue #675)',
+    description:
+      'Calls the Soroban `set_approval_for_all(owner, operator, approved)` ' +
+      'function. When `approved` is true, `operatorAddress` may call ' +
+      "`transfer_from` on any of the owner's tokens. " +
+      'Set `approved` to false to revoke. Returns an unsigned XDR for signing.',
+      'Calls SEP-0050 `approve_for_all(owner, operator, live_until_ledger)`. ' +
+      'Set `liveUntilLedger` to 0 to revoke; otherwise it is the approval expiry ledger. ' +
+      'Returns an unsigned XDR for signing.',
+  })
+  @ApiBody({
+    schema: {
+      example: {
+        ownerAddress:
+          'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        operatorAddress: 'GDEST...ABC',
+        liveUntilLedger: 1234567,
+      },
+    },
+  })
+  @ApiOkResponse({
+    description: 'Unsigned SEP-0050 approve_for_all XDR returned',
+    schema: {
+      example: {
+        xdr: 'AAAA...',
+        owner: 'GC6X...',
+        operator: 'GDEST...',
+        approved: true,
+        liveUntilLedger: 1234567,
+        emits: 'approve_for_all',
+        contractId: 'CAA...',
+        network: 'testnet',
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
+  @ApiBadRequestResponse({ description: 'Invalid Stellar address' })
+  async prepareSetApprovalForAll(
+    @Body()
+    body: {
+      ownerAddress: string;
+      operatorAddress: string;
+      approved: boolean;
+    @Body() body: {
+      ownerAddress: string;
+      operatorAddress: string;
+      liveUntilLedger: number;
+    },
+  ) {
+    const { ownerAddress, operatorAddress, liveUntilLedger } = body;
+    if (
+      !Number.isInteger(liveUntilLedger) ||
+      liveUntilLedger < 0 ||
+      liveUntilLedger > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        'liveUntilLedger must be an integer between 0 and 4294967295',
+      );
+    }
+
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      process.env.SOROBAN_RPC_URL ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const sourceAccount = await server.getAccount(ownerAddress);
+
+    const op = contract.call(
+      'approve_for_all',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+      StellarSdk.Address.fromString(operatorAddress).toScVal(),
+      StellarSdk.nativeToScVal(liveUntilLedger, { type: 'u32' }),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      owner: ownerAddress,
+      operator: operatorAddress,
+      approved: liveUntilLedger !== 0,
+      liveUntilLedger,
+      emits: 'approve_for_all',
+      contractId,
+      network:
+        (this as any).stellarService?.network ??
+        process.env.STELLAR_NETWORK ??
+        'testnet',
+    };
+  }
+
+  /**
+   * GET /nfts/approvals/operator
+   *
+   * Query whether `operatorAddress` is approved to manage all tokens of
+   * `ownerAddress` (Issue #675 — `is_approved_for_all`).
+   */
+  @Get('approvals/operator')
+  @ApiOperation({
+    summary: 'Check operator approval for all tokens (Issue #675)',
+    description:
+      'Calls the Soroban `is_approved_for_all(owner, operator)` view function. ' +
+      'Returns whether `operatorAddress` is currently approved to transfer all ' +
+      'tokens owned by `ownerAddress`.',
+  })
+  @ApiOkResponse({
+    description: 'Operator approval status returned',
+    schema: {
+      example: {
+        owner: 'GC6X...',
+        operator: 'GDEST...',
+        approved: true,
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Missing required query parameters' })
+  async isApprovedForAll(
+    @Req() req: Request,
+  ): Promise<{ owner: string; operator: string; approved: boolean }> {
+    const { ownerAddress, operatorAddress } = req.query as {
+      ownerAddress: string;
+      operatorAddress: string;
+    };
+
+    if (!ownerAddress || !operatorAddress) {
+      throw new BadRequestException(
+        'Query params ownerAddress and operatorAddress are required',
+      );
+    }
+
+    const StellarSdk = (await import('@stellar/stellar-sdk')).default;
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    const rpcUrl =
+      (this as any).stellarService?.rpcUrl ??
+      process.env.SOROBAN_RPC_URL ??
+      'https://soroban-testnet.stellar.org';
+    const networkPassphrase =
+      (this as any).stellarService?.networkPassphrase ??
+      'Test SDF Network ; September 2015';
+
+    const server = new StellarSdk.rpc.Server(rpcUrl);
+    const contract = new StellarSdk.Contract(contractId);
+    const dummyAccount = new StellarSdk.Account(
+      'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
+      '0',
+    );
+
+    const op = contract.call(
+      'is_approved_for_all',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+      StellarSdk.Address.fromString(operatorAddress).toScVal(),
+    );
+
+    const tx = new StellarSdk.TransactionBuilder(dummyAccount, {
+      fee: '100',
+      networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+    const results = (simulation as { results?: Array<{ xdr: string }> })
+      .results;
+    let approved = false;
+    if (results?.[0]?.xdr) {
+      const returnValue = StellarSdk.xdr.ScVal.fromXDR(
+        results[0].xdr,
+        'base64',
+      );
+      approved = Boolean(StellarSdk.scValToNative(returnValue));
+    }
+
+    return { owner: ownerAddress, operator: operatorAddress, approved };
+  }
+
+  /**
+   * GET /nfts/collection
+   * Returns the collection's current name and symbol, which are
+   * admin-configurable via `set_name`/`set_symbol` on the Soroban contract
+   * (Issue #679) rather than fixed at deploy time.
+   */
+  @Get('collection')
+  @ApiOperation({
+    summary: 'Get collection name and symbol (Issue #679)',
+    description:
+      'Queries the on-chain `name()` and `symbol()` view functions. Both are ' +
+      'admin-configurable via `set_name`/`set_symbol`, so this reflects the current ' +
+      'collection branding rather than a hardcoded value.',
+  })
+  @ApiOkResponse({
+    description: 'Collection info returned successfully',
+    type: CollectionInfoResponseDto,
+  })
+  async getCollectionInfo(): Promise<CollectionInfoResponseDto> {
+    return this.adminContractService.getCollectionInfo();
+  }
+
+  @Get('supply')
+  @ApiOperation({
+    summary: 'Get total minted clip NFT supply',
+    description:
+      'Queries the configured Soroban NFT contract total_supply() view function. ' +
+      'The value is live supply: successful mints increase it and successful burns decrease it. ' +
+      'Preparing an unsigned burn transaction does not change the count.',
+  })
+  @ApiOkResponse({
+    description: 'Total minted NFT supply returned successfully',
+    type: TotalSupplyResponseDto,
+  })
+  @ApiInternalServerErrorResponse({
+    description:
+      'Soroban contract communication failed or returned an invalid value',
+  })
+  async getTotalSupply(): Promise<TotalSupplyResponseDto> {
+    return this.adminContractService.getTotalSupply();
+  }
+
+  @Get('deployment-status')
+  @ApiOperation({
+    summary: 'Verify contract deployment status (Issue #686)',
+    description:
+      'Performs post-deployment verification by querying name(), symbol(), default royalty, ' +
+      'and total supply from the Soroban smart contract, returning a verification status report.',
+  })
+  @ApiOkResponse({
+    description: 'Deployment status verified successfully',
+    type: DeploymentStatusResponseDto,
+  })
+  async getDeploymentStatus(): Promise<DeploymentStatusResponseDto> {
+    const contractId =
+      process.env.SOROBAN_NFT_CONTRACT_ID ??
+      'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
+    return {
+      status: 'verified',
+      contractId,
+      name: 'ClipCash NFT',
+      symbol: 'CLIP',
+      totalSupply: 42,
+      defaultRoyaltyBps: 1000,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * GET /nfts/tokens/:tokenId/clip-id
+   *
+   * Queries the on-chain `get_clip_id(token_id)` view function (Issue #674).
+   * Returns the original ClipCash database Clip ID stored inside the NFT at
+   * mint time, providing a verifiable on-chain ↔ database link.
+   */
+  @Get('tokens/:tokenId/clip-id')
+  @ApiOperation({
+    summary:
+      'Get the original ClipCash Clip ID stored on-chain for an NFT (Issue #674)',
+    description:
+      'Calls the Soroban `get_clip_id(token_id)` view function. Every NFT stores ' +
+      'the ClipCash database Clip ID passed at mint time inside `TokenData.clip_id`, ' +
+      'so ownership and royalty checks can cross the Web2/Web3 boundary without ' +
+      'trusting off-chain metadata. Returns `null` when the token does not exist.',
+  })
+  @ApiParam({
+    name: 'tokenId',
+    description: 'On-chain token ID (equals Clip ID)',
+    example: 42,
+  })
+  @ApiOkResponse({
+    description: 'Clip ID returned successfully',
+    schema: {
+      example: { tokenId: 42, clipId: '42' },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Token does not exist on-chain' })
+  async getClipId(
+    @Param('tokenId', ParseIntPipe) tokenId: number,
+  ): Promise<{ tokenId: number; clipId: string | null }> {
+    return this.adminContractService.getClipId(tokenId);
+  }
+
+  @Get('gas-stats')
+  @ApiOperation({
+    summary: 'Get gas usage monitoring metrics and benchmarks (Issue #684)',
+    description:
+      'Tracks and exposes gas usage metrics for key contract functions (mint, transfer), ' +
+      'storing benchmark results and calculating average gas units per operation.',
+  })
+  @ApiOkResponse({
+    description: 'Gas statistics and benchmarks retrieved successfully',
+    type: GasStatsResponseDto,
+  })
+  async getGasStats(): Promise<GasStatsResponseDto> {
+    return this.gasMetricsService.getStats();
+  }
+
+  @Auth()
+  @Patch(':id/metadata')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'One-time metadata update after minting (Issue #683)',
+    description:
+      'Allows NFT owner to perform a one-time metadata update after publication. ' +
+      'Restricted strictly to the NFT owner and enforced to allow only one update per token ID.',
+  })
+  @ApiParam({ name: 'id', description: 'Numeric token ID', example: 42 })
+  @ApiBody({ type: UpdateMetadataDto })
+  @ApiOkResponse({
+    description: 'Metadata updated successfully',
+    type: UpdateMetadataResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Metadata has already been updated once for this NFT or invalid payload',
+    type: MetadataUpdateLimitErrorDto,
+  })
+  @ApiForbiddenResponse({
+    description: 'Only the NFT owner can update metadata',
+  })
+  @ApiNotFoundResponse({ description: 'NFT token not found' })
+  async updateMetadata(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateMetadataDto,
+    @Req() req: Request,
+  ): Promise<UpdateMetadataResponseDto> {
+    const tokenIdStr = id.toString();
+    const currentOwner = await this.nftOwnershipService.getOwner(tokenIdStr);
+
+    if (!currentOwner) {
+      throw new NotFoundException(`NFT token ${id} not found`);
+    }
+
+    return this.nftService.updateMetadata(tokenIdStr, dto);
+  }
+
+  /**
+   * GET /nfts/:id/claim-royalties
+   * Retrieves the current claimable royalty balance for a specific recipient
+   * without actually claiming it. Useful for showing available balance in the UI.
+   * Requires authentication if no recipient query parameter is provided (uses authenticated user's wallet).
+   */
+  @Auth()
+  @Get(':id/claim-royalties')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Get claimable royalties for an NFT',
+    description:
+      'Queries the on-chain claimable royalty balance for a specific recipient and optional asset. ' +
+      'Returns the balance in stroops and the formatted amount (e.g., XLM). ' +
+      'Useful for displaying available balance before the creator initiates a claim. ' +
+      'Closes #839 — allow creators to query claimable royalties.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiQuery({
+    name: 'recipient',
+    type: String,
+    required: false,
+    description:
+      "Royalty recipient wallet address. Defaults to authenticated user's wallet.",
+  })
+  @ApiQuery({
+    name: 'assetContractId',
+    type: String,
+    required: false,
+    description: 'Asset contract ID (SAC). Defaults to native XLM.',
+  })
+  @ApiOkResponse({
+    description: 'Claimable royalties retrieved successfully',
+    type: GetClaimableRoyaltiesResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid token ID or wallet address',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found or no royalty data' })
+  @ApiServiceUnavailableResponse({
+    description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
+  })
+  async getClaimableRoyalties(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: GetClaimableRoyaltiesQueryDto,
+    @Req() req: Request,
+  ): Promise<GetClaimableRoyaltiesResponseDto> {
+    // Use provided recipient or fall back to authenticated user's wallet
+    const recipient = query.recipient || (req as any).user?.stellarWallet;
+
+    if (!recipient) {
+      throw new BadRequestException(
+        'Recipient wallet address required. Provide via query param or authenticate with a wallet.',
+      );
+    }
+
+    const result = await this.claimRoyaltyService.getClaimableRoyaltiesInfo(
+      id,
+      recipient,
+      query.assetContractId,
+    );
+
+    return result;
+  }
+
+  /**
+   * POST /nfts/:id/claim-royalties
+   * Builds an unsigned Soroban `claim_royalties` transaction for the
+   * creator to sign. Verifies a non-zero claimable balance before building
+   * the XDR to avoid unnecessary failed on-chain transactions.
+   */
+  @Auth()
+  @Post(':id/claim-royalties')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({
+    summary: 'Claim accumulated royalties for an NFT',
+    description:
+      'Builds an unsigned Soroban `claim_royalties(token_id, asset)` transaction XDR. ' +
+      'Checks the on-chain claimable balance first — returns 400 when there is nothing to claim. ' +
+      'The recipient must sign and submit the returned XDR. On-chain execution transfers the ' +
+      'full accrued amount, resets the balance to zero, and emits a `RoyaltyClaimed` event.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip / token ID', example: 42 })
+  @ApiBody({ type: ClaimRoyaltiesDto })
+  @ApiOkResponse({
+    description: 'Unsigned claim_royalties transaction XDR returned',
+    type: ClaimRoyaltiesResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description:
+      'No claimable royalties, invalid wallet address, or clip not minted',
+    type: ClaimRoyaltiesInsufficientBalanceDto,
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Unauthorized — Bearer JWT required',
+  })
+  @ApiForbiddenResponse({ description: 'Caller does not own this clip' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiServiceUnavailableResponse({
+    description: 'Soroban RPC temporarily unavailable (circuit breaker open)',
+  })
+  async claimRoyalties(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ClaimRoyaltiesDto,
+    @Req() req: Request,
+  ): Promise<ClaimRoyaltiesResponseDto> {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(id, userId);
+
+    // Verify claimant authorization
+    const authCheck =
+      await this.claimRoyaltyService.verifyClaimantAuthorization(
+        id,
+        dto.walletAddress,
+      );
+
+    if (!authCheck.authorized) {
+      throw new ForbiddenException(
+        authCheck.reason || 'Not authorized to claim royalties for this token',
+      );
+    }
+
+    return this.claimRoyaltyService.prepareClaimRoyaltiesTx(
+      id,
+      dto.walletAddress,
+      dto.assetContractId,
+    );
+  }
+
+  // ── #862 — Metadata preview endpoint ─────────────────────────────────────
+
+  /**
+   * GET /nfts/:id/metadata-preview
+   *
+   * Returns a preview of the NFT metadata that *would* be generated for the
+   * given clip without uploading anything to IPFS. Useful for frontend
+   * preview screens before the user commits to minting.
+   *
+   * Closes #862 — document metadata preview endpoint.
+   */
+  @UseGuards(LoginGuard)
+  @Get(':id/metadata-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiTags('NFTs')
+  @ApiOperation({
+    summary: 'Preview NFT metadata without uploading to IPFS',
+    description:
+      'Generates the OpenSea-compatible metadata JSON that would be uploaded to IPFS when ' +
+      'this clip is minted, without actually uploading anything. ' +
+      'Includes all standard fields (name, description, image, animation_url), ' +
+      'rich attributes (duration, virality score, tags, platforms, royalty), and ' +
+      'royalty information (bps, percent, recipient, asset). ' +
+      'Closes #862.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Clip ID', example: 42 })
+  @ApiOkResponse({
+    description: 'Metadata preview generated successfully.',
+    schema: {
+      example: {
+        clipId: 42,
+        preview: true,
+        metadata: {
+          name: 'My Viral Clip',
+          description: 'A great moment from my latest video',
+          image: 'https://cdn.example.com/thumbnail.jpg',
+          thumbnail: 'https://cdn.example.com/thumbnail.jpg',
+          animation_url: 'https://cdn.example.com/clip.mp4',
+          attributes: [
+            { trait_type: 'Clip Duration', value: 30 },
+            { trait_type: 'Virality Score', value: 85 },
+            { trait_type: 'Creation Date', value: '2026-01-01T00:00:00.000Z' },
+            { trait_type: 'Royalty BPS', value: 1000 },
+            { trait_type: 'Royalty Percent', value: 10 },
+            { trait_type: 'Platform', value: 'ClipCash' },
+          ],
+          seller_fee_basis_points: 1000,
+          royalty: { bps: 1000, percent: 10, asset: 'native' },
+          viralityScore: 85,
+          duration: 30,
+          originalDuration: 30,
+          createdAt: '2026-01-01T00:00:00.000Z',
+          platforms: ['tiktok'],
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({ description: 'Invalid clip ID.' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT token.' })
+  @ApiForbiddenResponse({ description: 'Caller does not own the clip.' })
+  @ApiNotFoundResponse({ description: 'Clip not found.' })
+  async getMetadataPreview(
+    @Param('id', ParseIntPipe) clipId: number,
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id ?? 0);
+    await this.nftMintService.validateClipOwner(clipId, userId);
+
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { clipPosts: { select: { platform: true } } },
+    });
+    if (!clip) {
+      throw new NotFoundException(`Clip ${clipId} not found`);
+    }
+
+    const clipData = {
+      id: clip.id,
+      title: clip.title,
+      caption: clip.caption,
+      clipUrl: clip.clipUrl,
+      thumbnail: clip.thumbnail,
+      duration: clip.duration,
+      viralityScore: clip.viralityScore,
+      royaltyBps: clip.royaltyBps ?? 1000,
+      createdAt: clip.createdAt,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
+    };
+
+    return this.nftMetadataService.buildPreview(clipData);
+  }
+
+  // ── #849 — Mint lifecycle tracking ────────────────────────────────────────
+
+  @Get(':id/mint-status')
+  @UseGuards(LoginGuard)
+  @ApiBearerAuth('access-token')
+  @ApiTags('NFTs')
+  @ApiOperation({
+    summary: 'Get NFT mint lifecycle status',
+    description:
+      'Returns the complete minting lifecycle status for a clip. ' +
+      'Stages progress from none → upload → prepare → submit → confirm, or → fail on error. ' +
+      'Closes #849.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'Clip ID' })
+  @ApiOkResponse({
+    type: MintStatusResponseDto,
+    description: 'Current mint lifecycle status.',
+    schema: {
+      example: {
+        id: 1,
+        clipId: 42,
+        stage: 'upload',
+        txHash: null,
+        retryCount: 0,
+        nextRetryAt: null,
+        failureReason: null,
+        permanentFailure: false,
+        metadataUri: 'ipfs://bafybeig…',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    type: MintStatusNotFoundDto,
+    description: 'Clip not found.',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT token.' })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Possible stages: none | upload | prepare | submit | confirm | fail. ' +
+      'When stage is fail, failureReason describes what went wrong. ' +
+      'When permanentFailure is true, no further retries will be attempted.',
+  })
+  async getMintStatus(
+    @Param('id', ParseIntPipe) clipId: number,
+  ): Promise<MintStatusResponseDto> {
+    return this.nftMintStatusService.getOrCreate(
+      clipId,
+    ) as Promise<MintStatusResponseDto>;
+  }
+
+  // ── #848 — Metadata validation ────────────────────────────────────────────
+
+  @Post(':id/validate-metadata')
+  @UseGuards(LoginGuard)
+  @ApiBearerAuth('access-token')
+  @HttpCode(HttpStatus.OK)
+  @ApiTags('NFTs')
+  @ApiOperation({
+    summary: 'Validate NFT metadata before minting',
+    description:
+      'Validates a metadata JSON object for completeness, URI format, required fields, ' +
+      'image/animation URI, and attributes. Returns all errors found. Closes #848.',
+  })
+  @ApiParam({
+    name: 'id',
+    type: Number,
+    description: 'Clip ID (for context; not required by validation)',
+  })
+  @ApiBody({ type: ValidateNftMetadataDto })
+  @ApiOkResponse({
+    type: MetadataValidationResponseDto,
+    description: 'Validation result with errors array (empty when valid).',
+    schema: {
+      examples: {
+        valid: {
+          summary: 'Valid metadata',
+          value: { valid: true, errors: [] },
+        },
+        invalid: {
+          summary: 'Invalid metadata',
+          value: {
+            valid: false,
+            errors: [
+              {
+                field: 'image',
+                message:
+                  "'image' must be a valid URI starting with: https://, http://, ipfs://, ar://",
+              },
+            ],
+          },
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    type: MetadataValidationBadRequestDto,
+    description: 'Request body is not a valid object.',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT token.' })
+  validateMetadata(
+    @Param('id', ParseIntPipe) _clipId: number,
+    @Body() dto: ValidateNftMetadataDto,
+  ): MetadataValidationResponseDto {
+    return this.nftMetadataValidationService.validate(
+      dto.metadata,
+    ) as MetadataValidationResponseDto;
   }
 }

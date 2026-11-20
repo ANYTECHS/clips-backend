@@ -1,117 +1,127 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Job } from 'bullmq';
-import { AnomalyDetectionService } from './anomaly-detection.service';
-import { MetricsService } from '../metrics/metrics.service';
+import { Logger, OnModuleInit } from '@nestjs/common';
+import { Job, UnrecoverableError } from 'bullmq';
 import { ANOMALY_DETECTION_QUEUE } from './anomaly-detection.queue';
-import { MailService } from '../auth/mail.service';
+import { AnomalyDetectionService } from './anomaly-detection.service';
+import { PrismaService } from '../prisma/prisma.service';
+import { ConfigService } from '../config/config.service';
+import { MetricsService } from '../metrics/metrics.service';
+import { AnomalySeverity } from './earning-anomaly.entity';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
-import { getBullMQWorkerConfig } from '../config/bullmq.config';
+import {
+  handleFailedEvent,
+  handleProcessingError,
+} from '../queue/processor-error.handler';
 
-interface AnomalyDetectionJob {
-  earningId: number;
-}
-
-/**
- * BullMQ processor for anomaly-detection jobs.
- *
- * Migrated from legacy @Process() (Bull v3) to WorkerHost (BullMQ) so that:
- *  - The worker participates in the NestJS shutdown lifecycle.
- *  - GracefulShutdownService can drain in-flight jobs before the process exits.
- *  - @OnWorkerEvent handlers are available for structured failure logging.
- */
-@Processor(ANOMALY_DETECTION_QUEUE, {
-  concurrency: getBullMQWorkerConfig(new ConfigService()).anomalyDetectionConcurrency,
-})
-export class AnomalyDetectionProcessor extends WorkerHost {
+@Processor(ANOMALY_DETECTION_QUEUE)
+export class AnomalyDetectionProcessor extends WorkerHost implements OnModuleInit {
   private readonly logger = new Logger(AnomalyDetectionProcessor.name);
 
   constructor(
-    private anomalyDetectionService: AnomalyDetectionService,
-    private mailService: MailService,
-    private metricsService: MetricsService,
+    private readonly anomalyService: AnomalyDetectionService,
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+    private readonly metricsService: MetricsService,
+    private readonly shutdownService: GracefulShutdownService,
   ) {
     super();
   }
 
-  async process(job: Job<AnomalyDetectionJob>): Promise<void> {
-    const { earningId } = job.data;
-    this.logger.log(`Processing anomaly detection for earning ${earningId}`);
+  onModuleInit(): void {
+    this.shutdownService.register(this.worker);
+  }
 
+  async process(job: Job): Promise<void> {
+    const { earningId, userId, amount, clipId } = job.data;
     const jobMetricId = `${ANOMALY_DETECTION_QUEUE}:${job.id}`;
+    this.logger.log(
+      `Processing anomaly detection for earning ${earningId} — attempt ${job.attemptsMade + 1}/${job.opts.attempts ?? 1} ` +
+        JSON.stringify({ queue: ANOMALY_DETECTION_QUEUE, jobId: job.id, earningId, userId, clipId }),
+    );
     this.metricsService.recordJobStart(jobMetricId);
 
     try {
-      const result = await this.anomalyDetectionService.detectAnomalies(earningId);
+      if (typeof earningId !== 'number' || typeof userId !== 'number' || typeof amount !== 'number') {
+        throw new UnrecoverableError(
+          `[${ANOMALY_DETECTION_QUEUE}:${String(job.id)}] Invalid anomaly job payload: earningId, userId and amount must be numbers`,
+        );
+      }
 
-      if (result.isAnomaly && result.severity === 'high' && result.reason) {
-        await this.notifyAdmins({
-          reason: result.reason,
-          severity: result.severity,
+      const baseline = await this.anomalyService.calculateBaseline(
+        userId,
+        this.config.anomalyLookbackDays,
+      );
+
+      if (baseline.sampleCount < 3) {
+        this.logger.log(
+          `Insufficient baseline data for user ${userId} (${baseline.sampleCount} samples) ` +
+            JSON.stringify({ queue: ANOMALY_DETECTION_QUEUE, jobId: job.id, userId }),
+        );
+        this.metricsService.recordJobCompletion(jobMetricId, ANOMALY_DETECTION_QUEUE, 'success');
+        return;
+      }
+
+      const thresholdMultiplier = this.config.anomalyThresholdMultiplier;
+      const upperBound = baseline.avgAmount + thresholdMultiplier * baseline.stdDev;
+
+      if (amount > upperBound) {
+        const zScore = (amount - baseline.avgAmount) / baseline.stdDev;
+        let severity: AnomalySeverity;
+        if (zScore > 5) severity = AnomalySeverity.CRITICAL;
+        else if (zScore > 4) severity = AnomalySeverity.HIGH;
+        else if (zScore > 3) severity = AnomalySeverity.MEDIUM;
+        else severity = AnomalySeverity.LOW;
+
+        const reason =
+          'Earning amount ' + amount + ' exceeds baseline (avg: ' +
+          baseline.avgAmount.toFixed(2) + ', stdDev: ' +
+          baseline.stdDev.toFixed(2) + ', samples: ' + baseline.sampleCount + ')';
+
+        await this.prisma.earning.update({
+          where: { id: earningId },
+          data: { isAnomaly: true, anomalyReason: reason },
         });
+
+        await this.prisma.anomalyAlert.create({
+          data: {
+            earningId,
+            userId,
+            amount,
+            reason,
+            severity,
+            isResolved: false,
+          },
+        });
+
+        this.logger.warn(
+          `Anomaly detected in job ${String(job.id)}: earning ${earningId}, user ${userId}, severity ${severity}, amount ${amount} ` +
+            JSON.stringify({ queue: ANOMALY_DETECTION_QUEUE, jobId: job.id, earningId, userId, severity }),
+        );
       }
 
       this.metricsService.recordJobCompletion(jobMetricId, ANOMALY_DETECTION_QUEUE, 'success');
     } catch (error) {
-      this.logger.error(`Anomaly detection failed for earning ${earningId}:`, error);
-      this.metricsService.recordJobCompletion(jobMetricId, ANOMALY_DETECTION_QUEUE, 'failure');
-      this.metricsService.recordJobFailure(
+      handleProcessingError(
+        this.logger,
+        this.metricsService,
         ANOMALY_DETECTION_QUEUE,
-        error instanceof Error ? error.message : String(error),
+        job,
+        jobMetricId,
+        error,
       );
-      throw error;
     }
   }
 
   @OnWorkerEvent('failed')
-  onFailed(job: Job<AnomalyDetectionJob>, error: Error): void {
-    const isFinalAttempt = job.attemptsMade >= (job.opts.attempts ?? 1);
-    if (isFinalAttempt) {
-      this.logger.error(
-        `[FINAL FAILURE] Anomaly detection job ${job.id} exhausted all attempts — ` +
-          `earningId=${job.data.earningId} reason: ${error.message}`,
-      );
-      this.metricsService.recordJobFailure(ANOMALY_DETECTION_QUEUE, 'final_failure');
-    } else {
-      this.logger.warn(
-        `[RETRY] Anomaly detection job ${job.id} will retry — ` +
-          `attempt ${job.attemptsMade}/${job.opts.attempts ?? 1} reason: ${error.message}`,
-      );
-    }
+  onFailed(job: Job, error: Error): void {
+    handleFailedEvent(this.logger, this.metricsService, ANOMALY_DETECTION_QUEUE, job, error, 2000);
   }
 
   @OnWorkerEvent('completed')
-  onCompleted(job: Job<AnomalyDetectionJob>): void {
+  onCompleted(job: Job): void {
     this.logger.log(
-      `Anomaly detection job ${job.id} completed for earning ${job.data.earningId}`,
+      `Anomaly detection job ${String(job.id)} completed ` +
+        JSON.stringify({ queue: ANOMALY_DETECTION_QUEUE, jobId: job.id }),
     );
-  }
-
-  private async notifyAdmins(result: { reason: string; severity: string }): Promise<void> {
-    const adminEmails = process.env.ADMIN_EMAILS?.split(',') ?? [];
-
-    if (adminEmails.length === 0) {
-      this.logger.warn('No admin emails configured for anomaly notifications');
-      return;
-    }
-
-    const subject = `[${result.severity.toUpperCase()}] Earnings Anomaly Detected`;
-    const text =
-      `A ${result.severity} severity earnings anomaly has been detected:\n\n` +
-      `${result.reason}\n\nPlease review the anomaly alerts in the admin dashboard.`;
-
-    for (const email of adminEmails) {
-      try {
-        await this.mailService.sendEmail({
-          to: email.trim(),
-          subject,
-          text,
-        });
-        this.logger.log(`Anomaly notification sent to ${email}`);
-      } catch (error) {
-        this.logger.error(`Failed to send anomaly notification to ${email}:`, error);
-      }
-    }
   }
 }

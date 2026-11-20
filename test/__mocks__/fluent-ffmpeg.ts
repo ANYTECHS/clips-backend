@@ -30,14 +30,22 @@ class FFmpegMockCommand {
 
   constructor(private config: FFmpegMockConfig = {}) {}
 
-  seekInput(seconds: number): this {
+  setStartTime(seconds: number): this {
     this.seekInputValue = seconds;
     return this;
   }
 
-  duration(seconds: number): this {
+  setDuration(seconds: number): this {
     this.durationValue = seconds;
     return this;
+  }
+
+  seekInput(seconds: number): this {
+    return this.setStartTime(seconds);
+  }
+
+  duration(seconds: number): this {
+    return this.setDuration(seconds);
   }
 
   output(path: string): this {
@@ -104,12 +112,7 @@ class FFmpegMockCommand {
   }
 
   private async createOutputFile(): Promise<void> {
-    if (!this.config.createOutputFile && this.outputPath) {
-      // Don't actually create files by default in tests
-      return;
-    }
-
-    if (!this.outputPath) {
+    if (this.config.createOutputFile === false || !this.outputPath) {
       return;
     }
 
@@ -164,11 +167,9 @@ export function resetFFmpegMock(): void {
  * FFmpeg command factory (main export)
  */
 function ffmpeg(input: string): FFmpegMockCommand {
-  const cmd = new FFmpegMockCommand(globalConfig);
-  if (globalConfig.stderrLines) {
-    cmd['input'] = input;
-  }
-  return cmd;
+  const command = new FFmpegMockCommand(globalConfig);
+  command['input'] = input;
+  return command;
 }
 
 /**

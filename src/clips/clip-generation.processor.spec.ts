@@ -7,19 +7,16 @@ import {
 import { CLIP_GENERATION_FAILED_EVENT } from './clips.events';
 import { CLIP_JOB_OPTIONS } from './clip-generation.queue';
 
-// ── Mock heavy dependencies ───────────────────────────────────────────────────
-
-jest.mock('./ffmpeg.util', () => ({
-  cutClip: jest.fn().mockResolvedValue('out.mp4'),
-  getVideoMetadata: jest.fn().mockResolvedValue({ duration: 30 }),
-}));
-
 jest.mock('./virality-score.util', () => ({
   calculateViralityScore: jest.fn().mockReturnValue(75),
 }));
 
-import { cutClip } from './ffmpeg.util';
 import { MockCloudinaryService } from '../../test/mocks/cloudinary.mock';
+import {
+  cleanupFFmpegMockAfterTest,
+  mockFFmpegError,
+  mockFFmpegSuccess,
+} from '../../test/helpers/ffmpeg-mock.helper';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -100,21 +97,21 @@ function makeProcessor() {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('ClipGenerationProcessor', () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockFFmpegSuccess();
+  });
+
+  afterEach(() => cleanupFFmpegMockAfterTest());
 
   describe('process()', () => {
-    it('calls cutClip with correct float-safe args', async () => {
-      const { processor } = makeProcessor();
+    it('cuts and uploads a clip using the controlled FFmpeg output', async () => {
+      const { processor, cloudinaryService } = makeProcessor();
+      const readFileSpy = jest.spyOn(cloudinaryService, 'readFileToBuffer');
+
       await processor.process(makeJob());
 
-      expect(cutClip).toHaveBeenCalledWith(
-        expect.objectContaining({
-          inputPath: '/tmp/in.mp4',
-          outputPath: '/tmp/out.mp4',
-          startTime: 12.5,
-          endTime: 45.7,
-        }),
-      );
+      expect(readFileSpy).toHaveBeenCalledWith('/tmp/out.mp4');
     });
 
     it('returns a Clip with viralityScore populated', async () => {
@@ -128,26 +125,35 @@ describe('ClipGenerationProcessor', () => {
     });
 
     it('propagates errors so BullMQ can retry', async () => {
-      (cutClip as jest.Mock).mockRejectedValueOnce(new Error('OOM'));
+      mockFFmpegError('OOM');
       const { processor } = makeProcessor();
 
       await expect(processor.process(makeJob())).rejects.toThrow('OOM');
     });
 
     it('returns clip with upload_failed status when Cloudinary upload fails', async () => {
-      const { processor, cloudinaryService } = makeProcessor();
-      jest.spyOn(cloudinaryService, 'uploadVideoFromBuffer').mockResolvedValue({
-        secure_url: '',
-        public_id: 'test-clip',
-        error: 'Network timeout',
-      } as any);
+      const { processor, cloudinaryService, clipsService } = makeProcessor();
+      const uploadSpy = jest
+        .spyOn(cloudinaryService, 'uploadVideoFromBuffer')
+        .mockResolvedValue({
+          secure_url: '',
+          public_id: 'test-clip',
+          error: 'Network timeout',
+        } as any);
 
-      const clip = await processor.process(makeJob());
+      const job = makeJob({ data: { ...JOB_DATA, clipId: 42 } });
+      const clip = await processor.process(job);
+      await processor.onCompleted(job, clip);
 
       expect(clip.status).toBe('upload_failed');
       expect(clip.error).toContain('Cloudinary upload failed');
       expect(clip.localFilePath).toBe('/tmp/out.mp4');
       expect(clip.clipUrl).toBe('');
+      expect(uploadSpy).toHaveBeenCalledTimes(3);
+      expect(clipsService.updateClip).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ status: 'upload_failed' }),
+      );
     });
 
     it('keeps local file when upload fails', async () => {

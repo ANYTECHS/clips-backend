@@ -43,7 +43,7 @@ describe('earnings-csv.util', () => {
       ]);
 
       expect(csv).toBe(
-        'date,clip title,amount,currency,source,transactionId\n' +
+        'date,clipTitle,amount,currency,source,transactionId\n' +
           '2024-01-01T00:00:00.000Z,My Clip,10,USD,royalty,1',
       );
     });

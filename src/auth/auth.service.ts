@@ -5,6 +5,8 @@ import {
   UnauthorizedException,
   Logger,
 } from '@nestjs/common';
+
+// TODO(Issue 2): Refactor AuthService — internal refactor with no Swagger/API changes
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailDeliveryService } from './email-delivery.service';
@@ -356,6 +358,28 @@ export class AuthService {
     ]);
 
     return { message: 'Email successfully verified' };
+  }
+
+  async resendVerification(email: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user || user.emailVerified) {
+      return;
+    }
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    await this.prisma.emailVerificationToken.create({
+      data: { userId: user.id, tokenHash, expiresAt },
+    });
+
+    void this.emailDeliveryService.enqueue({
+      to: email,
+      subject: 'Verify your email address',
+      template: 'verification',
+      context: { token: rawToken },
+    });
   }
 
   async login(dto: LoginDto) {

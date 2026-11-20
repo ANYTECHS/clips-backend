@@ -2,9 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { StellarService } from '../stellar/stellar.service';
 import { NftOwnershipService } from './nft-ownership.service';
 
-export type NftOwnershipCheckResult =
-  | { valid: true }
-  | { valid: false; error: string };
+export type NftOwnershipCheckResult = {
+  owner: boolean;
+  message: string;
+  valid?: boolean;
+  error?: string;
+};
 
 @Injectable()
 export class NftOwnershipVerificationService {
@@ -35,18 +38,24 @@ export class NftOwnershipVerificationService {
       !Number.isInteger(tokenIdNum) ||
       tokenIdNum <= 0
     ) {
+      const errorMsg = `Invalid NFT identifier "${mintAddress}": must be a positive integer`;
       return {
+        owner: false,
+        message: errorMsg,
         valid: false,
-        error: `Invalid NFT identifier "${mintAddress}": must be a positive integer`,
+        error: errorMsg,
       };
     }
 
     // --- 2. Validate walletAddress ---------------------------------------------
     const addressCheck = this.stellarService.validateAddress(walletAddress);
     if (!addressCheck.valid) {
+      const errorMsg = addressCheck.message ?? 'Invalid wallet address';
       return {
+        owner: false,
+        message: errorMsg,
         valid: false,
-        error: addressCheck.message ?? 'Invalid wallet address',
+        error: errorMsg,
       };
     }
 
@@ -61,22 +70,42 @@ export class NftOwnershipVerificationService {
     );
 
     if (result.isOwner) {
-      return { valid: true };
+      return {
+        owner: true,
+        message: 'Wallet owns NFT',
+        valid: true,
+      };
     }
 
     // ownerAddress being set means the contract returned a valid owner — just
     // not the wallet provided (ownership mismatch, not a technical failure).
     if (result.ownerAddress !== undefined) {
       return {
+        owner: false,
+        message: 'Wallet does not own NFT',
         valid: false,
         error: 'NFT is not owned by the specified wallet',
       };
     }
 
     // Technical failure: missing token, simulation error, RPC/network issue.
+    const errorMsg = result.error ?? 'Ownership verification failed';
     return {
+      owner: false,
+      message: errorMsg,
       valid: false,
-      error: result.error ?? 'Ownership verification failed',
+      error: errorMsg,
     };
   }
+
+  /**
+   * Alias for verifyNFTOwnership matching the standard ownership check signature.
+   */
+  async verifyOwnership(
+    mintAddress: string,
+    walletAddress: string,
+  ): Promise<NftOwnershipCheckResult> {
+    return this.verifyNFTOwnership(mintAddress, walletAddress);
+  }
 }
+

@@ -136,7 +136,7 @@ export class StellarPaymentListenerService implements OnModuleInit, OnModuleDest
             },
           },
         },
-        include: { user: true },
+        include: { user: { select: { id: true, email: true, name: true } } },
       });
 
       if (!subscription) {

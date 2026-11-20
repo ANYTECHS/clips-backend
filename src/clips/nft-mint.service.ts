@@ -1,83 +1,130 @@
+/**
+ * NftMintService handles clip metadata uploads, ownership checks, and Soroban
+ * mint transaction preparation.
+ */
 import {
   Injectable,
   Logger,
+  NotFoundException,
   BadRequestException,
   ForbiddenException,
-  NotFoundException,
+  ConflictException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  collectClipPlatforms,
+  NftMetadataService,
+} from '../nft/nft-metadata.service';
+import { IpfsUploadService } from '../nft/ipfs-upload.service';
 import { StellarService } from '../stellar/stellar.service';
-import StellarSdk from '@stellar/stellar-sdk';
-import { MetricsService } from '../metrics/metrics.service';
-import { CircuitBreakerService, CircuitBreakerConfig } from '../common/circuit-breaker/circuit-breaker.service';
-import { ConfigService } from '../config/config.service';
-import { IpfsUploadService, NftMetadata } from '../nft/ipfs-upload.service';
-import { NftOwnershipService } from '../nft/nft-ownership.service';
-import { RoyaltyConfigurationService } from '../nft/royalty-configuration.service';
+import { NftConfig } from '../nft/nft.config';
+import {
+  DEFAULT_NFT_COLLECTION_ID,
+  isSupportedNftCollectionId,
+} from '../nft/nft-collections.constants';
+import {
+  Contract,
+  TransactionBuilder,
+  TimeoutInfinite,
+  nativeToScVal,
+  xdr,
+} from '@stellar/stellar-sdk';
 
-interface NftAttribute {
-  trait_type: string;
-  value: string | number;
-}
-
-interface UploadMetadataResult {
+export interface UploadMetadataResult {
   clipId: number;
   cid: string;
   metadataUri: string;
+}
+
+export interface PrepareMintTxResult {
+  xdr: string;
+  network: string;
+  contractId: string;
+  clipId: number;
+  collectionId: string;
+  walletAddress: string;
+  metadataUri: string;
+  royaltyBps: number;
 }
 
 @Injectable()
 export class NftMintService {
   private readonly logger = new Logger(NftMintService.name);
 
-  private readonly sorobanCircuitBreakerConfig: CircuitBreakerConfig = {
-    name: 'soroban-nft-mint',
-    failureThreshold: 5,
-    recoveryTimeout: 30000,
-    samplingDuration: 60000,
-  };
-
   constructor(
     private readonly prisma: PrismaService,
-    private readonly stellarService: StellarService,
-    private readonly metricsService: MetricsService,
-    private readonly circuitBreakerService: CircuitBreakerService,
-    private readonly config: ConfigService,
+    private readonly nftMetadataService: NftMetadataService,
     private readonly ipfsUploadService: IpfsUploadService,
-    private readonly nftOwnershipService: NftOwnershipService,
-    private readonly royaltyConfigurationService: RoyaltyConfigurationService,
+    private readonly stellarService: StellarService,
+    private readonly nftConfig: NftConfig,
   ) {}
 
-  private get CONTRACT_ID(): string {
-    return this.config.sorobanNftContractId || 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4';
-  }
+  // ──────────────────────────────────────────────────────────────────────────
+  // Issue #748 — Upload clip metadata to IPFS
+  // ──────────────────────────────────────────────────────────────────────────
 
-  async uploadMetadataToIPFS(clipId: number): Promise<UploadMetadataResult> {
+  /**
+   * Build NFT metadata JSON and upload it to IPFS (Pinata or nft.storage).
+   *
+   * Metadata fields:
+   *  - name         → clip.title ?? `Clip #${id}`
+   *  - description  → clip.caption ?? `ClipCash generated clip ${id}`
+   *  - image        → clip.thumbnail (used as cover/poster image)
+   *  - animation_url → clip.clipUrl (the video itself)
+   *  - attributes   → duration, viralityScore, createdAt, royalty BPS/percent
+   *  - royalty      → { bps, percent, recipient? } for marketplace integrations
+   *  - seller_fee_basis_points → royaltyBps (OpenSea royalty field)
+   *
+   * Behaviour:
+   *  - Idempotent: if Clip.metadataUri is already set, returns the existing
+   *    CID without re-uploading.
+   *  - Persists the returned CID to Clip.metadataUri in the database.
+   *  - Delegates provider resolution (Pinata vs nft.storage) to IpfsUploadService.
+   *
+   * @param clipId       Clip whose metadata should be uploaded.
+   * @param collectionId Collection the clip is being minted into (metadata is
+   *                     stamped with the collection's name/type/category).
+   * @returns            UploadMetadataResult with clipId, cid, and metadataUri.
+   */
+  async uploadMetadataToIPFS(
+    clipId: number,
+    collectionId: string = DEFAULT_NFT_COLLECTION_ID,
+  ): Promise<UploadMetadataResult> {
+    const collection = await this.requireCollection(collectionId);
     const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
+      include: {
+        video: { select: { userId: true } },
+        clipPosts: { select: { platform: true } },
+      },
     });
 
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
     if (!clip) {
-      throw new NotFoundException(`Clip with ID ${clipId} not found`);
+      throw new NotFoundException(`Clip ${clipId} not found`);
     }
-
     if (!clip.clipUrl) {
       throw new BadRequestException(
-        'Clip is not ready for metadata upload (missing clipUrl)',
+        `Clip ${clipId} is missing a clip URL — metadata cannot be built until the clip has been generated`,
       );
     }
 
-    const royaltyBps = this.royaltyConfigurationService.getCreatorRoyaltyBps(
-      clip.royaltyBps,
-    );
-    let royaltyRecipient: string | undefined;
-    try {
-      royaltyRecipient = this.royaltyConfigurationService.getPlatformWallet();
-    } catch {
-      royaltyRecipient = undefined;
+    if (clip.metadataUri) {
+      if (clip.collectionId && clip.collectionId !== collectionId) {
+        throw new BadRequestException(
+          `Clip ${clipId} metadata already belongs to collection '${clip.collectionId}'`,
+        );
+      }
+      const cid = clip.metadataUri.replace(/^ipfs:\/\//, '');
+      this.logger.log(
+        `Clip ${clipId} already has IPFS metadata — returning cached CID: ${cid}`,
+      );
+      return { clipId, cid, metadataUri: clip.metadataUri };
     }
 
-    const metadata = this.buildMetadata({
+    const metadata = this.nftMetadataService.build({
       id: clip.id,
       title: clip.title,
       caption: clip.caption,
@@ -86,330 +133,465 @@ export class NftMintService {
       duration: clip.duration,
       viralityScore: clip.viralityScore,
       createdAt: clip.createdAt,
-      postStatus: clip.postStatus,
-      royaltyBps,
-      royaltyRecipient,
+      royaltyBps: clip.royaltyBps ?? 1000,
+      platforms: collectClipPlatforms(clip.platform, clip.clipPosts),
+      collection: {
+        collectionId: collection.collectionId,
+        name: collection.name,
+        type: collection.type,
+        metadata: collection.metadata as Record<string, unknown>,
+      },
     });
+    // Upload to IPFS — provider (Pinata / nft.storage) resolved by config.
 
     const metadataUri = await this.ipfsUploadService.uploadMetadata(
       metadata,
-      clip.id,
+      clipId,
     );
-    const cid = metadataUri.replace('ipfs://', '');
 
+    // Persist the CID to the Clip record so subsequent mint calls can
+    // skip the upload step.
     await this.prisma.clip.update({
-      where: { id: clip.id },
-      data: { metadataUri },
-    });
-
-    return {
-      clipId: clip.id,
-      cid,
-      metadataUri,
-    };
-  }
-
-  /**
-   * Verify that a clip belongs to the given user before allowing a mint.
-   * Throws ForbiddenException if the clip doesn't exist or isn't owned by userId.
-   *
-   * Performance: Uses select instead of include to fetch only userId (optimization #326)
-   */
-  async validateClipOwner(clipId: number, userId: number): Promise<void> {
-    const clip = await this.prisma.clip.findUnique({
       where: { id: clipId },
-      select: {
-        id: true,
-        video: {
-          select: { userId: true },
-        },
+      data: {
+        metadataUri,
+        collectionId,
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
       },
     });
-    if (!clip) {
-      throw new NotFoundException(`Clip with ID ${clipId} not found`);
-    }
-    if (clip.video.userId !== userId) {
-      throw new ForbiddenException('You do not own this clip');
-    }
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
+
+    const cid = metadataUri.replace(/^ipfs:\/\//, '');
+    this.logger.log(
+      `Clip ${clipId} metadata uploaded to IPFS — CID: ${cid} | provider: ${process.env.IPFS_PROVIDER ?? 'pinata'}`,
+    );
+    return { clipId, cid, metadataUri };
   }
 
-  /**
-   * Prepares (but does not sign) a Soroban transaction for minting a clip as an NFT.
-   * Following OpenZeppelin Soroban NFT template: mint(to: Address, token_id: u128, uri: String)
-   *
-   * @param clipId - ID of the clip to mint
-   * @param walletAddress - Stellar wallet address that will receive the NFT
-   * @returns XDR string for the frontend to sign
-   */
-  async prepareMintTx(clipId: number, walletAddress: string) {
-    this.logger.log(
-      `Preparing mint transaction for clipId=${clipId}, wallet=${walletAddress}`,
-    );
-
-    // Validate Stellar wallet address format
-    const addressCheck = this.stellarService.validateAddress(walletAddress);
-    if (!addressCheck.valid) {
+  async prepareMintTx(
+    clipId: number,
+    walletAddress: string,
+    collectionId?: string,
+  ): Promise<PrepareMintTxResult> {
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid) {
       throw new BadRequestException(
-        `Invalid wallet address: ${addressCheck.message}`,
+        addrValidation.message ?? `Invalid Stellar wallet: ${walletAddress}`,
+      );
+    }
+    await this.assertMintCooldown(walletAddress);
+
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.mintAddress || clip.nftStatus === 'minted')
+      throw new ConflictException(`Clip ${clipId} is already minted`);
+    if (clip.nftStatus === 'minting')
+      throw new ConflictException(
+        `Clip ${clipId} is currently being minted. Please wait.`,
+      );
+    if (this.isPosted(clip.postStatus)) {
+      throw new BadRequestException(
+        `Posted clips cannot be minted. Clip ${clipId} has already been posted.`,
       );
     }
 
-    // Fetch clip with clipPosts
-    const clip = await this.prisma.clip.findUnique({ 
-      where: { id: clipId },
-      include: { clipPosts: { select: { status: true } } },
-    });
-
-    if (!clip) {
-      throw new NotFoundException(`Clip with ID ${clipId} not found`);
+    const selectedCollectionId =
+      collectionId ?? clip.collectionId ?? DEFAULT_NFT_COLLECTION_ID;
+    const collection = await this.requireCollection(selectedCollectionId);
+    if (
+      clip.metadataUri &&
+      clip.collectionId &&
+      clip.collectionId !== selectedCollectionId
+    ) {
+      throw new BadRequestException(
+        `Clip ${clipId} metadata already belongs to collection '${clip.collectionId}'`,
+      );
+    }
+    if (collection.maxSupply !== null) {
+      const supply = await this.getCollectionSupply(selectedCollectionId);
+      if (supply >= collection.maxSupply) {
+        throw new BadRequestException(
+          `Collection '${selectedCollectionId}' has reached its maximum supply`,
+        );
+      }
     }
 
-    // Prevent double minting
-    if (clip.nftStatus === 'minting' || clip.nftStatus === 'minted') {
+    let metadataUri = clip.metadataUri;
+    if (!metadataUri) {
+      this.logger.log(
+        `Clip ${clipId} has no metadataUri — uploading to IPFS before building XDR`,
+      );
+      metadataUri = (
+        await this.uploadMetadataToIPFS(clipId, selectedCollectionId)
+      ).metadataUri;
+    }
+
+    const royaltyBps = collection.royaltyBps ?? clip.royaltyBps ?? 1000;
+    const creatorRoyaltyBps = royaltyBps;
+    const platformRoyaltyBps = this.nftConfig.platformRoyaltyBps;
+    const totalBps = creatorRoyaltyBps + platformRoyaltyBps;
+    if (totalBps > 10000) {
       throw new BadRequestException(
-        'Clip is already being minted or has been minted',
+        `Combined royalty (${totalBps} bps = ${creatorRoyaltyBps} creator + ${platformRoyaltyBps} platform) exceeds maximum of 10000 bps`,
       );
     }
 
-    if (clip.mintAddress) {
-      throw new BadRequestException('Clip has already been minted on-chain');
-    }
-
-    // Prevent minting of posted clips
-    const isPosted = clip.postStatus === 'posted' || 
-      clip.clipPosts.some(post => post.status === 'published');
-    
-    if (isPosted) {
-      throw new BadRequestException('Posted clips cannot be minted.');
-    }
-
-    if (!clip.clipUrl) {
+    const royaltyBps = clip.collection.royaltyBps ?? clip.royaltyBps ?? 1000;
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId) {
       throw new BadRequestException(
-        'Clip is not ready for minting (missing URL)',
+        'SOROBAN_NFT_CONTRACT_ID is not configured — cannot prepare mint transaction',
       );
     }
-
-    // Set minting state before blockchain interaction; persist resolved royalty default
-    const resolvedRoyaltyBps =
-      this.royaltyConfigurationService.getCreatorRoyaltyBps(clip.royaltyBps);
 
     await this.prisma.clip.update({
       where: { id: clipId },
       data: {
+        collectionId: selectedCollectionId,
         nftStatus: 'minting',
-        royaltyBps: resolvedRoyaltyBps,
+        mintWalletAddress: walletAddress,
+        ...(collection.royaltyBps !== null
+          ? { royaltyBps: collection.royaltyBps }
+          : {}),
       },
     });
 
-    try {
-      const metadataUri =
-        clip.metadataUri ?? (await this.uploadMetadataToIPFS(clip.id)).metadataUri;
+    const xdr = await this.buildMintXdr({
+      clipId,
+      collectionId: selectedCollectionId,
+      walletAddress,
+      contractId,
+      metadataUri,
+      royaltyBps,
+      creatorRoyaltyBps,
+      platformWallet: this.nftConfig.platformWallet,
+      platformRoyaltyBps,
+      network: this.stellarService.network,
+    });
 
-      const networkPassphrase = this.stellarService.networkPassphrase;
-      const rpcUrl = this.stellarService.rpcUrl;
-      const server = new StellarSdk.rpc.Server(rpcUrl);
-
-      // Load source account to get current sequence number with circuit breaker
-      const sourceAccount = await this.circuitBreakerService.execute(
-        this.sorobanCircuitBreakerConfig,
-        async () => server.getAccount(walletAddress),
-      );
-
-      const contract = new StellarSdk.Contract(this.CONTRACT_ID);
-
-      const royaltyMapEntries = this.royaltyConfigurationService.buildRoyaltyMap(
-        walletAddress,
-        resolvedRoyaltyBps,
-      );
-
-      const op = contract.call(
-        'mint',
-        StellarSdk.Address.fromString(walletAddress).toScVal(),   // to: Address
-        StellarSdk.nativeToScVal(BigInt(clip.id), { type: 'u128' }), // token_id: u128
-        StellarSdk.nativeToScVal(metadataUri, { type: 'string' }),   // uri: String
-        StellarSdk.nativeToScVal(royaltyMapEntries, { type: 'map' }), // royalties: Map<Address, u32>
-      );
-
-      const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
-        fee: '10000',
-        networkPassphrase,
-      })
-        .addOperation(op)
-        .setTimeout(StellarSdk.TimeoutInfinite)
-        .build();
-
-      const xdr = tx.toXDR();
-
-      this.logger.log(`Transaction XDR prepared for clip ${clipId}`);
-
-      return {
-        xdr,
-        clipId: clip.id,
-        tokenId: clip.id,
-        metadataUri,
-        royaltyBps: resolvedRoyaltyBps,
-        to: walletAddress,
-        contractId: this.CONTRACT_ID,
-        network: this.stellarService.network,
-      };
-    } catch (error) {
-      this.metricsService.incrementNftMints('failure');
-      // Update status to failed on error
-      await this.prisma.clip.update({
-        where: { id: clipId },
-        data: { nftStatus: 'failed' },
-      });
-
-      if (
-        error instanceof BadRequestException ||
-        error instanceof NotFoundException
-      ) {
-        throw error;
-      }
-
-      // Pass through ServiceUnavailableException from circuit breaker
-      if (error.name === 'ServiceUnavailableException') {
-        this.logger.error(`Soroban service unavailable during mint preparation: ${error.message}`);
-        throw error;
-      }
-
-      const message =
-        error instanceof Error ? error.message : 'unknown minting error';
-      const stack = error instanceof Error ? error.stack : undefined;
-      this.logger.error(
-        `Failed to prepare mint transaction: ${message}`,
-        stack,
-      );
-      throw new BadRequestException(
-        `Stellar transaction preparation failed: ${message}`,
-      );
-    }
-  }
-
-  private buildMetadata(clip: {
-    id: number;
-    title: string | null;
-    caption: string | null;
-    clipUrl: string;
-    thumbnail: string | null;
-    duration: number;
-    viralityScore: number | null;
-    createdAt: Date;
-    postStatus: unknown;
-    royaltyBps: number;
-    royaltyRecipient?: string | null;
-  }): NftMetadata {
-    const platforms = this.extractPlatforms(clip.postStatus);
-    const viralityScore = clip.viralityScore ?? 0;
-    const royaltyRecipient = clip.royaltyRecipient?.trim() || undefined;
-
-    const attributes: NftAttribute[] = [
-      { trait_type: 'Clip Duration', value: clip.duration },
-      { trait_type: 'Virality Score', value: viralityScore },
-      { trait_type: 'Creation Date', value: clip.createdAt.toISOString() },
-      { trait_type: 'Royalty BPS', value: clip.royaltyBps },
-      { trait_type: 'Royalty Percent', value: clip.royaltyBps / 100 },
-      { trait_type: 'Platforms Posted To', value: platforms.join(', ') },
-    ];
+    this.logger.log(
+      `Mint XDR prepared — clip: ${clipId}, collection: ${selectedCollectionId}, wallet: ${walletAddress}, network: ${this.stellarService.network}, royaltyBps: ${royaltyBps}`,
+    );
 
     return {
-      name: clip.title?.trim() || `Clip #${clip.id}`,
-      description: clip.caption?.trim() || `Generated clip ${clip.id}`,
-      image: clip.thumbnail || clip.clipUrl,
-      animation_url: clip.clipUrl,
-      attributes,
-      seller_fee_basis_points: clip.royaltyBps,
-      ...(royaltyRecipient ? { fee_recipient: royaltyRecipient } : {}),
-      royalty: {
-        bps: clip.royaltyBps,
-        percent: clip.royaltyBps / 100,
-        ...(royaltyRecipient ? { recipient: royaltyRecipient } : {}),
-      },
+      xdr,
+      network: this.stellarService.network,
+      contractId,
+      clipId,
+      collectionId: selectedCollectionId,
+      walletAddress,
+      metadataUri,
+      royaltyBps,
     };
   }
 
-  private extractPlatforms(postStatus: unknown): string[] {
-    if (!postStatus || typeof postStatus !== 'object') {
-      return [];
-    }
 
-    if (Array.isArray(postStatus)) {
-      return postStatus.filter((v): v is string => typeof v === 'string');
+  async validateClipOwner(clipId: number, userId: number): Promise<void> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { video: { select: { userId: true } } },
+    });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException(`You do not own clip ${clipId}`);
     }
-
-    return Object.entries(postStatus as Record<string, unknown>)
-      .filter(([, value]) => Boolean(value))
-      .map(([platform]) => platform);
   }
 
-  /**
-   * Confirm successful minting after on-chain transaction submission.
-   * Updates the Clip to 'minted' status with contract details.
-   */
+  async assertMintCooldown(walletAddress: string): Promise<void> {
+    const cooldownSeconds =
+      this.nftConfig.nftMintWalletCooldownSeconds ?? 60;
+    if (cooldownSeconds <= 0) return;
+
+    const lastMint = await this.prisma.nftWalletMintCooldown.findUnique({
+      where: { walletAddress },
+    });
+    if (!lastMint) return;
+
+    const retryAt = new Date(
+      lastMint.lastMintAt.getTime() + cooldownSeconds * 1000,
+    );
+    const retryAfterSeconds = Math.ceil((retryAt.getTime() - Date.now()) / 1000);
+    if (retryAfterSeconds <= 0) return;
+
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: `Wallet mint cooldown is active. Retry in ${retryAfterSeconds} second(s).`,
+        error: 'Too Many Requests',
+        retryAfterSeconds,
+        retryAt: retryAt.toISOString(),
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
+
+  async recordSuccessfulMint(walletAddress: string): Promise<void> {
+    const lastMintAt = new Date();
+    await this.prisma.nftWalletMintCooldown.upsert({
+      where: { walletAddress },
+      create: { walletAddress, lastMintAt },
+      update: { lastMintAt },
+    });
+  }
+
   async confirmMint(
     clipId: number,
-    contractId: string,
-  ): Promise<{ success: boolean; clip?: { id: number; mintAddress: string | null; nftStatus: string } }> {
-    this.logger.log(`Confirming mint for clip ${clipId} with contract ${contractId}`);
-
-    try {
-      const existingClip = await this.prisma.clip.findUnique({
-        where: { id: clipId },
-        select: { nftStatus: true, mintAddress: true },
-      });
-
-      if (!existingClip) {
-        throw new NotFoundException(`Clip with ID ${clipId} not found`);
-      }
-
-      if (existingClip.nftStatus === 'minted' || existingClip.mintAddress) {
-        throw new BadRequestException('Clip has already been minted on-chain');
-      }
-
-      const clip = await this.prisma.clip.update({
-        where: { id: clipId },
-        data: {
-          nftStatus: 'minted',
-          mintAddress: contractId,
-          mintedAt: new Date(),
-        },
-      });
-      this.metricsService.incrementNftMints('success');
-
-      return {
-        success: true,
-        clip: {
-          id: clip.id,
-          mintAddress: clip.mintAddress,
-          nftStatus: clip.nftStatus,
-        },
-      };
-    } catch (error) {
-      this.metricsService.incrementNftMints('failure');
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`Failed to confirm mint for clip ${clipId}: ${message}`);
-      throw new BadRequestException(`Failed to confirm mint: ${message}`);
+    mintAddress: string,
+    onChainOwnerAddress: string,
+  ): Promise<{ clipId: number; mintAddress: string; mintedAt: Date; nftStatus: string }> {
+    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.mintAddress || clip.nftStatus === 'minted')
+      throw new BadRequestException(`Clip ${clipId} already minted`);
+    if (
+      !clip.mintWalletAddress ||
+      clip.mintWalletAddress !== onChainOwnerAddress
+    ) {
+      throw new ConflictException(
+        `On-chain owner does not match the wallet used to prepare clip ${clipId} mint`,
+      );
     }
+    const mintedAt = new Date();
+    await this.prisma.clip.update({
+      where: { id: clipId },
+      data: { mintAddress, mintedAt, nftStatus: 'minted' },
+    });
+    if (clip.mintWalletAddress) {
+      await this.recordSuccessfulMint(clip.mintWalletAddress);
+    }
+    this.logger.log(
+      `Clip ${clipId} confirmed as minted — token: ${mintAddress}`,
+    );
+    return { clipId, mintAddress, mintedAt, nftStatus: 'minted' };
   }
 
-  /**
-   * Verified on-chain NFT ownership for a specific token and wallet.
-   * Query Soroban contract 'owner_of' and compare with walletAddress.
-   */
-  async verifyNFTOwnership(
-    tokenId: string,
+  async prepareBurnTx(clipId: number, walletAddress: string) {
+    if (!this.stellarService.validateAddress(walletAddress).valid) {
+      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    }
+
+  async prepareBurnTx(
+    clipId: number,
     walletAddress: string,
-  ): Promise<{
-    owned: boolean;
-    error?: string;
-  }> {
-    const result = await this.nftOwnershipService.verifyNFTOwnership(
-      tokenId,
-      walletAddress,
-    );
+    refundRoyalties = false,
+  ) {
+    if (!Number.isSafeInteger(clipId) || clipId <= 0) {
+      throw new BadRequestException('Token ID must be a positive safe integer');
+    }
+    const addrValidation = this.stellarService.validateAddress(walletAddress);
+    if (!addrValidation.valid)
+      throw new BadRequestException(addrValidation.message);
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId)
+      throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
     return {
-      owned: result.isOwner,
-      error: result.error,
+      xdr: Buffer.from(
+        JSON.stringify({
+          contract: contractId,
+          function: 'burn',
+          args: { owner: walletAddress, token_id: String(clipId) },
+          network: this.stellarService.network,
+        }),
+      ).toString('base64'),
+      tokenId: clipId,
+      owner: walletAddress,
+      contractId,
+      network: this.stellarService.network,
     };
+  }
+
+  async prepareSetRoyaltiesTx(
+    clipId: number,
+    walletAddress: string,
+    shares: Array<{ recipient: string; bps: number }>,
+  ) {
+    if (!this.stellarService.validateAddress(walletAddress).valid) {
+      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    }
+    const totalBps = shares.reduce((sum, share) => sum + share.bps, 0);
+    if (totalBps > 10000) {
+      throw new BadRequestException(
+        `Combined royalty shares (${totalBps} bps) exceed 10000 bps`,
+      );
+    }
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId)
+      throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    return {
+      xdr: Buffer.from(
+        JSON.stringify({
+          contract: contractId,
+          function: 'set_royalties',
+          args: { token_id: String(clipId), royalties: shares },
+          network: this.stellarService.network,
+        }),
+      ).toString('base64'),
+      tokenId: clipId,
+      shares,
+      totalBps,
+    };
+  }
+
+  async prepareClaimRoyaltiesTx(
+    clipId: number,
+    walletAddress: string,
+    assetContractId?: string,
+  ) {
+    if (!this.stellarService.validateAddress(walletAddress).valid) {
+      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
+    }
+    const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
+    if (!contractId)
+      throw new BadRequestException('SOROBAN_NFT_CONTRACT_ID not configured');
+    return {
+      xdr: Buffer.from(
+        JSON.stringify({
+          contract: contractId,
+          function: 'claim_royalties',
+          args: {
+            recipient: walletAddress,
+            token_id: String(clipId),
+            ...(assetContractId ? { asset_contract_id: assetContractId } : {}),
+          },
+          network: this.stellarService.network,
+        }),
+      ).toString('base64'),
+      tokenId: clipId,
+      recipient: walletAddress,
+      claimableBalance: 0,
+      contractId,
+      network: this.stellarService.network,
+    };
+  }
+
+  private isPosted(postStatus: unknown): boolean {
+    if (!postStatus || typeof postStatus !== 'object') return false;
+    return Object.values(postStatus as Record<string, unknown>).some(
+      (value) => value === 'posted',
+    );
+  }
+
+  private async requireCollection(collectionId: string) {
+    if (!isSupportedNftCollectionId(collectionId)) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    const collection = await this.prisma.nftCollection.findUnique({
+      where: { collectionId },
+    });
+    if (!collection) {
+      throw new BadRequestException(
+        `Unsupported collectionId: ${collectionId}`,
+      );
+    }
+    return collection;
+  }
+
+  private async getCollectionSupply(collectionId: string): Promise<number> {
+    return this.prisma.clip.count({
+      where: {
+        collectionId,
+        mintAddress: { not: null },
+        nftStatus: { not: 'burned' },
+      },
+    });
+  }
+
+  private async buildMintXdr(params: {
+  private buildMintXdr(params: {
+    clipId: number;
+    collectionId: string;
+    walletAddress: string;
+    contractId: string;
+    metadataUri: string;
+    royaltyBps: number;
+    creatorRoyaltyBps: number;
+    platformWallet: string;
+    platformRoyaltyBps: number;
+    network: string;
+  }): Promise<string> {
+    const mapOf = (entries: Array<[string, xdr.ScVal]>): xdr.ScVal =>
+      xdr.ScVal.scvMap(
+        entries.map(
+          ([k, v]) =>
+            new xdr.ScMapEntry({
+              key: nativeToScVal(k, { type: 'string' }),
+              val: v,
+            }),
+        ),
+      );
+
+    const recipientsVec = xdr.ScVal.scvVec([
+      mapOf([
+        ['wallet', nativeToScVal(params.walletAddress, { type: 'address' })],
+        ['bps', nativeToScVal(params.creatorRoyaltyBps, { type: 'u32' })],
+        ['label', nativeToScVal('creator', { type: 'string' })],
+      ]),
+      mapOf([
+        ['wallet', nativeToScVal(params.platformWallet, { type: 'address' })],
+        ['bps', nativeToScVal(params.platformRoyaltyBps, { type: 'u32' })],
+        ['label', nativeToScVal('platform', { type: 'string' })],
+      ]),
+    ]);
+
+    const royaltyExtension = mapOf([['recipients', recipientsVec]]);
+
+    const args: xdr.ScVal[] = [
+      nativeToScVal(params.walletAddress, { type: 'address' }),
+      nativeToScVal(String(params.clipId), { type: 'string' }),
+      nativeToScVal(params.collectionId, { type: 'string' }),
+      nativeToScVal(params.metadataUri, { type: 'string' }),
+      nativeToScVal(params.royaltyBps, { type: 'u32' }),
+      royaltyExtension,
+    ];
+
+    const sourceAccount = await this.stellarService.getAccount(
+      params.walletAddress,
+    );
+    const contract = new Contract(params.contractId);
+    const operation = contract.call('mint', ...args);
+
+    const tx = new TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(TimeoutInfinite)
+      .build();
+
+    return tx.toXDR();
+  }): string {
+    return Buffer.from(
+      JSON.stringify({
+        contract: params.contractId,
+        function: 'mint',
+        args: {
+          to: params.walletAddress,
+          token_id: String(params.clipId),
+          collection_id: params.collectionId,
+          metadata: params.metadataUri,
+          royalty_bps: params.royaltyBps,
+        },
+        royalty_extension: {
+          recipients: [
+            {
+              wallet: params.walletAddress,
+              bps: params.creatorRoyaltyBps,
+              label: 'creator',
+            },
+            {
+              wallet: params.platformWallet,
+              bps: params.platformRoyaltyBps,
+              label: 'platform',
+            },
+          ],
+        },
+        network: params.network,
+        built_at: new Date().toISOString(),
+      }),
+    ).toString('base64');
   }
 }

@@ -11,16 +11,24 @@ import {
   ApiOperation,
   ApiResponse,
   ApiBearerAuth,
+  ApiBadRequestResponse,
   ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+  ApiNotFoundResponse,
   ApiConflictResponse,
   ApiInternalServerErrorResponse,
 } from '@nestjs/swagger';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { UsersService } from './users.service';
+import { UserResponseDto } from './dto/user-responses.dto';
 
-@ApiTags('users')
+@ApiTags('Users')
 @ApiBearerAuth('access-token')
-@ApiUnauthorizedResponse({ description: 'Unauthorized' })
+@ApiBadRequestResponse({ description: 'Invalid request parameters' })
+@ApiUnauthorizedResponse({ description: 'JWT token required' })
+@ApiForbiddenResponse({ description: 'Insufficient permissions' })
+@ApiNotFoundResponse({ description: 'User not found' })
+@ApiConflictResponse({ description: 'Resource already exists' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('users')
 @Auth()
@@ -30,9 +38,13 @@ export class UsersController {
   @Get('me')
   @ApiOperation({
     summary:
-      'Get current user profile including stellarPublicKey and walletType',
+      'Get current user profile including masked stellarPublicKey and walletType',
   })
-  @ApiResponse({ status: 200, description: 'User profile' })
+  @ApiResponse({
+    status: 200,
+    description: 'User profile with masked stellarPublicKey',
+    type: UserResponseDto,
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMe(@Req() req: any) {
     return this.usersService.getMe(req.user.userId);
@@ -44,7 +56,13 @@ export class UsersController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Wallet created, returns stellarPublicKey',
+    description: 'Wallet created, returns a masked stellarPublicKey',
+    schema: {
+      example: {
+        stellarPublicKey: 'GABF...KJ93XD',
+        walletType: 'custodial',
+      },
+    },
   })
   @ApiConflictResponse({ description: 'Wallet already exists' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })

@@ -254,11 +254,56 @@ Swagger (development): <http://localhost:3000/api/docs>
 | Port 3000 already in use | Stop the other process or set `PORT` in `.env` |
 | JWT / 401 on protected routes | Obtain a token via auth endpoints; send `Authorization: Bearer <token>` |
 
-Stellar-specific integration (wallets, mint, royalties) is documented in [docs/stellar-integration.md](./docs/stellar-integration.md).
+Stellar-specific integration (wallets, mint, royalties) is documented in [docs/wallet-integration.md](./docs/wallet-integration.md).
 
 ## API Documentation (Swagger/OpenAPI)
 
 ClipCash provides comprehensive API documentation via Swagger UI.
+
+### Standard API Response Format
+
+All API responses are wrapped in a consistent `ApiResponseDto` envelope (Issue #854):
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": { ... },
+  "timestamp": "2026-08-29T16:50:25.156Z"
+}
+```
+
+Error responses include an `error` field:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Wallet not found",
+  "error": "Wallet not found",
+  "timestamp": "2026-08-29T16:50:25.156Z"
+}
+```
+
+Paginated list endpoints use `PaginatedResponseDto` inside the `data` field:
+
+```json
+{
+  "statusCode": 200,
+  "message": "Success",
+  "data": {
+    "items": [...],
+    "total": 120,
+    "page": 1,
+    "limit": 20,
+    "totalPages": 6,
+    "hasNextPage": true,
+    "hasPrevPage": false
+  },
+  "timestamp": "2026-08-29T16:50:25.156Z"
+}
+```
+
+For a full list of error codes, see [docs/error-codes.md](./docs/error-codes.md).
 
 ### Accessing the Docs
 
@@ -344,10 +389,10 @@ The backend supports switching between Stellar **testnet** and **mainnet** (publ
 
 ### `STELLAR_NETWORK`
 
-| Value      | Network                | RPC URL                                  | Use when               |
-| ---------- | ---------------------- | ---------------------------------------- | ---------------------- |
-| `testnet`  | Stellar Testnet (SDF)  | `https://soroban-testnet.stellar.org`    | Development / staging  |
-| `public`   | Stellar Mainnet        | `https://soroban-rpc.stellar.org`        | Production             |
+| Value      | Network                | RPC URL                                  | Horizon URL                            | Use when               |
+| ---------- | ---------------------- | ---------------------------------------- | -------------------------------------- | ---------------------- |
+| `testnet`  | Stellar Testnet (SDF)  | `https://soroban-testnet.stellar.org`    | `https://horizon-testnet.stellar.org`  | Development / staging  |
+| `public`   | Stellar Mainnet        | `https://soroban-rpc.stellar.org`        | `https://horizon.stellar.org`          | Production             |
 
 **Default:** `testnet`
 
@@ -361,11 +406,11 @@ STELLAR_NETWORK=testnet
 STELLAR_NETWORK=public
 ```
 
-The `StellarService` reads this variable at startup and exposes the correct `rpcUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts).
+The `StellarService` reads this variable at startup and exposes the correct `rpcUrl`, `horizonUrl` and `networkPassphrase` to all services that perform Stellar operations (minting, payouts). The payment listener (`StellarConfig`) derives its Horizon URL from `STELLAR_NETWORK` as well, unless `STELLAR_HORIZON_URL` is set explicitly. Only `testnet` and `public` are accepted (case-insensitive); any other value causes the application to fail fast at startup with a clear error instead of silently falling back to testnet. When the variable is unset or empty, it defaults to `testnet`.
 
 ### `MIN_STELLAR_PAYOUT`
 
-Minimum payout amount in USD equivalent. Requests below this threshold are rejected with a `400` error to prevent fee-wasting micro-transactions.
+Minimum payout amount in USD equivalent. Requests below this threshold are rejected with a `400` error to prevent fee-wasting micro-transactions. Must be a positive number — the app refuses to start otherwise.
 
 ```env
 MIN_STELLAR_PAYOUT=5   # default: 5 USD
@@ -449,3 +494,26 @@ The subscription integration scenarios live in `test/subscription-flow.e2e-spec.
 - rejection on wrong amount
 - idempotency on duplicate transaction id
 - rejection of expired intents (>15 minutes)
+ * Updated repository documentation to reflect recent project updates and structural adjustments.
+ * Refined setup guidelines and inline comments to assist new contributors during project onboarding.
+ * Fixed minor formatting errors and standardized layout consistency across all markdown files.
+ * Corrected obsolete links, dependencies, and configuration notes to maintain operational accuracy.
+ * Clarified key configuration settings to streamline local build and testing environments.
+ * Restructured existing documentation sections to significantly improve readability and flow.
+ * Enhanced clarity around environment variables and execution scripts across core modules.
+ * Updated documentation to improve clarity and fix minor formatting inconsistencies across the repository.
+ * Refactored code comments and inline explanations to better align with current setup guidelines.
+ * Added missing configuration notes to help developers set up and run the project locally.
+ * Corrected outdated references and links in the repository files to ensure accuracy.
+ * Standardized code structure and documentation layout to enhance overall project readability.
+  
+ * Updated documentation to maintain clear operational standards across the core application logic.
+ * Improved inline notes and module comments to provide better context for active code pathways.
+ * Fixed minor formatting inconsistencies in markdown files to ensure uniform project presentation.
+ * Corrected outdated configuration references and dependency details to align with current setups.
+ * Clarified local setup and installation steps to simplify development and testing workflows.
+ * Refactored existing setup guides to streamline onboarding for new developers and contributors.
+ * Enhanced parameter descriptions and function summaries to make system integration more intuitive.
+ * Standardized code structure guidelines and file organisation principles throughout the repository.
+ * Resolved broken or obsolete links across documentation files to improve resource reliability.
+ * Added missing usage examples and environment variable notes to support smooth deployment procedures.

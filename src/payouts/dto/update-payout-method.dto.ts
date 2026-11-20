@@ -27,6 +27,38 @@ export class UpdatePayoutMethodDto {
   country?: string;
 
   @ApiPropertyOptional({
+    description: 'Bank account number (will be encrypted, rotates stored secret)',
+    example: '1234567890',
+  })
+  @IsOptional()
+  @IsString()
+  accountNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'Bank routing number (will be encrypted, rotates stored secret)',
+    example: '021000021',
+  })
+  @IsOptional()
+  @IsString()
+  routingNumber?: string;
+
+  @ApiPropertyOptional({
+    description: 'SWIFT/BIC code (will be encrypted, rotates stored secret)',
+    example: 'CHASUS33',
+  })
+  @IsOptional()
+  @IsString()
+  swiftCode?: string;
+
+  @ApiPropertyOptional({
+    description: 'IBAN (will be encrypted, rotates stored secret)',
+    example: 'GB29NWBK60161331926819',
+  })
+  @IsOptional()
+  @IsString()
+  iban?: string;
+
+  @ApiPropertyOptional({
     description: 'Set as default payout method',
     example: true,
   })

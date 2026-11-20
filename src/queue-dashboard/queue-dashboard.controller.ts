@@ -10,7 +10,9 @@ import {
 } from '@nestjs/common';
 import type { Request, Response, NextFunction } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
+import { Admin } from '../auth/decorators/admin.decorator';
 import { QueueDashboardService } from './queue-dashboard.service';
+import { QueueCollectorService } from '../metrics/queue-collector.service';
 import {
   ApiTags,
   ApiOperation,
@@ -18,6 +20,7 @@ import {
   ApiUnauthorizedResponse,
   ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
+  ApiExcludeEndpoint,
 } from '@nestjs/swagger';
 
 @ApiTags('queues')
@@ -26,7 +29,8 @@ import {
 @ApiForbiddenResponse({ description: 'Forbidden — admin access required' })
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('admin/queues')
-@Auth('admin')
+@Auth()
+@Admin()
 export class QueueDashboardController {
   constructor(
     private readonly queueDashboardService: QueueDashboardService,
@@ -34,6 +38,7 @@ export class QueueDashboardController {
   ) {}
 
   @Get('*')
+  @ApiExcludeEndpoint()
   dashboard(
     @Req() req: Request,
     @Res() res: Response,
@@ -46,7 +51,12 @@ export class QueueDashboardController {
   @Post('pause')
   @ApiOperation({
     summary: 'Pause queue processing',
-    description: 'Pause a specific queue or all queues',
+    description: 'Pause a specific queue or all queues. Admin only.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
   })
   async pause(@Body() body: { queue?: string }) {
     if (body.queue) {
@@ -65,7 +75,12 @@ export class QueueDashboardController {
   @Post('resume')
   @ApiOperation({
     summary: 'Resume queue processing',
-    description: 'Resume a specific queue or all queues',
+    description: 'Resume a specific queue or all queues. Admin only.',
+  })
+  @ApiForbiddenResponse({
+    description: 'Forbidden — This endpoint is admin-only. ' +
+      'Current user does not have the admin role. ' +
+      'If you believe you should have admin access, contact support.',
   })
   async resume(@Body() body: { queue?: string }) {
     if (body.queue) {

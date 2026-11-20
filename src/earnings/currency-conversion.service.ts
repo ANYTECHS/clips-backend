@@ -8,14 +8,14 @@ export interface ConversionRate {
 @Injectable()
 export class CurrencyConversionService {
   private readonly logger = new Logger(CurrencyConversionService.name);
-  
+
   // Default conversion rates (USD as base)
   private conversionRates: ConversionRate = {
-    USD: 1,
+    USD: 1.0,
     EUR: 0.92,
     GBP: 0.79,
     XLM: 10.5, // Example: 1 USD = 10.5 XLM
-    USDC: 1,
+    USDC: 1.0,
   };
 
   constructor() {}
@@ -25,15 +25,18 @@ export class CurrencyConversionService {
    */
   convert(
     amount: number,
-    fromCurrency: Currency,
-    toCurrency: Currency,
+    fromCurrency: string,
+    toCurrency: string,
   ): number {
-    if (fromCurrency === toCurrency) {
+    const from = (fromCurrency?.toUpperCase() || 'USD') as Currency;
+    const to = (toCurrency?.toUpperCase() || 'USD') as Currency;
+
+    if (from === to) {
       return amount;
     }
 
-    const fromRate = this.conversionRates[fromCurrency];
-    const toRate = this.conversionRates[toCurrency];
+    const fromRate = this.conversionRates[from];
+    const toRate = this.conversionRates[to];
 
     if (!fromRate || !toRate) {
       this.logger.warn(
@@ -63,6 +66,27 @@ export class CurrencyConversionService {
     }
 
     return toRate / fromRate;
+  }
+
+  /** Returns a list of supported currency codes */
+  getSupportedCurrencies(): string[] {
+    return Object.keys(this.conversionRates);
+  }
+
+  isSupported(currency: string): boolean {
+    return (currency?.toUpperCase() || '') in this.conversionRates;
+  }
+
+  /**
+   * Validate currency, throwing a 400-style error with supported list.
+   * Keeps aggregations from mixing unknown currencies silently.
+   */
+  validateCurrencyOrThrow(currency: string): void {
+    if (!this.isSupported(currency)) {
+      throw new Error(
+        `Unsupported currency: ${currency}. Supported: ${this.getSupportedCurrencies().join(', ')}`,
+      );
+    }
   }
 
   /**

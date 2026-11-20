@@ -1,241 +1,215 @@
 # Queue Architecture
 
-ClipCash uses [BullMQ](https://docs.bullmq.io/) backed by Redis for all asynchronous job processing. This document covers every queue, its configuration, rate limiting, scaling, and troubleshooting.
+Comprehensive documentation for the ClipCash async queue architecture (Issues #924, #973).
+BullMQ backed by Redis. See also `docs/queue-flows.md` for per-flow walkthroughs.
 
----
+## Table of Contents
 
-## Overview
+1. [Request to Job Lifecycle](#1-request-to-job-lifecycle)
+2. [Redis Architecture](#2-redis-architecture)
+3. [BullMQ Architecture](#3-bullmq-architecture)
+4. [Queues](#4-queues)
+5. [Workers](#5-workers)
+6. [Concurrency Configuration](#6-concurrency-configuration)
+7. [Retry Policies](#7-retry-policies)
+8. [Dead-Letter Handling](#8-dead-letter-handling)
+9. [Queue Cleanup](#9-queue-cleanup)
+10. [Monitoring](#10-monitoring)
+11. [Scaling Recommendations](#11-scaling-recommendations)
+12. [Architecture Diagrams](#12-architecture-diagrams)
+13. [Queue API Reference](#13-queue-api-reference)
+14. [Troubleshooting Guide](#14-troubleshooting-guide)
 
-```
-HTTP Request
-     │
-     ▼
- Controller  ──(rate limit check via Redis)──► 429 Too Many Requests
-     │
-     ▼
-  Service  ──► BullMQ Queue (Redis) ──► Processor (Worker)
-                                              │
-                                         Job result / event
-```
-
-All queues share a single Redis connection configured via `REDIS_HOST` / `REDIS_PORT` in `.env`.
-
----
-
-## Queues
-
-### 1. `clip-generation`
-
-| Property | Value |
-|---|---|
-| Constant | `CLIP_GENERATION_QUEUE` in `src/clips/clip-generation.queue.ts` |
-| Processor | `ClipGenerationProcessor` (`src/clips/clip-generation.processor.ts`) |
-| Retry | 3 attempts, exponential backoff starting at 1 000 ms |
-| Rate limit | Max **5 concurrent jobs per user** (Redis-tracked) |
-
-**Job payload (`ClipGenerationJob`):**
-
-```ts
-{
-  videoId: string;
-  inputPath: string;
-  outputPath: string;
-  startTime: number;
-  endTime: number;
-  positionRatio: number;
-  transcript?: string;
-  title?: string;
-  clipId?: number;
-}
-```
-
-**Flow:**
-1. `POST /clips/generate` → `QueueRateLimitGuard` checks Redis counter
-2. `ClipsService.enqueueClip()` adds job to BullMQ
-3. `ClipGenerationProcessor` runs FFmpeg, uploads to Cloudinary, updates DB
-4. WebSocket event emitted to client on completion/failure
-
----
-
-### 2. `nft-mint`
-
-| Property | Value |
-|---|---|
-| Constant | `NFT_MINT_QUEUE` in `src/clips/nft-mint.queue.ts` |
-| Processor | `NftMintProcessor` (`src/clips/nft-mint.processor.ts`) |
-| Retry | 3 attempts, exponential backoff starting at 2 000 ms |
-
-**Job payload (`NftMintJob`):**
-
-```ts
-{
-  clipId: number;
-  walletAddress: string;
-  userId: number;
-}
-```
-
-**Flow:**
-1. Mint request received → job added to `nft-mint` queue
-2. `NftMintProcessor` calls `NftMintService.prepareMintTx()`
-3. Soroban transaction XDR returned to caller for signing
-4. Frontend signs and submits; calls `POST /clips/:id/mint/confirm`
-
-**Why separate from `clip-generation`?**
-NFT minting calls the Stellar Soroban RPC which has different latency and failure modes than FFmpeg processing. Isolation prevents Soroban outages from blocking video processing and allows independent scaling.
-
----
-
-### 3. `email-delivery`
-
-| Property | Value |
-|---|---|
-| Constant | defined in `src/auth/email-delivery.queue.ts` |
-| Processor | `EmailDeliveryProcessor` (`src/auth/email-delivery.processor.ts`) |
-
-Used for transactional emails (magic links, password reset, payout receipts).
-
----
-
-## Rate Limiting
-
-Queue job creation is rate-limited per user using Redis counters (not BullMQ's built-in rate limiter, which limits worker throughput rather than enqueue rate).
-
-### Implementation
-
-`QueueRateLimitGuard` (`src/common/guards/queue-rate-limit.guard.ts`):
-
-- Uses `INCR` + `EXPIRE` on key `queue:ratelimit:{queue}:user:{userId}`
-- TTL window: **1 hour**
-- Returns **HTTP 429** when limit exceeded, decrements counter so it stays accurate
-
-### Limits
-
-| Queue | Max concurrent jobs per user |
-|---|---|
-| `clip-generation` | 5 |
-
-### Applying to a new endpoint
-
-```ts
-@Post('my-endpoint')
-@UseGuards(QueueRateLimitGuard)
-@QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
-async myHandler() { ... }
-```
-
----
-
-## Job Options
-
-### `clip-generation`
-
-```ts
-export const CLIP_JOB_OPTIONS = {
-  attempts: 3,
-  backoff: { type: 'exponential', delay: 1000 },
-};
-```
-
-### `nft-mint`
-
-```ts
-export const NFT_MINT_JOB_OPTIONS = {
-  attempts: 3,
-  backoff: { type: 'exponential', delay: 2000 },
-};
-```
-
-Failed jobs after all retries are moved to BullMQ's **failed set** and can be retried via `POST /jobs/:id/retry`.
-
----
-
-## Metrics
-
-Queue depth is tracked as a Prometheus gauge:
+## 1. Request to Job Lifecycle
 
 ```
-clipcash_job_queue_depth{queue="clip-generation"}
+API Request (controller, JWT + throttle)
+  -> Service validates input
+  -> queue.add(JOB_NAME, data, { jobId?, attempts, backoff, priority })
+  -> Redis (BullMQ persisted job)
+  -> Worker processor picks job (concurrency slots)
+  -> DB / external service (Soroban, Cloudinary, SMTP)
+  -> Job progress events -> completion notification
+  -> removeOnComplete / removeOnFail retention
 ```
 
-Scraped at `/metrics` (requires `x-metrics-token` header).
+Which queue receives the job is decided by the service: clip generation goes to
+`clip-generation`, social posts to `clip-posting`, NFT mints to `nft-mint`
+(`src/clips/nft-mint.queue.ts`, deterministic `jobId = nft-mint-clip-{clipId}`
+for duplicate prevention), emails to `email-delivery`, earnings anomaly checks
+to `anomaly-detection`.
 
----
+## 2. Redis Architecture
 
-## Scaling
+- Connection centralized in `QueueConfigService` (`src/queue/queue-config.service.ts`):
+  `QUEUE_REDIS_HOST/PORT/USERNAME/PASSWORD/DB`, optional `QUEUE_REDIS_TLS`,
+  shared `QUEUE_PREFIX` (default `clips`).
+- `RedisService` (`src/redis/redis.service.ts`) exposes the client for caches
+  and rate limiting; BullMQ uses the same host via `BullModule.forRootAsync`.
+- Monitor with `INFO replication`, `CLIENT LIST`, memory (`maxmemory-policy
+  noeviction` recommended), and keyspace hits/misses.
 
-### Horizontal scaling
+## 3. BullMQ Architecture
 
-BullMQ workers are stateless — run multiple instances of the backend and each will compete for jobs from the same Redis queue. No extra config needed.
+- `QueueModule` (`src/queue/queue.module.ts`) is `@Global()` and registers all
+  queues: `clip-generation`, `clip-posting`, `nft-mint`, `email-delivery`,
+  `anomaly-detection` (`REGISTERED_QUEUE_NAMES`).
+- Default job options per queue (priority constants in each `*.queue.ts`).
+- Processors (`*.processor.ts`) run in-process; each declares `@Processor(name)`
+  with a concurrency option.
 
-### Separate worker processes
+## 4. Queues
 
-For production, run processors in dedicated worker processes:
+| Queue | Processor | Priority | Purpose |
+|-------|-----------|----------|---------|
+| `clip-generation` | `clip-generation.processor.ts` | high | FFmpeg/Cloudinary clip rendering |
+| `clip-posting` | `clip-posting.processor.ts` | medium | Social posting |
+| `nft-mint` | `nft-mint.processor.ts` | 4 | Soroban NFT mint transactions, isolated from video workloads (Issue #923) |
+| `email-delivery` | `email-delivery.processor.ts` | 5 | Verification, password-reset, magic-link, queue alerts |
+| `anomaly-detection` | `anomaly-detection.processor.ts` | low | Earnings anomaly background checks |
 
-```bash
-# Main API (no workers)
-DISABLE_WORKERS=true node dist/main.js
+## 5. Workers
 
-# Dedicated clip worker
-node dist/workers/clip-generation.worker.js
+Each worker (`src/clips/*processor.ts`, `src/auth/email-delivery.processor.ts`,
+`src/earnings/anomaly-detection.processor.ts`):
 
-# Dedicated NFT mint worker
-node dist/workers/nft-mint.worker.js
+1. Receives typed job data (interfaces in `*.queue.ts`).
+2. Updates status rows (e.g. `NftMintStatusService` stages
+   `none -> upload -> prepare -> submit -> confirm`, `fail` on error).
+3. Emits progress (`job.updateProgress`) consumed by progress endpoints.
+4. Throws on transient failure (retry) or returns failure state on permanent
+   errors.
+
+## 6. Concurrency Configuration
+
+- Per-processor `concurrency` option (see each `*.processor.ts`).
+- `nft-mint` uses low concurrency (blockchain nonce safety).
+- Tune via env; scale horizontally by adding worker replicas (see Â§11).
+
+## 7. Retry Policies
+
+Centralized defaults in `QueueConfigService.runtime` (`QUEUE_DEFAULT_ATTEMPTS=3`,
+`QUEUE_DEFAULT_BACKOFF_DELAY_MS`) and per-queue overrides:
+
+| Queue | Attempts | Backoff |
+|-------|----------|---------|
+| `clip-generation` | 3 | exponential, 1s base |
+| `nft-mint` | 3 (`NFT_MINT_JOB_OPTIONS`) | exponential, 2s base |
+| `email-delivery` | 5 (`EMAIL_JOB_OPTIONS`) | exponential, 500ms base |
+
+`RetryBackoffConfigService` (`src/queue/retry-backoff-config.service.ts`)
+exposes typed retry/backoff configs. `removeOnComplete`/`removeOnFail` per queue
+(email: `true`/`false`; mint: `false`/`false` for auditing).
+
+## 8. Dead-Letter Handling
+
+Jobs exhausting attempts stay in the `failed` set (`removeOnFail: false` for
+mint/email) for post-mortem via `QueueHealthService`. Permanent failures are
+recorded in status rows (`permanentFailure`, `failureReason`,
+`NftMintStatusService`) and surfaced to users; operators inspect via the queue
+dashboard (`src/queue-dashboard/`).
+
+## 9. Queue Cleanup
+
+- Completed email jobs auto-removed (`removeOnComplete: true`).
+- Mint/anomaly jobs retained for auditing (`removeOnComplete: false`).
+- Periodic `queue.clean()` / `obliterate()` in maintenance windows; monitor
+  Redis memory first.
+
+## 10. Monitoring
+
+- `QueueHealthService` (`src/queue/queue-health.service.ts`): health and
+  statistics per queue (counts, completed/failed).
+- Health endpoints (see Â§13), `FailedJobNotificationService` and
+  `SlackNotificationService` (`src/queue/`) for alerts.
+- Redis monitoring: `INFO stats`, slowlog, memory fragmentation.
+
+## 11. Scaling Recommendations
+
+1. Separate worker processes per queue (isolate `nft-mint` from video).
+2. Increase `nft-mint` concurrency only with nonce management.
+3. Add Redis replicas/sentinel for HA; keep `QUEUE_REDIS_DB` dedicated.
+4. Autoscale on queue depth (`waiting + delayed` via health endpoints).
+
+## 12. Architecture Diagrams
+
+```mermaid
+flowchart LR
+    API[API Request] --> Q[(Redis / BullMQ)]
+    Q --> W1[clip-generation worker]
+    Q --> W2[nft-mint worker]
+    Q --> W3[email worker]
+    W1 --> DB[(Postgres)]
+    W2 --> SOR[Stellar Soroban]
+    W3 --> SMTP[SMTP]
+    W1 & W2 & W3 --> NOTIF[Progress + Notifications]
 ```
 
-### Concurrency
+## 13. Queue API Reference
 
-Set per-processor concurrency in the `@Processor` decorator:
+All endpoints require JWT Bearer (`access-token`) unless noted. Base path `/api`.
 
-```ts
-@Processor(CLIP_GENERATION_QUEUE, { concurrency: 4 })
-```
+### Queue health
 
-Default is 1 (serial processing per worker instance).
+- `GET /queue/health` â€” per-queue waiting/active/completed/failed counts.
+  - `200 { queues: [{ name, waiting, active, completed, failed }] }`
+  - `401` missing/invalid JWT.
 
----
+### Job status
 
-## Troubleshooting
+- `GET /nfts/:id/mint-status` â€” NFT mint lifecycle (`none|upload|prepare|submit|confirm|fail`) with `txHash`, `retryCount`, `jobId`.
+  - `200 MintStatusResponseDto`, `404` clip not found.
+- `GET /queue/jobs/:jobId` â€” generic BullMQ job state (`queued|active|completed|failed|delayed`), progress percent.
+  - `404` unknown jobId.
 
-### Jobs stuck in `waiting`
+### Job progress
 
-- Check Redis is reachable: `redis-cli ping`
-- Verify `REDIS_HOST` / `REDIS_PORT` in `.env`
-- Check worker logs for startup errors
+- Progress via `job.updateProgress(n)`; poll `GET /queue/jobs/:jobId` or subscribe to completion notifications.
+- `429` when polling exceeds throttle windows.
 
-### Jobs failing repeatedly
+### Notifications
 
-1. Check failed jobs: `GET /jobs/failed?type=clip-generation`
-2. Inspect `failedReason` and `stacktrace` in the response
-3. Retry a specific job: `POST /jobs/:id/retry`
+- `FailedJobNotificationService` persists failure records; completion pushes via
+  existing notification endpoints (`src/queue/slack-notification.service.ts`).
 
-### 429 on job creation
+### Admin queue endpoints
 
-The user has hit the per-queue rate limit. The counter resets after 1 hour. Check Redis:
+- Require admin role; list/retry/drain queues. `403` for non-admins.
 
-```bash
-redis-cli GET "queue:ratelimit:clip-generation:user:{userId}"
-```
+### NFT mint job endpoints (Issue #923)
 
-To manually reset:
+- `POST /nfts/mint` â€” enqueues `nft-mint` job (`jobId: nft-mint-clip-{clipId}`).
+  - `201 NftMintResponseDto` (includes `jobId`), `409` duplicate-mint (job exists), `429` throttled (5/60s), `401`/`403`/`404` as documented in `nft.controller.ts`.
+- `POST /nfts/prepare-mint` â€” builds Soroban XDR; `409` if already minting/minted, `429` when throttled, `503` Soroban RPC unavailable.
+- Transaction states: `queued|active|completed|failed|delayed` (`NFT_MINT_TX_STATES`).
 
-```bash
-redis-cli DEL "queue:ratelimit:clip-generation:user:{userId}"
-```
+### Common errors
 
-### Soroban RPC errors during NFT mint
+| Code | Meaning |
+|------|---------|
+| `400` | Invalid payload/DTO validation |
+| `401` | Missing/invalid JWT |
+| `403` | Not owner / not admin |
+| `404` | Clip/job not found |
+| `409` | Duplicate mint job exists |
+| `429` | Rate limit exceeded, retry after window |
+| `503` | Soroban RPC unavailable |
 
-The `nft-mint` queue uses a circuit breaker (`soroban-nft-mint`). If the circuit is open:
+### Async lifecycle
 
-- Check `GET /circuit-breaker/status`
-- Wait for `recoveryTimeout` (30 s) or reset manually
+`202/201` returns immediately with `jobId`; client polls status/progress;
+completion updates `mint-status`; failures remain queryable (`removeOnFail:
+false`).
 
----
+## 14. Troubleshooting Guide
 
-## Environment Variables
+| Symptom | Likely cause | Fix |
+|---------|--------------|-----|
+| Jobs stuck `waiting` | No worker running / Redis down | Start workers, check `QUEUE_REDIS_*`, `redis-cli ping` |
+| `409` on first mint | Stale jobId from earlier attempt | Check `mint-status`; wait or clear failed job |
+| `429` on mint | `nftMint` throttle 5/60s | Back off, retry after 60s |
+| Mint `failed` permanent | Soroban RPC down / bad metadata | Check RPC circuit breaker, `failureReason` |
+| Redis memory growth | Retained completed jobs | Run `queue.clean()`, review `removeOnComplete` |
+| Duplicate mints | Bypassed queue (direct contract call) | Always enqueue via API so `jobId` dedup applies |
 
-| Variable | Default | Description |
-|---|---|---|
-| `REDIS_HOST` | `localhost` | Redis hostname |
-| `REDIS_PORT` | `6379` | Redis port |
-| `REDIS_PASSWORD` | _(none)_ | Redis password (optional) |
+Closes #924. Closes #973.

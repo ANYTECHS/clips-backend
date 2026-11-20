@@ -20,7 +20,7 @@ export function buildCsvRow(
 
 export const EARNINGS_CSV_HEADERS = [
   'date',
-  'clip title',
+  'clipTitle',
   'amount',
   'currency',
   'source',
