@@ -8,6 +8,12 @@ import {
   RoyaltyBpsValidationOptions,
   CLIP_ROYALTY_BPS_MAX,
 } from './is-valid-royalty-bps.validator';
+import {
+  IsStellarTransactionHashConstraint,
+  STELLAR_TX_HASH_REGEX,
+} from './is-stellar-transaction-hash.validator';
+
+export { CLIP_ROYALTY_BPS_MAX, STELLAR_TX_HASH_REGEX };
 import { IsStellarAddressConstraint } from './is-stellar-address.validator';
 import { IsSlugConstraint } from './is-slug.validator';
 import { IsXlmAmountConstraint, XlmAmountOptions } from './is-xlm-amount.validator';
@@ -97,6 +103,7 @@ export function IsValidRoyaltyBps(
   );
 }
 
+export function IsStellarTransactionHash(
 // ---------------------------------------------------------------------------
 // New reusable decorators
 // ---------------------------------------------------------------------------
@@ -181,6 +188,9 @@ export function IsIso4217CurrencyCode(
 ): PropertyDecorator {
   return ValidateBy(
     {
+      name: 'isStellarTransactionHash',
+      constraints: [],
+      validator: new IsStellarTransactionHashConstraint(),
       name: 'isIso4217CurrencyCode',
       constraints: [],
       validator: new IsIso4217CurrencyCodeConstraint(),
