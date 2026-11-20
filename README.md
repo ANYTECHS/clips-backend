@@ -487,6 +487,11 @@ Run the subscription integration flow and existing e2e suites with:
 npm run test:e2e
 ```
 
+The API validation integration tests run through the same command and exercise
+HTTP request bodies, query parameters, route parameters, unexpected properties,
+and the documented validation error schema. The focused suite also runs in the
+`API validation integration` GitHub Actions workflow on pushes and pull requests.
+
 The subscription integration scenarios live in `test/subscription-flow.e2e-spec.ts` and cover:
 
 - intent creation with memo and destination

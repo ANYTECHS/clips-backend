@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -14,6 +14,7 @@ import { PayoutsService } from './payouts/payouts.service';
 import { StellarWebhookService } from './subscriptions/stellar-webhook.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AppLoggerService } from './logger/logger.service';
+import { createApiValidationPipe } from './common/pipes/api-validation.pipe';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
@@ -382,30 +383,7 @@ async function bootstrap() {
     next();
   });
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      exceptionFactory: (errors) => {
-        const messages = errors.map((error) => {
-          const constraints = error.constraints
-            ? Object.values(error.constraints)
-            : [`${error.property} is invalid`];
-          return {
-            field: error.property,
-            errors: constraints,
-          };
-        });
-        return new (require('@nestjs/common').BadRequestException)({
-          statusCode: 400,
-          message: 'Validation failed',
-          error: 'Bad Request',
-          details: messages,
-        });
-      },
-    }),
-  );
+  app.useGlobalPipes(createApiValidationPipe());
 
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   // Enable Nest's shutdown hooks so providers can clean up on signals

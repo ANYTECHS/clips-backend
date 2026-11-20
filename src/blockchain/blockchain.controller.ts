@@ -1,5 +1,7 @@
 import { Controller, Get, Query } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
+  ApiExtraModels,
   ApiInternalServerErrorResponse,
   ApiOkResponse,
   ApiOperation,
@@ -7,6 +9,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { SorobanIndexerService } from './soroban-indexer.service';
+import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
 import {
   BlockchainEventsQueryDto,
   BlockchainEventsResponseDto,
@@ -14,6 +17,7 @@ import {
 
 @ApiTags('blockchain')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+@ApiExtraModels(ValidationErrorResponseDto)
 @Controller('blockchain')
 export class BlockchainController {
   constructor(private readonly indexerService: SorobanIndexerService) {}
@@ -29,11 +33,16 @@ export class BlockchainController {
   @ApiQuery({
     name: 'type',
     required: false,
-    description: 'Event type filter (Mint, Transfer, RoyaltyPaid, Burn, RoyaltyClaimed)',
+    description:
+      'Event type filter (Mint, Transfer, RoyaltyPaid, Burn, RoyaltyClaimed)',
   })
   @ApiQuery({ name: 'tokenId', required: false, type: Number })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiBadRequestResponse({
+    description: 'Invalid query parameters',
+    type: ValidationErrorResponseDto,
+  })
   @ApiOkResponse({
     description: 'Paginated indexed events',
     type: BlockchainEventsResponseDto,

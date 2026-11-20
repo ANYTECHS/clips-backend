@@ -15,6 +15,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
+  ApiExtraModels,
   ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOperation,
@@ -23,6 +24,7 @@ import {
   ApiResponse,
   ApiTags,
   ApiUnauthorizedResponse,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { Auth } from '../auth/decorators/auth.decorator';
@@ -40,6 +42,7 @@ import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
 
 import { API_ERROR_SCHEMA } from '../common/dtos';
+import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
 import {
   PAYOUT_STATUS_SWAGGER_DESCRIPTION,
   PAYOUT_STATUS_VALUES,
@@ -56,6 +59,7 @@ const payoutError = (statusCode: number, error: string, message: string) => ({
 });
 
 @ApiTags('payout')
+@ApiExtraModels(ValidationErrorResponseDto)
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
 @ApiInternalServerErrorResponse({ description: 'Internal server error', schema: API_ERROR_SCHEMA })
@@ -194,14 +198,25 @@ export class PayoutsController {
       'insufficient balance, or no Stellar wallet / default payout method configured.',
     content: {
       'application/json': {
-        schema: validationErrorSchema,
+        schema: {
+          oneOf: [
+            { $ref: getSchemaPath(ValidationErrorResponseDto) },
+            validationErrorSchema,
+          ],
+        },
         examples: {
           dtoValidation: {
             summary: 'Malformed body',
             value: {
               statusCode: 400,
-              message: ['amount must be a valid number', 'method must be one of: fiat, stellar'],
+              message: 'Validation failed',
               error: 'Bad Request',
+              details: [
+                {
+                  field: 'amount',
+                  errors: ['amount must be a valid number'],
+                },
+              ],
             },
           },
           belowMinimum: {
@@ -397,6 +412,20 @@ export class PayoutsController {
     description:
       'Payout details including current status, on-chain transaction hash, and confirmation timestamp',
     type: PayoutResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Payout ID must be an integer',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: {
+          type: 'string',
+          example: 'Validation failed (numeric string is expected)',
+        },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   async getPayout(
