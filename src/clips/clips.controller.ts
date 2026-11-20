@@ -26,6 +26,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiBearerAuth,
   ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
@@ -48,11 +49,12 @@ import {
 import { ClipsService } from './clips.service';
 import type { ClipSortField, SortOrder } from './clips.service';
 import { ClipPublishService } from './clip-publish.service';
-import type { ClipGenerationJob } from './clip-generation.processor';
 import { ClipResponseDto } from './dto/clip-response.dto';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto';
 import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto';
 import { UpdateClipRoyaltyDto } from './dto/update-clip-royalty.dto';
+import { GenerateClipsDto } from './dto/generate-clips.dto';
+import { UpdateClipDto } from './dto/update-clip.dto';
 import {
   SetRoyaltyBpsDto,
   SetRoyaltyBpsResponseDto,
@@ -98,9 +100,14 @@ export class ClipsController {
     status: 201,
     description: 'Clip generation job queued successfully',
   })
-  @ApiResponse({ status: 400, description: 'Invalid request data' })
+  @ApiBody({ type: GenerateClipsDto })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid settings: duration out of range (5–180s) or max < min, unsupported style/language, clipCount outside 1–20',
+  })
   @ApiResponse({ status: 429, description: 'Too many active jobs (max 5)' })
-  generate(@Body() dto: ClipGenerationJob) {
+  generate(@Body() dto: GenerateClipsDto) {
     return this.clipsService.enqueueClip(dto);
   }
 
@@ -280,6 +287,34 @@ export class ClipsController {
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
     return this.clipsService.regenerate(userId, Number(id));
+  }
+
+  /**
+   * PATCH /clips/:id
+   *
+   * Issue #1361 — update user-editable clip fields. Protected fields are rejected (400).
+   */
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Update clip details',
+    description:
+      'Update title, description, caption, visibility and metadata. Any other property ' +
+      '(e.g. id, videoId, clipUrl, mintAddress, nftStatus, royaltyBps, status) is rejected with 400.',
+  })
+  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiBody({ type: UpdateClipDto })
+  @ApiResponse({ status: 200, description: 'Clip updated' })
+  @ApiBadRequestResponse({ description: 'Validation failed or protected field supplied' })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  updateClip(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateClipDto,
+    @Req() req: Request,
+  ) {
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipsService.updateClip(id, userId, dto);
   }
 
   /**

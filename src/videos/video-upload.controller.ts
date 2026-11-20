@@ -8,6 +8,7 @@ import {
   HttpStatus,
   BadRequestException,
   Body,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -37,17 +38,13 @@ import {
   UploadVideoErrorDto,
 } from './dto/upload-video.dto.js';
 import * as fs from 'fs/promises';
+import {
+  VIDEO_UPLOAD_CONFIG,
+  videoFileFilter,
+  assertValidVideoFile,
+} from './validators/video-file.validator';
 import * as path from 'path';
 import * as os from 'os';
-
-const ALLOWED_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm'];
-const ALLOWED_MIME_TYPES = [
-  'video/mp4',
-  'video/quicktime',
-  'video/x-msvideo',
-  'video/webm',
-];
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 @ApiTags('Videos')
 @ApiBearerAuth('access-token')
@@ -95,11 +92,13 @@ export class VideoUploadController {
   })
   @ApiBadRequestResponse({
     description:
-      'Invalid file format, file exceeds 500 MB, or video duration exceeds 4 hours',
+      'Unsupported extension/MIME type, file content is not a real video (magic-byte check), ' +
+      'empty file, or video duration exceeds 4 hours',
     type: UploadVideoErrorDto,
   })
   @ApiPayloadTooLargeResponse({
-    description: 'File exceeds the 500 MB upload limit',
+    description:
+      'File exceeds the configured upload limit (VIDEO_UPLOAD_MAX_SIZE_MB, default 500 MB)',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiTooManyRequestsResponse({
@@ -124,32 +123,8 @@ export class VideoUploadController {
           cb(null, `upload-${uniqueSuffix}${ext}`);
         },
       }),
-      limits: { fileSize: MAX_FILE_SIZE },
-      fileFilter: (req, file, cb) => {
-        const ext = extname(file.originalname).toLowerCase();
-        const mimeOk =
-          ALLOWED_MIME_TYPES.includes(file.mimetype) ||
-          // Some clients send application/octet-stream for video files; fall back to extension check
-          file.mimetype === 'application/octet-stream';
-
-        if (ALLOWED_EXTENSIONS.includes(ext) && mimeOk) {
-          cb(null, true);
-        } else if (!ALLOWED_EXTENSIONS.includes(ext)) {
-          cb(
-            new BadRequestException(
-              `Invalid file format "${ext}". Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`,
-            ),
-            false,
-          );
-        } else {
-          cb(
-            new BadRequestException(
-              `Invalid MIME type "${file.mimetype}". Allowed: ${ALLOWED_MIME_TYPES.join(', ')}`,
-            ),
-            false,
-          );
-        }
-      },
+      limits: { fileSize: VIDEO_UPLOAD_CONFIG.maxFileSize, files: 1 },
+      fileFilter: videoFileFilter,
     }),
   )
   async uploadVideo(
@@ -164,6 +139,9 @@ export class VideoUploadController {
         code: 'UPLOAD_FAILED',
       });
     }
+
+    // Issue #1358: verify real content (magic bytes) + size before any job is created
+    await assertValidVideoFile(file);
 
     const userId = Number(req.user?.id ?? 0);
     if (!userId) {

@@ -1,3 +1,4 @@
+import type { UpdateClipDto } from './dto/update-clip.dto';
 /**
  * ClipsService — CRUD and configuration for clip records.
  *
@@ -828,6 +829,21 @@ export class ClipsService {
 
     this.logger.log(`Updated caption for clip ${clipId}`);
     return updated;
+  }
+
+  /** Issue #1361 — update only whitelisted, user-editable clip fields. */
+  async updateClip(clipId: number, userId: number, dto: UpdateClipDto) {
+    await this.validateClipOwnership(clipId, userId);
+    const { title, description, caption, visibility, metadata } = dto;
+    const data = Object.fromEntries(
+      Object.entries({ title, description, caption, visibility, metadata }).filter(
+        ([, v]) => v !== undefined,
+      ),
+    );
+    if (!Object.keys(data).length) {
+      throw new BadRequestException('At least one updatable field must be provided');
+    }
+    return this.prisma.clip.update({ where: { id: clipId }, data });
   }
 
   async updateRoyalty(clipId: number, userId: number, royaltyBps?: number) {
