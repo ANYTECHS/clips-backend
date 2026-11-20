@@ -12,6 +12,7 @@ describe('PayoutLimitsService', () => {
     delete process.env.MAX_PAYOUT_USD;
     delete process.env.MIN_STELLAR_PAYOUT;
     delete process.env.MAX_PAYOUT;
+    delete process.env.MIN_PAYOUT;
   });
 
   afterAll(() => {
@@ -45,6 +46,27 @@ describe('PayoutLimitsService', () => {
     expect(service.getLimits('USD')).toEqual({ min: 15, max: 8000 });
   });
 
+  it('loads generic MIN_PAYOUT and MAX_PAYOUT defaults', () => {
+    process.env.MIN_PAYOUT = '20';
+    process.env.MAX_PAYOUT = '6000';
+
+    const service = new PayoutLimitsService();
+
+    expect(service.getLimits('USD')).toEqual({ min: 20, max: 6000 });
+    expect(service.getLimits('EUR')).toEqual({ min: 20, max: 6000 });
+  });
+
+  it('lets currency-specific limits override generic defaults', () => {
+    process.env.MIN_PAYOUT = '20';
+    process.env.MAX_PAYOUT = '6000';
+    process.env.MIN_PAYOUT_EUR = '10';
+    process.env.MAX_PAYOUT_EUR = '4000';
+
+    const service = new PayoutLimitsService();
+
+    expect(service.getLimits('EUR')).toEqual({ min: 10, max: 4000 });
+  });
+
   describe('resolvePayoutAmount', () => {
     it('throws when balance is below minimum', () => {
       const service = new PayoutLimitsService();
@@ -63,13 +85,15 @@ describe('PayoutLimitsService', () => {
       expect(service.resolvePayoutAmount(100, 'USD')).toBe(100);
     });
 
-    it('caps amount at maximum when balance exceeds it', () => {
+    it('rejects a balance above the maximum instead of silently capping it', () => {
       process.env.PAYOUT_LIMITS = JSON.stringify({
         USD: { min: 5, max: 1000 },
       });
       const service = new PayoutLimitsService();
 
-      expect(service.resolvePayoutAmount(5000, 'USD')).toBe(1000);
+      expect(() => service.resolvePayoutAmount(5000, 'USD')).toThrow(
+        /Maximum payout for USD is 1000/,
+      );
     });
 
     it('throws for unconfigured currency', () => {

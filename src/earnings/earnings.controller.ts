@@ -44,6 +44,7 @@ import {
   LeaderboardResponseDto,
   LeaderboardVisibilityDto,
 } from './dto/leaderboard.dto';
+import { MonthlyEarningsResponseDto } from './dto/monthly-earnings-response.dto';
 
 interface AuthRequest extends Request {
   user: { userId: number };
@@ -385,21 +386,11 @@ export class EarningsController {
   })
   @ApiQuery({ name: 'year', required: true, type: Number, description: 'Full year, e.g. 2026', example: 2026 })
   @ApiQuery({ name: 'month', required: true, type: Number, description: 'Month 1-12', example: 9 })
+  @ApiQuery({ name: 'currency', required: false, type: String, description: 'Optional ISO 4217 currency filter', example: 'USD' })
   @ApiResponse({
     status: 200,
-    description: 'Monthly summary with total, platformBreakdown, currency',
-    schema: {
-      type: 'object',
-      properties: {
-        userId: { type: 'number', example: 1 },
-        year: { type: 'number', example: 2026 },
-        month: { type: 'number', example: 9 },
-        totalAmount: { type: 'number', example: 1250.5 },
-        currency: { type: 'string', example: 'USD' },
-        platformBreakdown: { type: 'object', example: { royalty: 800, subscription: 450.5 } },
-        generated: { type: 'boolean', example: true },
-      },
-    },
+    description: 'Monthly summaries, one row per currency',
+    type: MonthlyEarningsResponseDto,
   })
   @ApiBadRequestResponse({ description: 'Invalid year/month' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
@@ -407,6 +398,7 @@ export class EarningsController {
     @Req() req: AuthRequest,
     @Query('year') yearStr: string,
     @Query('month') monthStr: string,
+    @Query('currency') currency?: string,
   ) {
     const year = parseInt(yearStr, 10);
     const month = parseInt(monthStr, 10);
@@ -417,6 +409,7 @@ export class EarningsController {
       req.user.userId,
       year,
       month,
+      currency,
     );
   }
 

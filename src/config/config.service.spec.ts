@@ -9,6 +9,8 @@ describe('ConfigService', () => {
     delete process.env.MIN_STELLAR_PAYOUT;
     delete process.env.MIN_PAYOUT_USD;
     delete process.env.MAX_PAYOUT_USD;
+    delete process.env.MIN_PAYOUT;
+    delete process.env.MAX_PAYOUT;
     delete process.env.CREATOR_ROYALTY_BPS;
     delete process.env.PLATFORM_ROYALTY_BPS;
     delete process.env.NODE_ENV;
@@ -71,6 +73,14 @@ describe('ConfigService', () => {
       const service = new ConfigService();
       expect(service.minPayoutUsd).toBe(5);
       expect(service.maxPayoutUsd).toBe(10000);
+    });
+
+    it('supports generic MIN_PAYOUT and MAX_PAYOUT', () => {
+      process.env.MIN_PAYOUT = '20';
+      process.env.MAX_PAYOUT = '6000';
+      const service = new ConfigService();
+      expect(service.minPayoutUsd).toBe(20);
+      expect(service.maxPayoutUsd).toBe(6000);
     });
 
     it('throws when MIN_PAYOUT_USD > MAX_PAYOUT_USD', () => {

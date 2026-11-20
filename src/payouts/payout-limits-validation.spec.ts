@@ -12,6 +12,7 @@ describe('PayoutValidationService.assertPayoutLimits', () => {
     delete process.env.MAX_PAYOUT_USD;
     delete process.env.MIN_STELLAR_PAYOUT;
     delete process.env.MAX_PAYOUT;
+    delete process.env.MIN_PAYOUT;
   });
 
   afterAll(() => {

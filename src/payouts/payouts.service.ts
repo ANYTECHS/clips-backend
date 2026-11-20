@@ -1,6 +1,7 @@
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
@@ -216,6 +217,14 @@ export class PayoutsService {
       const rows = [];
 
       for (const split of splits) {
+        await this.payoutValidationService.assertMinimumPayout(
+          split.amount,
+          normalizedCurrency,
+        );
+        this.payoutValidationService.assertPayoutLimits(
+          split.amount,
+          normalizedCurrency,
+        );
         const { walletId, payoutMethodId } = await this.resolveDestinationIds(
           userId,
           split.method,
@@ -639,6 +648,7 @@ export class PayoutsService {
     if (!adminUserId) {
       throw new BadRequestException('Admin identity is required to approve payouts');
     }
+    await this.assertAdmin(adminUserId);
 
     const payout = await this.prisma.payout.findUnique({
       where: { id: payoutId },
@@ -654,6 +664,7 @@ export class PayoutsService {
         status: PAYOUT_STATUSES.APPROVED,
         approvedAt: now,
         approvedBy: adminUserId,
+        reviewedBy: adminUserId,
         reviewedAt: now,
       },
     });
@@ -692,6 +703,7 @@ export class PayoutsService {
     if (!adminUserId) {
       throw new BadRequestException('Admin identity is required to reject payouts');
     }
+    await this.assertAdmin(adminUserId);
 
     const payout = await this.prisma.payout.findUnique({
       where: { id: payoutId },
@@ -707,8 +719,8 @@ export class PayoutsService {
         status: PAYOUT_STATUSES.REJECTED,
         rejectedAt: now,
         reviewedAt: now,
+        reviewedBy: adminUserId,
         rejectionReason: reason.trim(),
-        approvedBy: adminUserId,
       },
     });
 
@@ -735,6 +747,16 @@ export class PayoutsService {
       rejectedAt: updated.rejectedAt!,
       rejectionReason: updated.rejectionReason,
     };
+  }
+
+  private async assertAdmin(adminUserId: number): Promise<void> {
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { role: true },
+    });
+    if (!admin || admin.role !== 'admin') {
+      throw new ForbiddenException('Admin access required');
+    }
   }
 
   private async notifyPayoutUser(

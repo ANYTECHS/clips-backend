@@ -363,43 +363,68 @@ export class EarningsAggregationService {
     };
   }
 
-  async getMonthlySummary(userId: number, year: number, month: number) {
+  async getMonthlySummary(userId: number, year: number, month: number, currency?: string) {
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
       throw new Error('Invalid year. Use YYYY between 2000-2100.');
     }
     if (!Number.isInteger(month) || month < 1 || month > 12) {
       throw new Error('Invalid month. Use 1-12.');
     }
-    const summary = await this.prisma.monthlyEarning.findUnique({
-      where: { userId_year_month: { userId, year, month } },
-    });
-    if (!summary) {
-      // Fallback: compute live from period (UTC) when cron has not run yet
-      const from = new Date(Date.UTC(year, month - 1, 1));
-      const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-      const period = await this.getEarningsByPeriod(
-        userId,
-        from,
-        to,
-        Currency.USD,
-      );
-      return {
+    const normalizedCurrency = currency?.trim().toUpperCase();
+    const summaries = await this.prisma.monthlyEarning.findMany({
+      where: {
         userId,
         year,
         month,
-        totalAmount: period.total,
-        currency: period.currency,
-        platformBreakdown: period.items.reduce(
-          (acc: Record<string, number>, i: any) => {
-            acc[i.source || 'unknown'] = (acc[i.source || 'unknown'] || 0) + i.amount;
-            return acc;
-          },
-          {},
-        ),
+        ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
+      },
+      orderBy: { currency: 'asc' },
+    });
+    if (summaries.length === 0) {
+      // Fallback: compute live from period (UTC) when cron has not run yet
+      const from = new Date(Date.UTC(year, month - 1, 1));
+      const earnings = await this.prisma.earning.findMany({
+        where: {
+          clip: { video: { userId } },
+          date: { gte: from, lt: new Date(Date.UTC(year, month, 1)) },
+          deletedAt: null,
+        },
+        select: {
+          amount: true,
+          currency: true,
+          source: true,
+          clip: { select: { platform: true } },
+        },
+      });
+      const buckets = new Map<string, { total: number; platforms: Record<string, number> }>();
+      for (const earning of earnings) {
+        const earningCurrency = String(earning.currency || 'USD').toUpperCase();
+        if (normalizedCurrency && earningCurrency !== normalizedCurrency) continue;
+        const bucket = buckets.get(earningCurrency) ?? { total: 0, platforms: {} };
+        const platform = earning.source || earning.clip?.platform || 'unknown';
+        bucket.total += earning.amount;
+        bucket.platforms[platform] = (bucket.platforms[platform] || 0) + earning.amount;
+        buckets.set(earningCurrency, bucket);
+      }
+      const live = [...buckets.entries()].map(([itemCurrency, bucket]) => ({
+        id: 0,
+        userId,
+        year,
+        month,
+        totalAmount: bucket.total,
+        currency: itemCurrency,
+        platformBreakdown: bucket.platforms,
         generated: false,
+      }));
+      return {
+        summaries: live,
+        filters: { year, month, currency: normalizedCurrency ?? null },
       };
     }
-    return { ...summary, generated: true };
+    return {
+      summaries: summaries.map((summary) => ({ ...summary, generated: true })),
+      filters: { year, month, currency: normalizedCurrency ?? null },
+    };
   }
 
   async softDelete(earningId: number, userId: number) {    const earning = await this.prisma.earning.findUnique({

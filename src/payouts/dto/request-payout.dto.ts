@@ -83,7 +83,8 @@ export class CreatePayoutDto {
   @ApiProperty({
     description:
       'ISO 4217 currency code. Supported currencies with default limits: USD ' +
-      '(and any currency configured via MIN_PAYOUT_*/MAX_PAYOUT_* or PAYOUT_LIMITS).',
+      'EUR, GBP, XLM, USDC. Currency-specific overrides use ' +
+      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON.',
     example: 'USD',
   })
   @TrimString()

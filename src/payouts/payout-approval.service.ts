@@ -37,7 +37,6 @@ export class PayoutApprovalService {
 
   canApprove(status: string): boolean {
     return [
-      'pending',
       'under_review',
       'pending_review',
       'pending_approval',
@@ -46,11 +45,9 @@ export class PayoutApprovalService {
 
   canReject(status: string): boolean {
     return [
-      'pending',
       'under_review',
       'pending_review',
       'pending_approval',
-      'approved',
     ].includes(status);
   }
 }
