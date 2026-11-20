@@ -11,6 +11,8 @@ mod storage;
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+pub mod test_helpers;
 
 pub use admin::Admin;
 pub use metadata::ClipMetadata;
@@ -18,6 +20,13 @@ pub use storage::{get_token_metadata, set_token_metadata, TokenStorage, ROYALTY_
 
 const CLIP_NAME: &[u8] = b"ClipCash NFT";
 const CLIP_SYMBOL: &[u8] = b"CLIP";
+const CONTRACT_VERSION: &str = "1.0.0";
+
+/// Approximate fee estimates in stroops (1 XLM = 10_000_000 stroops).
+/// These are static baselines; actual fees depend on network congestion and
+/// resource usage at submission time and may change before the user signs.
+pub const EST_MINT_FEE_STROOPS: i64 = 120_000;
+pub const EST_TRANSFER_FEE_STROOPS: i64 = 60_000;
 
 #[contractmeta(key = "name", val = "ClipCash NFT Contract")]
 #[contractmeta(key = "version", val = "1.0.0")]
@@ -35,6 +44,18 @@ pub struct TokenData {
     pub created_at: u64,
 }
 
+/// Read-only contract metadata returned by `contract_info()`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractInfo {
+    pub name: String,
+    pub symbol: String,
+    pub version: String,
+    pub owner: Option<Address>,
+    /// Platform fee in basis points (1 BPS = 0.01 %).
+    pub platform_fee: u32,
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -47,6 +68,10 @@ pub enum Error {
     InvalidTokenId = 6,
     /// Royalty value is outside the valid 0–10 000 BPS range.
     InvalidRoyaltyBps = 7,
+    /// Token is frozen and cannot be transferred or approved.
+    TokenFrozen = 8,
+    AlreadyFrozen = 9,
+    NotFrozen = 10,
 }
 
 #[contractimpl]
@@ -112,6 +137,10 @@ impl ClipsNftContract {
             return Err(Error::SoulboundTokenNotTransferable);
         }
 
+        if storage::is_frozen(&env, token_id) {
+            return Err(Error::TokenFrozen);
+        }
+
         storage::remove_owner_token(&env, &from, token_id);
         storage::set_owner_token(&env, &to, token_id);
 
@@ -146,6 +175,10 @@ impl ClipsNftContract {
             return Err(Error::SoulboundTokenNotTransferable);
         }
 
+        if storage::is_frozen(&env, token_id) {
+            return Err(Error::TokenFrozen);
+        }
+
         storage::remove_owner_token(&env, &from, token_id);
         storage::set_owner_token(&env, &to, token_id);
 
@@ -170,6 +203,10 @@ impl ClipsNftContract {
 
         if token_data.is_soulbound {
             return Err(Error::SoulboundTokenNotTransferable);
+        }
+
+        if storage::is_frozen(&env, token_id) {
+            return Err(Error::TokenFrozen);
         }
 
         storage::set_approval(&env, token_id, &spender);
@@ -233,6 +270,72 @@ impl ClipsNftContract {
     pub fn get_default_royalty_bps(env: Env) -> Option<u32> {
         storage::get_default_royalty_bps(&env)
     }
+
+    /// Return contract metadata (name, symbol, version, owner, platform fee).
+    pub fn contract_info(env: Env) -> ContractInfo {
+        ContractInfo {
+            name: String::from_bytes(&env, CLIP_NAME),
+            symbol: String::from_bytes(&env, CLIP_SYMBOL),
+            version: String::from_str(&env, CONTRACT_VERSION),
+            owner: storage::get_admin(&env),
+            platform_fee: storage::get_platform_fee_bps(&env),
+        }
+    }
+
+    /// Set the platform fee in basis points (admin only, 0–10 000).
+    pub fn set_platform_fee_bps(env: Env, bps: u32) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        if bps > storage::ROYALTY_BPS_MAX {
+            return Err(Error::InvalidRoyaltyBps);
+        }
+        storage::set_platform_fee_bps(&env, bps);
+        Ok(())
+    }
+
+    /// Approximate mint cost in stroops. Estimates can change before submission.
+    pub fn estimate_mint_fee(_env: Env) -> i64 {
+        EST_MINT_FEE_STROOPS
+    }
+
+    /// Approximate transfer cost in stroops. Estimates can change before submission.
+    pub fn estimate_transfer_fee(_env: Env) -> i64 {
+        EST_TRANSFER_FEE_STROOPS
+    }
+
+    /// Freeze a token so it cannot be transferred or approved (admin only).
+    pub fn freeze(env: Env, token_id: u64) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+        if storage::is_frozen(&env, token_id) {
+            return Err(Error::AlreadyFrozen);
+        }
+        storage::set_frozen(&env, token_id, true);
+        events::emit_freeze(&env, token_id, true);
+        Ok(())
+    }
+
+    /// Unfreeze a previously frozen token (admin only).
+    pub fn unfreeze(env: Env, token_id: u64) -> Result<(), Error> {
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        if !storage::has_token(&env, token_id) {
+            return Err(Error::TokenNotFound);
+        }
+        if !storage::is_frozen(&env, token_id) {
+            return Err(Error::NotFrozen);
+        }
+        storage::set_frozen(&env, token_id, false);
+        events::emit_freeze(&env, token_id, false);
+        Ok(())
+    }
+
+    pub fn is_frozen(env: Env, token_id: u64) -> bool {
+        storage::is_frozen(&env, token_id)
+    }
 }
 
 mod events {
@@ -254,5 +357,10 @@ mod events {
     pub fn emit_approve(env: &Env, owner: &Address, spender: &Address, token_id: u64) {
         let topics = (Symbol::new(env, "approve"), owner.clone(), spender.clone());
         env.events().publish(topics, token_id);
+    }
+
+    pub fn emit_freeze(env: &Env, token_id: u64, frozen: bool) {
+        let name = if frozen { "freeze" } else { "unfreeze" };
+        env.events().publish((Symbol::new(env, name),), token_id);
     }
 }

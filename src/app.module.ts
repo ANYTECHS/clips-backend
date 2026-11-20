@@ -10,6 +10,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { ClipsModule } from './clips/clips.module';
 import { NftModule } from './nft/nft.module';
+import { SorobanModule } from './soroban/soroban.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { VideosModule } from './videos/videos.module';
 import { JobsModule } from './jobs/jobs.module';
@@ -117,6 +118,7 @@ import { GracefulShutdownModule } from './common/shutdown/graceful-shutdown.modu
     UserPlatformModule,
     SubscriptionsModule,
     NftModule,
+    SorobanModule,
     PayoutsModule,
     CircuitBreakerModule,
     RedisModule,

@@ -84,6 +84,7 @@ model Clip {
   mintAddress   String?    @unique
   mintedAt      DateTime?
   nftStatus     String     @default("none")
+  nftFrozen     Boolean    @default(false)
   status        String     @default("pending")
   localFilePath String?
   error         String?

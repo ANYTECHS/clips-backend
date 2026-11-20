@@ -105,3 +105,24 @@ pub fn set_token_metadata(env: &Env, token_id: u64, metadata: &crate::ClipMetada
 pub fn get_token_metadata(env: &Env, token_id: u64) -> Option<crate::ClipMetadata> {
     env.storage().persistent().get(&(token_id, Symbol::new(env, "metadata")))
 }
+
+pub fn set_frozen(env: &Env, token_id: u64, frozen: bool) {
+    let key = (token_id, Symbol::new(env, "frozen"));
+    if frozen {
+        env.storage().persistent().set(&key, &true);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+pub fn is_frozen(env: &Env, token_id: u64) -> bool {
+    env.storage().persistent().get(&(token_id, Symbol::new(env, "frozen"))).unwrap_or(false)
+}
+
+pub fn set_platform_fee_bps(env: &Env, bps: u32) {
+    env.storage().instance().set(&Symbol::new(env, "platform_fee"), &bps);
+}
+
+pub fn get_platform_fee_bps(env: &Env) -> u32 {
+    env.storage().instance().get(&Symbol::new(env, "platform_fee")).unwrap_or(0)
+}

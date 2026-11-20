@@ -1,6 +1,7 @@
 #![cfg(test)]
 
-use crate::{ClipsNftContract, ClipsNftContractClient, Error, TokenData};
+use crate::test_helpers::{mint_test_clip, set_test_royalty, setup_initialized, simulate_test_sale, MintOpts};
+use crate::{ClipsNftContract, ClipsNftContractClient, Error, TokenData, EST_MINT_FEE_STROOPS, EST_TRANSFER_FEE_STROOPS};
 use soroban_sdk::{testutils::Address as _, Address, Env, String};
 
 fn setup_env() -> (Env, Address, ClipsNftContractClient<'static>) {
@@ -72,25 +73,13 @@ fn test_mint_soulbound_token() {
 
 #[test]
 fn test_transfer_regular_token() {
-    let (env, _contract_id, client) = setup_env();
-    let admin = Address::generate(&env);
+    let (env, _admin, client) = setup_initialized();
     let owner = Address::generate(&env);
-    let recipient = Address::generate(&env);
-    
-    client.initialize(&admin);
-    
-    env.mock_all_auths();
-    
-    // Mint regular (non-soulbound) token
-    let clip_id = String::from_str(&env, "clip_003");
-    let content_uri = String::from_str(&env, "https://clips.cash/clip_003");
-    client.mint(&owner, &3, &clip_id, &content_uri, &false);
-    
+    let id = mint_test_clip(&env, &client, &owner, MintOpts { token_id: 3, ..Default::default() });
     assert_eq!(client.balance_of(&owner), 1);
-    
-    // Transfer should succeed
-    client.transfer(&owner, &recipient, &3);
-    
+
+    let recipient = simulate_test_sale(&env, &client, &owner, id);
+
     assert_eq!(client.owner_of(&3), Some(recipient.clone()));
     assert_eq!(client.balance_of(&owner), 0);
     assert_eq!(client.balance_of(&recipient), 1);
@@ -339,4 +328,84 @@ fn test_set_default_royalty_bps_not_initialized_is_rejected() {
     env.mock_all_auths();
     let result = client.try_set_default_royalty_bps(&1000);
     assert!(result.is_err());
+}
+
+// ── Contract info ──
+
+#[test]
+fn test_contract_info() {
+    let (env, admin, client) = setup_initialized();
+    client.set_platform_fee_bps(&250);
+    let info = client.contract_info();
+    assert_eq!(info.name, String::from_str(&env, "ClipCash NFT"));
+    assert_eq!(info.symbol, String::from_str(&env, "CLIP"));
+    assert_eq!(info.version, String::from_str(&env, "1.0.0"));
+    assert_eq!(info.owner, Some(admin));
+    assert_eq!(info.platform_fee, 250);
+}
+
+#[test]
+fn test_contract_info_uninitialized() {
+    let (_env, _id, client) = setup_env();
+    let info = client.contract_info();
+    assert_eq!(info.owner, None);
+    assert_eq!(info.platform_fee, 0);
+}
+
+// ── Fee estimation ──
+
+#[test]
+fn test_fee_estimates() {
+    let (_env, _id, client) = setup_env();
+    assert_eq!(client.estimate_mint_fee(), EST_MINT_FEE_STROOPS);
+    assert_eq!(client.estimate_transfer_fee(), EST_TRANSFER_FEE_STROOPS);
+    assert!(client.estimate_mint_fee() > 0);
+}
+
+// ── Freeze ──
+
+#[test]
+fn test_freeze_blocks_transfer_and_unfreeze_allows() {
+    let (env, _admin, client) = setup_initialized();
+    let owner = Address::generate(&env);
+    let id = mint_test_clip(&env, &client, &owner, MintOpts::default());
+
+    client.freeze(&id);
+    assert!(client.is_frozen(&id));
+    let to = Address::generate(&env);
+    assert_eq!(client.try_transfer(&owner, &to, &id), Err(Ok(Error::TokenFrozen)));
+    assert_eq!(client.try_approve(&owner, &to, &id), Err(Ok(Error::TokenFrozen)));
+    assert_eq!(client.try_freeze(&id), Err(Ok(Error::AlreadyFrozen)));
+
+    client.unfreeze(&id);
+    assert!(!client.is_frozen(&id));
+    assert_eq!(client.try_unfreeze(&id), Err(Ok(Error::NotFrozen)));
+    simulate_test_sale(&env, &client, &owner, id);
+}
+
+#[test]
+fn test_freeze_missing_token() {
+    let (_env, _admin, client) = setup_initialized();
+    assert_eq!(client.try_freeze(&99), Err(Ok(Error::TokenNotFound)));
+}
+
+#[test]
+#[should_panic]
+fn test_freeze_unauthorized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, ClipsNftContract);
+    let client = ClipsNftContractClient::new(&env, &contract_id);
+    client.initialize(&Address::generate(&env));
+    env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let id = mint_test_clip(&env, &client, &owner, MintOpts::default());
+    env.set_auths(&[]);
+    client.freeze(&id);
+}
+
+#[test]
+fn test_royalty_helper() {
+    let (_env, _admin, client) = setup_initialized();
+    set_test_royalty(&client, 750);
+    assert_eq!(client.get_default_royalty_bps(), Some(750));
 }
