@@ -477,7 +477,7 @@ model MonthlyEarning {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  @@unique([userId, year, month])
+  @@unique([userId, year, month, currency])
   @@index([userId])
   @@index([year, month])
 }
