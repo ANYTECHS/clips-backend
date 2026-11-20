@@ -1,3 +1,4 @@
+import { NftMintStatusService } from './nft-mint-status.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NftController } from './nft.controller';
 import { NftOwnershipService } from './nft-ownership.service';
@@ -17,12 +18,14 @@ import { NftTransferHistoryService } from './nft-transfer-history.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { LoginGuard } from '../auth/guards/login.guard';
+import { QueueRateLimitGuard } from '../common/guards/queue-rate-limit.guard';
 
 describe('NftController – GET /nfts/collection (Issue #679)', () => {
   let controller: NftController;
 
   const mockAdminContractService = {
     getCollectionInfo: jest.fn(),
+    getTotalSupply: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -44,11 +47,14 @@ describe('NftController – GET /nfts/collection (Issue #679)', () => {
         { provide: NftTransferService, useValue: { prepareTransferTx: jest.fn() } },
         { provide: NftTransferHistoryService, useValue: { getTransfers: jest.fn() } },
         { provide: NftMetadataRefreshService, useValue: { prepareRefreshWithCooldown: jest.fn() } },
+        { provide: NftMintStatusService, useValue: { getOrCreate: jest.fn() } },
       ],
     })
       .overrideGuard(LoginGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(NftMintGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(QueueRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -71,5 +77,17 @@ describe('NftController – GET /nfts/collection (Issue #679)', () => {
       symbol: 'CLIP',
       contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
     });
+  });
+
+  it('returns total supply including configured contract and network', async () => {
+    const supply = {
+      totalSupply: 1250,
+      contractId: 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEU4',
+      network: 'testnet',
+    };
+    mockAdminContractService.getTotalSupply.mockResolvedValue(supply);
+
+    await expect(controller.getTotalSupply()).resolves.toEqual(supply);
+    expect(mockAdminContractService.getTotalSupply).toHaveBeenCalledTimes(1);
   });
 });

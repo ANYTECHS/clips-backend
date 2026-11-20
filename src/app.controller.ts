@@ -1,11 +1,13 @@
 import { Controller, Get, Res } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { AppService } from './app.service';
 import { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 
 @ApiTags('app')
+@SkipThrottle()
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}

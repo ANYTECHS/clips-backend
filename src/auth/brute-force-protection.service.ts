@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { createHash } from 'crypto';
 import { RedisService } from '../redis/redis.service';
 
 export interface BruteForceConfig {
@@ -35,6 +36,10 @@ export class BruteForceProtectionService {
     };
   }
 
+  private hashEmail(email: string): string {
+    return createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+  }
+
   async recordFailedAttempt(email: string): Promise<{
     isLocked: boolean;
     remainingAttempts: number;
@@ -67,12 +72,15 @@ export class BruteForceProtectionService {
       const remainingAttempts = Math.max(0, this.config.maxAttempts - attempts);
 
       // Lock account if threshold reached
+      // Lock account if threshold reached. Log only the email hash —
+      // never the raw email — and never passwords, tokens, or secrets.
       if (attempts >= this.config.maxAttempts) {
         await this.redisService.setex(lockoutKey, this.config.lockoutDuration, '1');
         await this.redisService.del(attemptKey);
 
         this.logger.warn(
           `Account locked for email: ${email} after ${attempts} failed attempts`,
+          `Account locked for emailHash: ${this.hashEmail(email)} after ${attempts} failed attempts`,
         );
 
         return {

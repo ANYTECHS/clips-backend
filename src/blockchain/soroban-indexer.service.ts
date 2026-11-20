@@ -14,15 +14,11 @@ import {
   CircuitBreakerService,
   CircuitBreakerConfig,
 } from '../common/circuit-breaker/circuit-breaker.service';
+import { ContractPauseService } from './contract-pause.service';
+import { SOROBAN_NFT_EVENT_TYPES } from './event-types';
 
 const INDEXER_ID = 'soroban-nft';
-const INDEXED_EVENT_TYPES = new Set([
-  'Mint',
-  'Transfer',
-  'RoyaltyPaid',
-  'Burn',
-  'RoyaltyClaimed',
-]);
+const INDEXED_EVENT_TYPES = new Set(SOROBAN_NFT_EVENT_TYPES);
 const POLL_INTERVAL_MS = 15_000;
 const MAX_EVENTS_PER_POLL = 100;
 const MAX_FAILURES_BEFORE_BACKOFF = 5;
@@ -44,6 +40,7 @@ interface ParsedContractEvent {
 /**
  * Polls Soroban RPC for NFT contract events and persists them (Issue #845).
  * Also feeds RoyaltyClaimed into royalty claim history (Issue #840).
+ * Handles Paused / Unpaused events by delegating to ContractPauseService (Issue #1048).
  */
 @Injectable()
 export class SorobanIndexerService
@@ -52,7 +49,6 @@ export class SorobanIndexerService
   private readonly logger = new Logger(SorobanIndexerService.name);
   private running = false;
   private pollInFlight = false;
-
   private readonly circuitConfig: CircuitBreakerConfig = {
     name: 'soroban-indexer',
     failureThreshold: 5,
@@ -65,6 +61,7 @@ export class SorobanIndexerService
     private readonly stellarService: StellarService,
     private readonly circuitBreakerService: CircuitBreakerService,
     private readonly royaltyClaimHistoryService: RoyaltyClaimHistoryService,
+    private readonly contractPauseService: ContractPauseService,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -118,7 +115,6 @@ export class SorobanIndexerService
     }
 
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
-
     let latestLedger: number;
     try {
       const health = await this.circuitBreakerService.execute(
@@ -190,7 +186,7 @@ export class SorobanIndexerService
         maxLedger = parsed.ledger;
       }
 
-      if (!INDEXED_EVENT_TYPES.has(parsed.eventType)) {
+      if (!INDEXED_EVENT_TYPES.has(parsed.eventType as any)) {
         skipped++;
         continue;
       }
@@ -200,7 +196,12 @@ export class SorobanIndexerService
         skipped++;
         continue;
       }
+
       processed++;
+
+      // -----------------------------------------------------------------------
+      // Per-event side effects
+      // -----------------------------------------------------------------------
 
       if (parsed.eventType === 'RoyaltyClaimed') {
         await this.royaltyClaimHistoryService.recordClaim({
@@ -213,6 +214,27 @@ export class SorobanIndexerService
           eventIndex: parsed.eventIndex,
           claimedAt: parsed.claimedAt,
         });
+      }
+
+      // Issue #1048 — activate or deactivate the contract pause.
+      if (parsed.eventType === 'Paused') {
+        const activated = await this.contractPauseService.activatePendingPause();
+        if (activated) {
+          this.logger.log(
+            `Contract pause activated via on-chain Paused event (ledger=${parsed.ledger}).`,
+          );
+        } else {
+          this.logger.warn(
+            `Paused event received at ledger=${parsed.ledger} but timelock not yet elapsed or no pending schedule.`,
+          );
+        }
+      }
+
+      if (parsed.eventType === 'Unpaused') {
+        await this.contractPauseService.deactivatePause();
+        this.logger.log(
+          `Contract unpaused via on-chain Unpaused event (ledger=${parsed.ledger}).`,
+        );
       }
     }
 
@@ -323,7 +345,6 @@ export class SorobanIndexerService
       const eventIndex = Number(
         raw.eventIndex ?? raw.id ?? fallbackIndex,
       );
-
       const topicVals = this.decodeTopics(raw.topic ?? raw.topics);
       const eventType = String(topicVals[0] ?? '').replace(/^["']|["']$/g, '');
       if (!eventType) return null;
@@ -374,7 +395,6 @@ export class SorobanIndexerService
     return topics.map((t) => {
       try {
         if (typeof t === 'string') {
-          // May already be symbol/string or XDR
           try {
             const scVal = StellarSdk.xdr.ScVal.fromXDR(t, 'base64');
             return StellarSdk.scValToNative(scVal);

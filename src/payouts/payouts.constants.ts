@@ -1,5 +1,7 @@
 export const PAYOUT_STATUSES = {
   PENDING: 'pending',
+  UNDER_REVIEW: 'under_review',
+  /** @deprecated Prefer UNDER_REVIEW — kept for backward compatibility */
   PENDING_REVIEW: 'pending_review',
   PENDING_APPROVAL: 'pending_approval',
   APPROVED: 'approved',
@@ -8,20 +10,30 @@ export const PAYOUT_STATUSES = {
   COMPLETED: 'completed',
   FAILED: 'failed',
   CANCELED: 'canceled',
+  CANCELLED: 'cancelled',
 } as const;
 
+/** Maximum number of payout IDs accepted by the admin bulk process endpoint. */
+export const MAX_BULK_PAYOUT_BATCH_SIZE = 50;
+
+/** User-facing statuses documented in #984 (+ review/approval lifecycle from #988). */
 export const PAYOUT_FILTER_STATUSES = [
   'pending',
+  'under_review',
   'pending_review',
   'pending_approval',
   'approved',
+  'processing',
   'completed',
   'failed',
   'rejected',
+  'canceled',
+  'cancelled',
 ] as const;
 
 export const OPEN_PAYOUT_STATUSES = [
   'pending',
+  'under_review',
   'pending_review',
   'pending_approval',
   'approved',
@@ -30,6 +42,24 @@ export const OPEN_PAYOUT_STATUSES = [
 
 export type PayoutFilterStatus = (typeof PAYOUT_FILTER_STATUSES)[number];
 
+/** Normalize API aliases (cancelled → canceled, under_review ↔ pending_review). */
+export function normalizePayoutStatusFilter(status?: string): string | undefined {
+  if (!status) return undefined;
+  if (status === 'cancelled') return 'canceled';
+  return status;
+}
+
+/** Statuses that match a filter, including synonyms. */
+export function expandStatusFilter(status: string): string[] {
+  const normalized = normalizePayoutStatusFilter(status)!;
+  if (normalized === 'under_review' || normalized === 'pending_review') {
+    return ['under_review', 'pending_review'];
+  }
+  if (normalized === 'canceled') {
+    return ['canceled', 'cancelled'];
+  }
+  return [normalized];
+}
 export type PayoutStatusValue =
   (typeof PAYOUT_STATUSES)[keyof typeof PAYOUT_STATUSES];
 
@@ -73,6 +103,8 @@ export const UNCONFIRMED_STELLAR_PAYOUT_STATUSES = [
 export const PAYOUT_STATUS_DESCRIPTIONS: Record<PayoutStatusValue, string> = {
   pending:
     'Created, or an unsigned Stellar XDR has been prepared and is awaiting signature/submission.',
+  under_review:
+    'Amount is under review and waiting for an admin approval.',
   pending_review:
     'Amount is at or above PAYOUT_APPROVAL_THRESHOLD and is waiting for an admin review.',
   pending_approval: 'Waiting for an admin approval (legacy review state).',
@@ -85,7 +117,9 @@ export const PAYOUT_STATUS_DESCRIPTIONS: Record<PayoutStatusValue, string> = {
     'Submission or on-chain verification failed. Failed attempts are retried with exponential backoff until MAX_PAYOUT_RETRIES is reached.',
   rejected: 'Rejected by an admin; rejectionReason is set.',
   canceled: 'Canceled by the user before approval.',
+  cancelled: 'Canceled by the user before approval (alias of canceled).',
 };
+
 
 export const PAYOUT_STATUS_SWAGGER_DESCRIPTION =
   'Payout lifecycle status. Stellar transaction states:\n' +

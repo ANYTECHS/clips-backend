@@ -17,7 +17,7 @@ import { PayoutsService } from './payouts.service';
 import { PayoutResponseDto } from './dto/payout-responses.dto';
 import { RejectPayoutDto } from './dto/payout-review.dto';
 
-@ApiTags('admin')
+@ApiTags('Admin')
 @ApiHeader({
   name: 'x-admin-secret',
   description: 'Admin secret key',

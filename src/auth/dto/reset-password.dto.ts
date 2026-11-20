@@ -1,27 +1,37 @@
 import { IsNotEmpty, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { IsStrongPassword } from '../validators/decorators';
 
 export class ResetPasswordDto {
   @ApiProperty({
     description: 'Password reset token received via email',
-    example: 'a1b2c3d4e5f6...',
+    example: 'd3b07384d113edec49eaa6238ad5ff00',
+    required: true,
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsString({ message: 'Token must be a string' })
+  @IsNotEmpty({ message: 'Reset token is required' })
   token: string;
 
   @ApiProperty({
-    description:
-      'New password. Must be at least 10 characters long and score at least 3 out of 4 ' +
-      'on the zxcvbn strength scale (0 = very weak, 4 = very strong). ' +
-      'Requests that fail this check return 400 with a JSON-encoded message containing ' +
-      '`score`, `feedback`, and `suggestions` fields, e.g. ' +
-      '`{"score":1,"feedback":["Add numbers","Add special characters"],"suggestions":"Password is too weak. Add numbers, Add special characters"}`.',
-    example: 'N3w-C0rrect-Horse-Battery!',
-    minLength: 10,
+    description: 'New password meeting security requirements (min 8 characters)',
+    example: 'NewSecurePass123!',
+    minLength: 8,
+    required: true,
   })
-  @IsString()
+  @IsString({ message: 'Password must be a string' })
+  @MinLength(8, { message: 'Password must be at least 8 characters long' })
+    description:
+      'New password meeting strength requirements:\n' +
+      '- Minimum 10 characters long\n' +
+      '- Minimum zxcvbn password score of 3 (scale 0-4)\n' +
+      '- Must include mixed characters (uppercase, lowercase, numbers, symbols)\n' +
+      '- Weak sequences and common phrases are rejected\n\n' +
+      'Validation failure returns a structured JSON string in error message:\n' +
+      '`{"score": 1, "feedback": ["This is a very common password"], "suggestions": "Add another word or two"}`',
+    example: 'NewStr0ngP@ssw0rd!2026',
+    minLength: 10,
+    required: true,
+  })
+  @IsString({ message: 'Password must be a string' })
   @MinLength(10, { message: 'Password must be at least 10 characters long' })
   @IsStrongPassword()
   newPassword: string;

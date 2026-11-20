@@ -291,6 +291,51 @@ STELLAR_NETWORK=public
 SOROBAN_NFT_CONTRACT_ID=your-mainnet-contract-id
 ```
 
+### Deploying the Soroban NFT Contract
+
+Deployment is repeatable and environment-driven via the scripts in `scripts/` (Issue #1166):
+
+```bash
+# Testnet
+SOROBAN_NFT_WASM=./nft_contract.wasm \
+STELLAR_SOURCE=SD...your-secret \
+  ./scripts/deploy-testnet.sh
+
+# Mainnet (requires an approved testnet run first)
+SOROBAN_NFT_WASM=./nft_contract.wasm \
+STELLAR_SOURCE=SD...your-secret \
+ALLOW_MAINNET_DEPLOY=true \
+  ./scripts/deploy-mainnet.sh
+```
+
+Both wrappers set `STELLAR_NETWORK` and delegate to `scripts/deploy.sh`, which validates the environment, deploys the WASM, writes a deployment record to `deployments/deployment-<network>.json`, and **prints the contract ID**. Export it as `SOROBAN_NFT_CONTRACT_ID` to point the backend at the new deployment.
+
+### Contract Info Endpoint
+
+The backend exposes the deployed contract's on-chain metadata at:
+
+```
+GET /soroban/contract/info
+```
+
+Example response:
+
+```json
+{
+  "name": "ClipCash NFT",
+  "symbol": "CLIP",
+  "version": "0.1.0",
+  "owner": "GADMIN6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+  "platform_fee": 500
+}
+```
+
+The `platform_fee` value is in basis points (500 = 5%). To inspect the
+configured contract ID and network connection, use `GET /nfts/contract/info`.
+`GET /soroban/contract/version` additionally reports the on-chain contract
+version.
+
+
 ### Platform Payout Wallet
 
 The backend uses `STELLAR_PLATFORM_SECRET` (a Stellar keypair secret) to sign payout transactions. This must be set securely in production — **never commit this value**:
@@ -389,9 +434,19 @@ OpenAPI JSON spec:
 https://api.clipcash.app/api/docs-json
 ```
 
+### Public vs. Protected
+
+| Environment | Swagger UI (`/api/docs`) | Notes |
+|---|---|---|
+| Development / staging (`NODE_ENV` ≠ `production`) | Enabled | Public to anyone who can reach the host |
+| Production (default) | **Disabled** | `openapi.json` is still written to disk at startup |
+| Production + `ENABLE_SWAGGER_UI=true` | Enabled | Not authenticated by the app — restrict it at the reverse proxy (IP allowlist, VPN or basic auth) |
+
+The docs page itself is unauthenticated; protected endpoints still require a JWT, which you can supply through the **Authorize** button (`persistAuthorization` keeps it across reloads). Enabling Swagger UI also relaxes the CSP to allow its inline boot script.
+
 ### API Version
 
-The current API does not use URL versioning. All endpoints are served from `/` (e.g. `/clips`, `/wallets`).
+The OpenAPI document version is set with `.setVersion('1.0')` in `src/main.ts`; bump it when the public contract changes. The API does not use URL versioning — endpoints are served from `/` (e.g. `/clips`, `/wallets`). See [versioning.md](./versioning.md) for the versioning policy.
 
 ### Exporting the OpenAPI Spec
 
@@ -418,7 +473,11 @@ ALLOWED_ORIGINS=https://clipcash.app,https://www.clipcash.app
 
 The backend will reject cross-origin requests from any origin not in this list.
 
-> If you are running Swagger UI from a different domain than the API, add that domain to `ALLOWED_ORIGINS`.
+In production `ALLOWED_ORIGINS` defaults to **empty**, so it must be set or every browser request from the frontend is rejected. In development it defaults to `http://localhost:3000,http://127.0.0.1:3000`.
+
+Allowed methods and headers can be overridden with `ALLOWED_METHODS` and `ALLOWED_HEADERS` (comma-separated).
+
+> Swagger UI at `/api/docs` is served from the same origin as the API, so it needs no CORS entry. Only add an origin if you host Swagger UI (or another API client) on a different domain.
 
 ---
 

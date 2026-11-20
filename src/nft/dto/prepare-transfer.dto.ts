@@ -2,7 +2,6 @@ import {
   IsInt,
   IsString,
   IsNotEmpty,
-  IsPositive,
   Min,
   IsOptional,
 } from 'class-validator';
@@ -13,59 +12,68 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * Request body for POST /nfts/prepare-transfer
  *
  * Builds an unsigned Soroban `transfer_with_royalty` XDR that the caller
- * can sign and submit on-chain.  The response includes a full royalty
+ * can sign and submit on-chain. The response includes a full royalty
  * breakdown so the frontend can display the fee before the user signs.
  */
 export class PrepareTransferDto {
   @ApiProperty({
-    description: 'Numeric token ID of the NFT being transferred (= clip.id)',
-    example: 42,
-    minimum: 1,
+    description: 'Unique numeric NFT token ID (derived from clip ID)',
+    example: '101',
+    required: true,
   })
-  @IsInt()
-  @Min(1)
-  @Type(() => Number)
-  tokenId: number;
+  @IsNotEmpty({ message: 'tokenId is required' })
+  tokenId: string | number;
 
-  @ApiProperty({
-    description: 'Stellar wallet address of the current NFT owner (sender)',
-    example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+  @ApiPropertyOptional({
+    description: 'Current owner Stellar wallet address transferring the NFT',
+    example: 'GBWMCCCVJ6DGYOC2QOXWZKQ4X6ZJ4X6QWXZ7WJZV2L22XZ3456789ABC',
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  fromWallet: string;
+  fromAddress?: string;
 
-  @ApiProperty({
-    description: 'Stellar wallet address of the new NFT owner (recipient)',
-    example: 'GBXXYQVNHHZSL3VQNNNQRXB2FHQWZYTQJ6JRYVJL7XP2KXFBH3TFQX',
+  @ApiPropertyOptional({
+    description: 'Stellar wallet address of the current NFT owner (sender alias)',
+    example: 'GBWMCCCVJ6DGYOC2QOXWZKQ4X6ZJ4X6QWXZ7WJZV2L22XZ3456789ABC',
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  toWallet: string;
+  fromWallet?: string;
+
+  @ApiPropertyOptional({
+    description: 'Buyer/recipient Stellar wallet address receiving the NFT',
+    example: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  })
+  @IsOptional()
+  @IsString()
+  toAddress?: string;
+
+  @ApiPropertyOptional({
+    description: 'Stellar wallet address of the new NFT owner (recipient alias)',
+    example: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  })
+  @IsOptional()
+  @IsString()
+  toWallet?: string;
 
   @ApiProperty({
     description:
-      'Agreed sale price in stroops (1 XLM = 10_000_000 stroops). ' +
-      'Used to compute the royalty amount: royalty = floor(salePrice × royaltyBps / 10_000). ' +
-      'Arithmetic is performed with BigInt to prevent IEEE-754 overflow — see safe-math.helper.ts. ' +
-      'Pass 0 for a gifted/free transfer (no royalty will be charged). ' +
-      'Values where floor(salePrice × royaltyBps / 10_000) > Number.MAX_SAFE_INTEGER ' +
-      '(≈ 9 × 10^15) are rejected with HTTP 400.',
-    example: 5000000000,
-    minimum: 0,
+      'Secondary sale price in smallest currency units (e.g. stroops: 10000000 = 1 XLM). ' +
+      'Pass 0 for a gifted/free transfer (no royalty charged).',
+    example: '100000000',
+    required: true,
   })
-  @IsInt()
-  @Min(0)
-  @Type(() => Number)
-  salePrice: number;
+  @IsNotEmpty({ message: 'salePrice is required' })
+  salePrice: string | number;
 
-  /**
-   * Optional royalty BPS override.
-   * When omitted the backend resolves the rate from the contract:
-   *   1. Per-token royalty stored on-chain
-   *   2. Contract-level default royalty
-   *   3. 0 BPS (no royalty)
-   */
+  @ApiPropertyOptional({
+    description: 'Optional contract ID of payment token',
+    example: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+  })
+  @IsOptional()
+  @IsString()
+  paymentTokenContractId?: string;
+
   @ApiPropertyOptional({
     description:
       'Royalty rate in basis points (0–10 000) to apply to this transfer. ' +
@@ -79,4 +87,76 @@ export class PrepareTransferDto {
   @Min(0)
   @Type(() => Number)
   royaltyBpsOverride?: number;
+}
+
+export class RoyaltyBreakdownResponse {
+  @ApiProperty({ example: 'GBWMCCCVJ6DGYOC2QOXWZKQ4X6ZJ4X6QWXZ7WJZV2L22XZ3456789ABC' })
+  creatorWallet: string;
+
+  @ApiProperty({ example: 1000, description: 'Creator royalty in basis points (1000 bps = 10%)' })
+  creatorRoyaltyBps: number;
+
+  @ApiProperty({ example: '10000000', description: 'Calculated creator royalty amount' })
+  creatorRoyaltyAmount: string;
+
+  @ApiProperty({ example: 'GDPLATFORMWALLETADDRESS123456789012345678901234567890123456' })
+  platformWallet: string;
+
+  @ApiProperty({ example: 100, description: 'Platform royalty in basis points (100 bps = 1%)' })
+  platformRoyaltyBps: number;
+
+  @ApiProperty({ example: '1000000', description: 'Calculated platform royalty amount' })
+  platformRoyaltyAmount: string;
+
+  @ApiProperty({ example: '11000000', description: 'Total royalties deducted from sale price' })
+  totalRoyaltyAmount: string;
+}
+
+export class RoyaltyPaidEventResponse {
+  @ApiProperty({ example: 'RoyaltyPaid', description: 'Event identifier emitted on-chain' })
+  name: string;
+
+  @ApiProperty({
+    example: {
+      tokenId: '101',
+      from: 'GBWMCCCVJ6DGYOC2QOXWZKQ4X6ZJ4X6QWXZ7WJZV2L22XZ3456789ABC',
+      to: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+      creator: 'GBWMCCCVJ6DGYOC2QOXWZKQ4X6ZJ4X6QWXZ7WJZV2L22XZ3456789ABC',
+      creatorRoyalty: '10000000',
+      platform: 'GDPLATFORMWALLETADDRESS123456789012345678901234567890123456',
+      platformRoyalty: '1000000',
+      salePrice: '100000000',
+    },
+    description: 'Structured event data for on-chain Soroban event emission',
+  })
+  data: Record<string, any>;
+}
+
+export class PrepareTransferResponseDto {
+  @ApiProperty({
+    description: 'Transaction XDR ready for client wallet signature',
+    example: 'AAAAAgAAAAA...',
+  })
+  xdr: string;
+
+  @ApiProperty({ example: '101' })
+  tokenId: string;
+
+  @ApiProperty({ example: 'GBWMCCCVJ6DGYOC2QOXWZKQ4X6ZJ4X6QWXZ7WJZV2L22XZ3456789ABC' })
+  from: string;
+
+  @ApiProperty({ example: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' })
+  to: string;
+
+  @ApiProperty({ example: '100000000', description: 'Gross secondary sale price' })
+  salePrice: string;
+
+  @ApiProperty({ example: '89000000', description: 'Net proceeds payable to seller after royalty deductions' })
+  sellerProceeds: string;
+
+  @ApiProperty({ type: RoyaltyBreakdownResponse, description: 'Detailed royalty distribution breakdown' })
+  royaltyBreakdown: RoyaltyBreakdownResponse;
+
+  @ApiProperty({ type: RoyaltyPaidEventResponse, description: 'Soroban RoyaltyPaid event specification' })
+  event: RoyaltyPaidEventResponse;
 }

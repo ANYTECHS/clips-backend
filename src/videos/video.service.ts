@@ -38,60 +38,105 @@ export class VideoService {
       durationSec = metadata.durationSec;
       inputQuality = metadata.inputQuality;
 
-      const aiResult = await detectMomentsWithClaude(
-        this.config,
-        video.sourceUrl,
-      );
-      let moments: ViralMoment[] | null = aiResult.moments;
-      let provider = aiResult.provider;
-      const error = aiResult.error;
-      const usage = aiResult.usage;
-
-      if (!moments) {
-        moments = fallbackFixedChunks(durationSec);
-        provider = 'fallback-fixed-chunks';
-      }
-
+      const { moments, provider, usage } = await this.runAiDetection(video.sourceUrl, durationSec);
       momentsFound = moments.length;
+
       const normalized = normalizeMoments(moments, durationSec);
       clipsGenerated = normalized.length;
-      const avgDurationSec = computeAverageClipDuration(normalized);
-      const timeTakenMs = Date.now() - startTime;
 
-      await updateVideoProcessingStats(this.prisma, videoId, {
-        momentsFound,
-        inputQuality,
+      await this.saveSuccessStats(videoId, {
+        startTime,
         durationSec,
+        inputQuality,
+        momentsFound,
         clipsGenerated,
-        timeTakenMs,
-        avgDurationSec,
-        error,
         moments: normalized,
+        provider,
+        usage,
       });
-
-      this.logUsage(videoId, provider, usage);
 
       return normalized;
     } catch (e: any) {
-      const timeTakenMs = Date.now() - startTime;
-      const errorDetails = String(e?.message ?? e);
-
-      try {
-        await updateVideoProcessingStats(this.prisma, videoId, {
-          momentsFound,
-          inputQuality,
-          durationSec,
-          clipsGenerated,
-          timeTakenMs,
-          error: errorDetails,
-        });
-      } catch (updateError) {
-        this.logger.error(
-          `Failed to update processingStats on error: ${updateError}`,
-        );
-      }
-
+      await this.saveErrorStats(videoId, {
+        startTime,
+        durationSec,
+        inputQuality,
+        momentsFound,
+        clipsGenerated,
+        error: String(e?.message ?? e),
+      });
       throw e;
+    }
+  }
+
+  private async runAiDetection(sourceUrl: string, durationSec: number) {
+    const aiResult = await detectMomentsWithClaude(this.config, sourceUrl);
+    let moments: ViralMoment[] = aiResult.moments;
+    let provider = aiResult.provider;
+
+    if (!moments) {
+      moments = fallbackFixedChunks(durationSec);
+      provider = 'fallback-fixed-chunks';
+    }
+
+    return { moments, provider, usage: aiResult.usage, error: aiResult.error };
+  }
+
+  private async saveSuccessStats(
+    videoId: number,
+    stats: {
+      startTime: number;
+      durationSec: number;
+      inputQuality: string;
+      momentsFound: number;
+      clipsGenerated: number;
+      moments: ViralMoment[];
+      provider: string;
+      usage?: { inputTokens?: number; outputTokens?: number };
+    },
+  ) {
+    const timeTakenMs = Date.now() - stats.startTime;
+    const avgDurationSec = computeAverageClipDuration(stats.moments);
+
+    await updateVideoProcessingStats(this.prisma, videoId, {
+      momentsFound: stats.momentsFound,
+      inputQuality: stats.inputQuality,
+      durationSec: stats.durationSec,
+      clipsGenerated: stats.clipsGenerated,
+      timeTakenMs,
+      avgDurationSec,
+      moments: stats.moments,
+    });
+
+    this.logUsage(videoId, stats.provider, stats.usage);
+  }
+
+  private async saveErrorStats(
+    videoId: number,
+    stats: {
+      startTime: number;
+      durationSec: number;
+      inputQuality: string;
+      momentsFound: number;
+      clipsGenerated: number;
+      error: string;
+    },
+  ) {
+    const timeTakenMs = Date.now() - stats.startTime;
+
+    try {
+      await updateVideoProcessingStats(this.prisma, videoId, {
+        momentsFound: stats.momentsFound,
+        inputQuality: stats.inputQuality,
+        durationSec: stats.durationSec,
+        clipsGenerated: stats.clipsGenerated,
+        timeTakenMs,
+        error: stats.error,
+      });
+    } catch (updateError) {
+      this.logger.error(
+        `Failed to update processingStats on error: ${updateError}`,
+      );
     }
   }
 

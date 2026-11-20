@@ -1,3 +1,9 @@
+export function maskAddress(address: string): string;
+export function maskAddress(address: null): null;
+export function maskAddress(address: undefined): undefined;
+export function maskAddress(
+  address: string | null | undefined,
+): string | null | undefined;
 export function maskAddress(
   address: string | null | undefined,
 ): string | null | undefined {
@@ -7,5 +13,5 @@ export function maskAddress(
 
   const start = address.slice(0, 4);
   const end = address.slice(-6);
-  return `${start}********${end}`;
+  return `${start}...${end}`;
 }

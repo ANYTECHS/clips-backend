@@ -1,92 +1,156 @@
-# Versioning Guide
+# Project Versioning & Changelog Guide
 
-This document defines how ClipCash backend versions releases, documents breaking changes, and keeps Swagger/OpenAPI aligned with the public API.
+This guide establishes the versioning strategy, changelog standards, and release workflows for the ClipCash backend service. It ensures predictable contract evolution, seamless consumer upgrades, and continuous alignment between runtime code, documentation, and the public OpenAPI / Swagger specifications.
 
-## Semantic Versioning (SemVer)
+---
 
-We follow SemVer `MAJOR.MINOR.PATCH`:
+## 1. Semantic Versioning (SemVer) Strategy
 
-| Change type | Version bump | Examples |
-|-------------|--------------|----------|
-| **MAJOR** | Breaking API or data-contract change | Removing/renaming endpoints; changing required request fields; changing response shapes clients depend on; incompatible auth behavior |
-| **MINOR** | Backward-compatible feature | New endpoints, optional fields, new query params with safe defaults, additive Swagger tags |
-| **PATCH** | Backward-compatible fix | Bug fixes, performance, docs-only, internal refactors that preserve API behavior |
+ClipCash adheres strictly to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`):
 
-Pre-release labels (optional): `1.1.0-rc.1`, `1.1.0-beta.2`.
+| Segment             | Change Type          | Trigger Criteria                                                                                                | Examples in Backend                                                                                                                                                                |
+| ------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **MAJOR** (`X.0.0`) | **Breaking Changes** | Incompatible API changes, modified request/response shapes, removed endpoints, or breaking auth contracts.      | Removing or renaming route paths; changing a previously optional DTO field to required; altering error response structures; changing Soroban contract invocation arguments.        |
+| **MINOR** (`1.X.0`) | **Feature Releases** | Additive, backward-compatible functionality that introduces new features without disrupting existing consumers. | Adding new endpoints; introducing optional request fields (`required: false`); adding new query filters with safe defaults; new background queue workers; adding new Swagger tags. |
+| **PATCH** (`1.0.X`) | **Patch Releases**   | Backward-compatible bug fixes, performance improvements, security hotfixes, and internal refactors.             | Fixing validation errors; patching circuit breaker thresholds; internal database query optimizations; updating non-breaking dependencies; documentation edits.                     |
 
-Source of truth for the package version: `package.json` `"version"`.
-Source of truth for human-readable history: `CHANGELOG.md`.
+### Source of Truth
 
-## Breaking changes
+- **Application Version:** Declared in root `package.json` under `"version"`.
+- **OpenAPI Specification Version:** Configured in `src/main.ts` and `scripts/export-openapi.ts` via `DocumentBuilder.setVersion()`.
+- **Human-Readable History:** Maintained in `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
-A change is **breaking** when a correctly integrated client must change code to keep working.
+---
 
-Document every breaking change in `CHANGELOG.md` under `### Breaking`:
+## 2. Breaking Changes Protocol
+
+A change is classified as **breaking** when any existing, correctly implemented API consumer or client application must modify its codebase or integration logic to prevent failure after deployment.
+
+### Examples of Breaking Changes
+
+- Removing or renaming an existing REST endpoint (e.g., changing `/payouts/:id` to `/payouts/details/:id`).
+- Altering existing response structures (e.g., nesting data inside an unexpected envelope or renaming property keys).
+- Adding new mandatory parameters or body fields (`@IsNotEmpty()` without defaults).
+- Changing HTTP status codes for expected operational outcomes (e.g., returning `404` instead of `200` with an empty array).
+- Changing authentication or authorization behavior (e.g., enforcing new permission scopes or token formats).
+
+### Deprecation & Migration Process
+
+When introducing a breaking change:
+
+1. **Deprecation Phase (Preferred):**
+   - Mark the affected endpoint or field as deprecated in Swagger using `@ApiOperation({ deprecated: true })` or `@ApiProperty({ deprecated: true })`.
+   - Provide sunset headers (`Sunset` and `Link`) in HTTP responses where applicable.
+   - Maintain the deprecated behavior alongside the new behavior across at least one MINOR cycle.
+2. **Migration Guide:** Every breaking change must include migration documentation in `CHANGELOG.md` under `### Breaking` detailing:
+   - **What changed:** Specific endpoint, parameter, or response field.
+   - **Why it changed:** Security requirement, data integrity, architectural improvement.
+   - **How to migrate:** Code snippet showing before and after requests/responses.
+
+Example Changelog entry:
 
 ```markdown
 ### Breaking
 
-- `GET /payouts/:id` no longer returns soft-deleted payouts; clients receive `404` (use admin recovery endpoints).
+- `GET /payouts/:id`: Soft-deleted payouts now return `404 Not Found` instead of `{ status: "deleted" }`.
+  - **Migration:** Consumers tracking archived payouts must query `GET /payouts/archive` with admin credentials.
 ```
 
-Migration notes should include:
+---
 
-1. What changed (endpoint, field, status code).
-2. Why (security, correctness, schema).
-3. How to migrate (new field/endpoint, header, version).
+## 3. Feature Releases (MINOR)
 
-Breaking API changes require a **MAJOR** bump and an OpenAPI/Swagger update in the same release.
+Feature releases deliver new capabilities to clients without invalidating prior integrations:
 
-## Feature releases (MINOR)
+- **Additive DTOs:** New request body properties must be declared optional (`@IsOptional()`, `@ApiPropertyOptional()`).
+- **Default Fallbacks:** New query parameters must define safe, backwards-compatible default values.
+- **Idempotent Background Jobs:** New BullMQ queues or job processors must preserve existing job payload schemas.
+- **Additive Database Migrations:** Prisma schema migrations must introduce nullable columns or columns with database defaults so existing queries continue running during zero-downtime rollouts.
 
-- New capabilities that do not break existing clients.
-- Prefer additive DTO fields (`required: false`) and new routes over mutating existing ones.
-- List under `### Added` / `### Changed` in `CHANGELOG.md`.
+---
 
-## Patch releases (PATCH)
+## 4. Patch Releases (PATCH)
 
-- Fixes and internal improvements that preserve request/response contracts.
-- Refactors (e.g. VideoService helpers) belong here when Swagger DTOs and runtime behavior are unchanged.
-- List under `### Fixed` / `### Changed` as appropriate.
+Patch releases focus strictly on stabilization and maintenance:
 
-## Release workflow
+- Bug fixes that restore intended behavior without mutating contract schemas.
+- Internal service refactoring that preserves existing DTO contracts and response payload structures.
+- Dependency security updates and patch bumps.
+- Performance optimizations (e.g., indexing Prisma models, adjusting Redis connection pools).
 
-1. **Develop** on a feature branch; keep API behavior intentional and tested.
-2. **Update** `CHANGELOG.md` `[Unreleased]` with Added / Changed / Fixed / Breaking entries.
-3. **Bump** `package.json` version according to SemVer rules above.
-4. **Move** `[Unreleased]` notes into a dated section, e.g. `## [1.2.0] - 2026-09-15`.
-5. **Verify** OpenAPI:
-   - Swagger UI (`/api/docs`) and exported `openapi.json` reflect the new surface.
-   - `.setVersion(...)` in `main.ts` matches the public API major.minor (or full SemVer if desired).
-6. **Tag** the release in git: `git tag -a v1.2.0 -m "v1.2.0"`.
-7. **Publish** / deploy per environment process; announce breaking changes to API consumers.
+---
 
-## API versioning strategy
+## 5. Release Workflow Checklist
 
-### Current approach
+Before releasing a new version of the ClipCash backend, follow this systematic workflow:
 
-- Single public API documented as OpenAPI version `1.0` (see Swagger `DocumentBuilder.setVersion`).
-- Backward-compatible evolution preferred within a major version.
-- Soft deletes, auth, and error envelopes should remain stable unless a major bump documents otherwise.
+```
+[Feature Branch] --> [CI Tests & Lint] --> [Changelog & Version Bump] --> [OpenAPI Export] --> [PR & Merge] --> [Git Tag] --> [Deploy]
+```
 
-### Breaking API changes and Swagger
+1. **Verify Automated Tests:**
+   Ensure all unit, integration, and E2E test suites pass locally and in CI:
+   ```bash
+   npm run test
+   npm run test:e2e
+   npm run lint
+   ```
+2. **Review Open PRs:** Verify that all changes intended for the release adhere to SemVer rules.
+3. **Update `CHANGELOG.md`:**
+   - Move relevant items from `[Unreleased]` into a newly versioned section: `## [X.Y.Z] - YYYY-MM-DD`.
+   - Ensure entries are properly categorized under `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`, or `Breaking`.
+4. **Bump Version in `package.json`:**
+   ```bash
+   npm version <major|minor|patch> --no-git-tag-version
+   ```
+5. **Synchronize OpenAPI / Swagger Documentation:**
+   - Update `DocumentBuilder.setVersion('X.Y')` in `src/main.ts` and `scripts/export-openapi.ts`.
+   - Export the fresh OpenAPI schema:
+     ```bash
+     npm run openapi:export
+     ```
+   - Commit the updated `openapi.json`.
+6. **Tag the Release in Git:**
+   ```bash
+   git commit -am "chore(release): vX.Y.Z"
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin main --tags
+   ```
+7. **Deploy & Announce:** Deploy to target environment and publish release notes detailing user-facing changes and migration notes.
 
-When a breaking change ships:
+---
 
-1. Bump SemVer **MAJOR** (e.g. `1.x` → `2.0.0`).
-2. Update `DocumentBuilder.setVersion` and regenerate/export OpenAPI.
-3. Update DTO `@ApiProperty` / `@ApiResponse` decorators so schemas match runtime.
-4. Call out the break in `CHANGELOG.md` and release notes.
-5. Do **not** leave stale Swagger examples that show removed fields or old status codes.
+## 6. Swagger & API Versioning Integration
 
-### Non-breaking API changes
+### API Versioning Strategy
 
-- Add optional properties and new operations freely under a MINOR bump.
-- Update Swagger examples when response structures gain fields so docs stay accurate.
-- Refactors that preserve DTOs do not require Swagger schema changes.
+- **Current Approach:** The ClipCash backend currently exposes a unified public API surface represented by OpenAPI version `1.0` (accessible via `/api/docs`).
+- **Semantic Evolution:** Additive, non-breaking modifications evolve the existing specification within the current major version.
+- **Major Evolution:** A breaking contract change necessitates bumping the API version (e.g., `1.0` to `2.0`), updating routing namespaces if versioned URL prefixes (e.g., `/api/v2`) are introduced, and publishing updated OpenAPI definitions.
 
-## Related docs
+### How Breaking API Changes Affect Swagger
 
-- [CHANGELOG.md](../CHANGELOG.md)
-- [Logging / correlation IDs](./logging.md)
-- [Soft deletes](./soft-deletes.md)
+- **Client SDK Breakage:** External tools (TypeScript generators, mobile clients, SDK builders) rely on `openapi.json`. Any breaking schema change invalidates downstream SDK types.
+- **Schema Alignment:** Swagger UI (`/api/docs`) and exported `openapi.json` must strictly represent active runtime behavior. Outdated decorators, obsolete status codes, or phantom fields are treated as documentation bugs.
+- **Decorator Synchronization:**
+  - `@ApiOperation()` must accurately describe operation semantics and note deprecation where applicable.
+  - `@ApiProperty()` / `@ApiPropertyOptional()` must match class-validator constraints (`min`, `max`, `enum`, `required`).
+  - `@ApiResponse()` must document both standard success payloads (200, 201) and error responses (400, 401, 403, 404, 429, 500, 502).
+
+### Enforcing OpenAPI Synchronization
+
+1. When modifying or introducing DTOs and endpoints, ensure decorators are updated in the corresponding controller and DTO files.
+2. Run `npm run openapi:export` to synchronize the static `openapi.json` artifact.
+3. Validate that the exported schema reflects:
+   - The correct API version.
+   - The updated endpoints, tags, and security schemes.
+   - Updated request body and response component definitions.
+
+---
+
+## 7. Related Documentation
+
+- [CHANGELOG.md](../CHANGELOG.md) - Project version history and change logs.
+- [Swagger Guide](./swagger.md) - Comprehensive API documentation standards.
+- [API Contract](./api-contract.md) - Architectural contracts and conventions.
+- [Error Codes](./error-codes.md) - Standardized HTTP and contract error codes.

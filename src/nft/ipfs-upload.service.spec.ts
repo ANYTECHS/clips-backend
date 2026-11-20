@@ -28,6 +28,11 @@ describe('IpfsUploadService', () => {
     description: 'Test clip',
     image: 'https://cdn.example.com/thumb.jpg',
     animation_url: 'https://cdn.example.com/video.mp4',
+    thumbnail: 'https://cdn.example.com/thumb.jpg',
+    duration: 30,
+    viralityScore: 85,
+    createdAt: '2026-06-25T12:00:00.000Z',
+    platforms: ['tiktok'],
     attributes: [{ trait_type: 'Royalty BPS', value: 1000 }],
     seller_fee_basis_points: 1000,
     royalty: { bps: 1000, percent: 10 },
@@ -57,6 +62,9 @@ describe('IpfsUploadService', () => {
         }),
       }),
     );
+    const [, request] = (global.fetch as jest.Mock).mock.calls[0];
+    const uploadedMetadata = JSON.parse(request.body).pinataContent;
+    expect(uploadedMetadata).toEqual(sampleMetadata);
   });
 
   it('uploads metadata via nft.storage when provider is configured', async () => {
@@ -127,6 +135,11 @@ describe('IpfsUploadService', () => {
       description: 'Test clip description',
       image: 'https://cdn.example.com/thumb.jpg',
       animation_url: 'https://cdn.example.com/video.mp4',
+      thumbnail: 'https://cdn.example.com/thumb.jpg',
+      duration: 45,
+      viralityScore: 92,
+      createdAt: '2026-06-25T12:00:00.000Z',
+      platforms: ['tiktok', 'instagram'],
       attributes: [
         { trait_type: 'Clip Duration', value: 45 },
         { trait_type: 'Virality Score', value: 92 },
@@ -222,6 +235,21 @@ describe('IpfsUploadService', () => {
           attributes: [{ trait_type: 'Platforms Posted To', value: '' }],
         }),
       ).not.toThrow();
+    });
+
+    it('requires the detailed metadata fields before upload', () => {
+      expect(() =>
+        service.validateMetadata({
+          ...validMetadata,
+          platforms: undefined,
+        } as unknown as NftMetadata),
+      ).toThrow(BadRequestException);
+      expect(() =>
+        service.validateMetadata({
+          ...validMetadata,
+          thumbnail: '',
+        }),
+      ).toThrow(BadRequestException);
     });
 
     it('rejects metadata before upload when validation fails', async () => {

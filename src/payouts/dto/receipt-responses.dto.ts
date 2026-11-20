@@ -43,6 +43,15 @@ export class ReceiptDownloadResponseDto {
   @ApiProperty({
     description: 'Receipt metadata',
     type: PayoutReceiptDto,
+    example: {
+      id: 1,
+      receiptId: 'RCP-1694812000000-ABC123XYZ',
+      payoutId: 1,
+      emailSent: true,
+      emailSentAt: '2026-08-24T12:00:00.000Z',
+      createdAt: '2026-08-24T12:00:00.000Z',
+      updatedAt: '2026-08-24T12:00:00.000Z',
+    },
   })
   receipt: PayoutReceiptDto;
 

@@ -71,6 +71,7 @@ model Video {
 
 model Clip {
   id            Int        @id @default(autoincrement())
+  collectionId  String     @default("viral-clips")
   videoId       Int
   clipUrl       String
   thumbnail     String?
@@ -88,6 +89,7 @@ model Clip {
   metadataUri   String?
   mintAddress   String?    @unique
   mintedAt      DateTime?
+  mintWalletAddress String?
   nftStatus     String     @default("none")
   status        String     @default("pending")
   localFilePath String?
@@ -95,6 +97,7 @@ model Clip {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
   video         Video      @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  collection    NftCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Restrict)
   earnings      Earning[]
   clipPosts     ClipPost[]
   royalty       ClipRoyalty?
@@ -102,6 +105,22 @@ model Clip {
 
   @@index([videoId])
   @@index([selected])
+  @@index([collectionId, mintAddress])
+}
+
+model NftCollection {
+  collectionId String   @id
+  name         String
+  description  String
+  type         String
+  metadata     Json     @default("{}")
+  royaltyBps   Int?
+  maxSupply    Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  clips        Clip[]
+
+  @@index([type])
 }
 
 /// Tracks the full minting lifecycle for a single clip.
@@ -131,6 +150,12 @@ model NftMintStatus {
   @@index([clipId])
   @@index([stage])
   @@index([permanentFailure])
+}
+
+/// Last successfully confirmed NFT mint for each Stellar wallet.
+model NftWalletMintCooldown {
+  walletAddress String   @id
+  lastMintAt    DateTime
 }
 
 model ClipRoyalty {
@@ -177,6 +202,13 @@ model Earning {
   createdAt             DateTime  @default(now())
   deletedAt             DateTime?
   clip                  Clip      @relation(fields: [clipId], references: [id], onDelete: Cascade)
+
+  @@index([date])
+  @@index([currency])
+  @@index([date, currency])
+  @@index([deletedAt])
+  @@index([clipId, date])
+  @@index([clipId])
 }
 
 model UserPlatform {
@@ -232,6 +264,8 @@ model Payout {
   finalAmount      Float?
   retryCount       Int           @default(0)
   lastAttemptAt    DateTime?
+  confirmationPollCount Int       @default(0)
+  lastConfirmationCheckAt DateTime?
   nextRetryAt      DateTime?
   failureReason    String?
   createdAt        DateTime      @default(now())
@@ -244,6 +278,7 @@ model Payout {
 
   @@index([payoutMethodId])
   @@index([status])
+  @@index([method, status, onChainTxHash])
   @@index([userId])
   @@index([nextRetryAt])
   @@index([deletedAt])
@@ -613,4 +648,46 @@ model IndexerState {
   lastError    String?
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
+}
+
+/// Scheduled contract pause requests with 24-hour timelock (Issue #1048).
+///
+/// Lifecycle:
+///   1. Admin calls POST /blockchain/pause  → row created (activatedAt=null, cancelledAt=null)
+///   2. After scheduledFor has passed the indexer sets activatedAt when a Paused event arrives.
+///   3. Admin calls DELETE /blockchain/pause to cancel → cancelledAt set.
+///   4. When Unpaused event arrives → cancelledAt set on the active row.
+model ContractPauseSchedule {
+  id           Int       @id @default(autoincrement())
+
+  /// Stellar address of the admin who requested the pause.
+  requestedBy  String
+
+  /// Wall-clock time when the pause was requested.
+  requestedAt  DateTime  @default(now())
+
+  /// requestedAt + 24 hours — earliest time the pause may be activated.
+  scheduledFor DateTime
+
+  /// Set by the indexer when a Paused on-chain event is observed and the
+  /// timelock has elapsed.
+  activatedAt  DateTime?
+
+  /// Set when the admin cancels before activation, or when Unpaused event
+  /// is observed on-chain.
+  cancelledAt  DateTime?
+
+  /// Address that cancelled the pause (admin).
+  cancelledBy  String?
+
+  /// Optional free-text reason for the pause.
+  reason       String?
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([requestedAt])
+  @@index([scheduledFor])
+  @@index([activatedAt])
+  @@index([cancelledAt])
 }

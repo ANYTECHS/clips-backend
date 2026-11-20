@@ -1,4 +1,7 @@
-import { NftMetadataService } from './nft-metadata.service';
+import {
+  collectClipPlatforms,
+  NftMetadataService,
+} from './nft-metadata.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 
 describe('NftMetadataService', () => {
@@ -39,6 +42,10 @@ describe('NftMetadataService', () => {
     expect(result.royalty.percent).toBe(10);
     expect(result.viralityScore).toBe(85);
     expect(result.originalDuration).toBe(30);
+    expect(result.duration).toBe(30);
+    expect(result.createdAt).toBe('2025-06-15T12:00:00.000Z');
+    expect(result.platforms).toEqual([]);
+    expect(result.thumbnail).toBe('https://cdn.example.com/thumb.jpg');
   });
 
   it('includes Platform trait in attributes', () => {
@@ -49,6 +56,30 @@ describe('NftMetadataService', () => {
     );
     expect(platformAttr).toBeDefined();
     expect(platformAttr!.value).toBe('ClipCash');
+  });
+
+  it('embeds collection-specific metadata in token metadata', () => {
+    const result = service.build({
+      ...baseClip,
+      collection: {
+        collectionId: 'podcast-highlights',
+        name: 'Podcast Highlights',
+        type: 'podcast',
+        metadata: { category: 'podcast', schemaVersion: 1 },
+      },
+    });
+
+    expect(result.collection).toEqual({
+      name: 'Podcast Highlights',
+      family: 'ClipCash',
+      collectionId: 'podcast-highlights',
+      type: 'podcast',
+      metadata: { category: 'podcast', schemaVersion: 1 },
+    });
+    expect(result.attributes).toContainEqual({
+      trait_type: 'Collection',
+      value: 'Podcast Highlights',
+    });
   });
 
   it('falls back to default name and description when title/caption are null', () => {
@@ -64,6 +95,7 @@ describe('NftMetadataService', () => {
     const result = service.build(clip);
 
     expect(result.image).toBe('https://cdn.example.com/clip.mp4');
+    expect(result.thumbnail).toBe('https://cdn.example.com/clip.mp4');
   });
 
   describe('rich attributes', () => {
@@ -137,6 +169,17 @@ describe('NftMetadataService', () => {
       );
       expect(countAttr).toBeDefined();
       expect(countAttr!.value).toBe(3);
+      expect(result.platforms).toEqual(['tiktok', 'instagram', 'youtube']);
+    });
+
+    it('collects distinct clip source and posted platforms', () => {
+      expect(
+        collectClipPlatforms(' tiktok ', [
+          { platform: 'instagram' },
+          { platform: 'tiktok' },
+          { platform: ' youtube ' },
+        ]),
+      ).toEqual(['tiktok', 'instagram', 'youtube']);
     });
 
     it('omits platforms when empty array', () => {

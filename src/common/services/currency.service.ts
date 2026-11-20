@@ -16,6 +16,16 @@ const CACHE_TTL_SECONDS = 3600;
 
 const EXCHANGE_RATE_API_BASE = 'https://api.exchangerate-api.com/v4/latest';
 
+// Static fallback rates (units per 1 USD) used when the external provider
+// is unavailable. Must stay in sync with CurrencyConversionService.
+const STATIC_FALLBACK_RATES: Record<string, number> = {
+  USD: 1,
+  EUR: 0.92,
+  GBP: 0.79,
+  XLM: 10.5,
+  USDC: 1,
+};
+
 @Injectable()
 export class CurrencyService {
   private readonly logger = new Logger(CurrencyService.name);
@@ -77,10 +87,33 @@ export class CurrencyService {
     to: string,
   ): Promise<{ amount: number; rate: number }> {
     const rate = await this.getExchangeRate(from, to);
+    if (!rate) {
+      // External provider unavailable: fall back to static rates explicitly
+      // instead of zeroing earnings.
+      const fallback = this.getStaticFallbackRate(from, to);
+      this.logger.warn(
+        `Exchange rate ${from}->${to} unavailable, using static fallback rate ${fallback}`,
+      );
+      return {
+        amount: Math.round(amount * fallback * 100) / 100,
+        rate: fallback,
+      };
+    }
     return {
       amount: Math.round(amount * rate * 100) / 100,
       rate,
     };
+  }
+
+  getSupportedCurrencies(): string[] {
+    return [...SUPPORTED_CURRENCIES];
+  }
+
+  private getStaticFallbackRate(from: string, to: string): number {
+    const fromRate = STATIC_FALLBACK_RATES[from.toUpperCase()];
+    const toRate = STATIC_FALLBACK_RATES[to.toUpperCase()];
+    if (!fromRate || !toRate) return 1;
+    return toRate / fromRate;
   }
 
   async convertToBaseCurrency(

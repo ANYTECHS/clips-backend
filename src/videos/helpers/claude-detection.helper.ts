@@ -2,6 +2,40 @@ import { ConfigService } from '@nestjs/config';
 import type { ClaudeDetectionResult, ViralMoment } from './types';
 import { parseClaudeResponse } from './viral-moments.helper';
 
+const ANTHROPIC_MODULE_NAME = '@anthropic-ai/sdk';
+
+/**
+ * Loads the Anthropic SDK module.
+ *
+ * The import is indirect on purpose: it keeps `@anthropic-ai/sdk` an optional
+ * runtime dependency and stops Jest's CommonJS transform from having to
+ * resolve it. Tests override it with `setAnthropicSdkLoader` (see
+ * `helpers/mocks/claude.mock.ts`) so the AI paths can be exercised without a
+ * real API call.
+ */
+export type AnthropicSdkLoader = (moduleName: string) => Promise<unknown>;
+
+/* eslint-disable @typescript-eslint/no-implied-eval -- the indirect
+   constructor keeps `@anthropic-ai/sdk` out of the module graph. */
+const defaultSdkLoader: AnthropicSdkLoader = (moduleName) =>
+  (Function('m', 'return import(m)') as (m: string) => Promise<unknown>)(
+    moduleName,
+  );
+
+/* eslint-enable @typescript-eslint/no-implied-eval */
+
+let sdkLoader: AnthropicSdkLoader = defaultSdkLoader;
+
+/** Replace the SDK loader. Pass no argument to restore the default. */
+export function setAnthropicSdkLoader(loader?: AnthropicSdkLoader): void {
+  sdkLoader = loader ?? defaultSdkLoader;
+}
+
+/** Restore the production lazy dynamic import. */
+export function resetAnthropicSdkLoader(): void {
+  sdkLoader = defaultSdkLoader;
+}
+
 /**
  * Call Anthropic Claude to detect high-engagement clip moments.
  * Returns null moments (caller should fall back) when the API key or URL is missing.
@@ -25,11 +59,13 @@ export async function detectMomentsWithClaude(
   }
 
   try {
-    const moduleName: string = '@anthropic-ai/sdk';
-    const mod: any = await (
-      Function('m', 'return import(m)') as (m: string) => Promise<any>
-    )(moduleName);
-    const Anthropic: any = mod.default ?? mod;
+    const mod = (await sdkLoader(ANTHROPIC_MODULE_NAME)) as Record<
+      string,
+      unknown
+    >;
+    const Anthropic = (mod.default ?? mod) as new (options: {
+      apiKey: string;
+    }) => { messages: { create: (request: unknown) => Promise<unknown> } };
     const client = new Anthropic({ apiKey });
 
     const prompt =
@@ -43,12 +79,16 @@ export async function detectMomentsWithClaude(
       { type: 'media', source: { type: 'video', url: videoUrl } },
     ];
 
-    const result: any = await client.messages.create({
+    const result = (await client.messages.create({
       model,
       max_tokens: 1200,
       temperature: 0,
       messages: [{ role: 'user', content }],
-    });
+    })) as {
+      content?: Array<{ text?: string }>;
+      output_text?: string;
+      usage?: { input_tokens?: number; output_tokens?: number };
+    };
 
     moments = parseClaudeResponse(result, maxClips, minClips);
 
@@ -56,8 +96,8 @@ export async function detectMomentsWithClaude(
       inputTokens: Number(result?.usage?.input_tokens) || undefined,
       outputTokens: Number(result?.usage?.output_tokens) || undefined,
     };
-  } catch (e: any) {
-    error = String(e?.message ?? e);
+  } catch (e) {
+    error = String((e as Error)?.message ?? e);
   }
 
   return { moments, provider: 'anthropic', usage, error };

@@ -23,6 +23,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { getBullMQWorkerConfig } from '../config/bullmq.config';
 import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import { DEFAULT_CLIP_ROYALTY_BPS } from './dto/create-clip.dto';
+import {
+  computeBackoffDelayMs,
+  isFinalAttempt as isJobFinalAttempt,
+} from '../queue/processor-error.handler';
 
 export interface ClipGenerationJob {
   videoId: string;
@@ -47,6 +51,8 @@ export interface ClipGenerationJob {
   existingViralityScore?: number;
   /** Existing clip URL to replace/delete during regeneration */
   existingClipUrl?: string;
+  /** Creator royalty in BPS (0–1500). Defaults to 1000 when omitted. */
+  royaltyBps?: number;
 }
 
 export interface ClipProcessingResult {
@@ -287,9 +293,10 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
   @OnWorkerEvent('failed')
   onFailed(job: Job<ClipGenerationJob>, error: Error): void {
     const maxAttempts = job.opts.attempts ?? 1;
-    const isFinalAttempt = job.attemptsMade >= maxAttempts;
+    // Standardized final-attempt check (Issue #1235).
+    const isFinal = isJobFinalAttempt(job);
 
-    if (!isFinalAttempt) {
+    if (!isFinal) {
       this.logRetryWarning(job, error, maxAttempts);
       return;
     }
@@ -604,11 +611,8 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
 
   /** Log a warning for intermediate (non-final) job failures. */
   private logRetryWarning(job: Job<ClipGenerationJob>, error: Error, maxAttempts: number): void {
-    const backoffDelay = job.opts.backoff
-      ? typeof job.opts.backoff === 'number'
-        ? job.opts.backoff
-        : (job.opts.backoff.delay ?? 1000) * Math.pow(2, job.attemptsMade - 1)
-      : 0;
+    // Standardized backoff computation (Issue #1235).
+    const backoffDelay = computeBackoffDelayMs(job, 1000);
 
     this.logger.warn(
       `[RETRY] Clip job ${job.id} failed on attempt ${job.attemptsMade}/${maxAttempts} — ` +
@@ -745,7 +749,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
-      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      royaltyBps: data.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
       nftStatus: 'none',
       mintAddress: null,
       mintedAt: null,
@@ -786,7 +790,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
       selected: false,
       postStatus: null,
       caption: generateCaption(data.title, clipId, data.transcript),
-      royaltyBps: DEFAULT_CLIP_ROYALTY_BPS,
+      royaltyBps: data.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
       nftStatus: 'none',
       mintAddress: null,
       mintedAt: null,

@@ -106,7 +106,19 @@ export class UpdateRoyaltySplitsResponseDto {
   @ApiProperty({ description: 'Token ID (= clip ID)', example: 42 })
   tokenId: number;
 
-  @ApiProperty({ type: [RoyaltyShareDto] })
+  @ApiProperty({
+    type: [RoyaltyShareDto],
+    example: [
+      {
+        recipient: 'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF',
+        bps: 9000,
+      },
+      {
+        recipient: 'GDPLATFORM7XT2M6RCFPEHVGT7JXOTUZFAAAAAAAAAAAAAAAAAAAAAA',
+        bps: 1000,
+      },
+    ],
+  })
   shares: RoyaltyShareDto[];
 
   @ApiProperty({ description: 'Sum of all shares, in basis points', example: 10000 })

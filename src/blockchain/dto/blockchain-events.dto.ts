@@ -1,16 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { SOROBAN_NFT_EVENT_TYPES, SorobanNftEventType } from '../event-types';
 
 export class BlockchainEventsQueryDto {
   @ApiPropertyOptional({
     example: 'Mint',
-    description:
-      'Filter by event type: Mint, Transfer, RoyaltyPaid, Burn, RoyaltyClaimed',
+    description: 'Filter by a supported Soroban NFT event type',
+    enum: [...SOROBAN_NFT_EVENT_TYPES],
   })
   @IsOptional()
-  @IsString()
-  type?: string;
+  @IsIn(SOROBAN_NFT_EVENT_TYPES)
+  type?: SorobanNftEventType;
 
   @ApiPropertyOptional({ example: 42 })
   @IsOptional()
@@ -39,7 +40,7 @@ export class BlockchainEventItemDto {
   @ApiProperty({ example: 'clxyz123' })
   id: string;
 
-  @ApiProperty({ example: 'Mint' })
+  @ApiProperty({ example: 'Mint', enum: [...SOROBAN_NFT_EVENT_TYPES] })
   eventType: string;
 
   @ApiPropertyOptional({ example: 42, nullable: true })
@@ -78,7 +79,10 @@ export class BlockchainEventItemDto {
   @ApiProperty({ example: 1234567 })
   ledger: number;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: { tokenId: 42, operation: 'mint' },
+  })
   payload: Record<string, unknown> | null;
 
   @ApiProperty({ example: '2026-08-29T05:00:00.000Z' })
@@ -100,9 +104,30 @@ export class BlockchainEventsMetaDto {
 }
 
 export class BlockchainEventsResponseDto {
-  @ApiProperty({ type: [BlockchainEventItemDto] })
+  @ApiProperty({
+    type: [BlockchainEventItemDto],
+    example: [
+      {
+        id: 'clxyz123',
+        eventType: 'Mint',
+        tokenId: 42,
+        fromAddress: null,
+        toAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        amount: null,
+        asset: 'native',
+        txHash: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
+        eventIndex: 0,
+        ledger: 1234567,
+        payload: { tokenId: 42, operation: 'mint' },
+        createdAt: '2026-08-29T05:00:00.000Z',
+      },
+    ],
+  })
   data: BlockchainEventItemDto[];
 
-  @ApiProperty({ type: BlockchainEventsMetaDto })
+  @ApiProperty({
+    type: BlockchainEventsMetaDto,
+    example: { total: 100, page: 1, limit: 20, totalPages: 5 },
+  })
   meta: BlockchainEventsMetaDto;
 }

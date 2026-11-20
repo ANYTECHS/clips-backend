@@ -24,7 +24,7 @@ export class SetRoyaltyBpsDto {
     required: false,
   })
   @IsOptional()
-  @IsInt()
+  @IsInt({ message: 'royaltyBps must be a whole number (e.g. 1000 for 10%)' })
   @Min(0, { message: 'royaltyBps must be at least 0' })
   @Max(1500, { message: 'royaltyBps must not exceed 1500 (15%)' })
   @Type(() => Number)

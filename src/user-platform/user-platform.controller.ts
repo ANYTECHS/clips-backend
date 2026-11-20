@@ -16,6 +16,7 @@ import {
   ApiOperation,
   ApiResponse,
   ApiParam,
+  ApiBody,
   ApiUnauthorizedResponse,
   ApiBadRequestResponse,
   ApiNotFoundResponse,
@@ -23,14 +24,15 @@ import {
 } from '@nestjs/swagger';
 import { UserPlatformService } from './user-platform.service';
 import { Auth } from '../auth/decorators/auth.decorator';
-import type {
-  UserPlatformCreateInput,
-  UserPlatformUpdateInput,
-} from './user-platform.service';
+import {
+  CreateUserPlatformDto,
+  UpdateUserPlatformDto,
+} from './dto/user-platform-request.dto';
 import {
   UserPlatformResponseDto,
   toUserPlatformResponseDto,
 } from './dto/user-platform-response.dto';
+import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
 
 @ApiTags('user-platforms')
 @ApiBearerAuth('access-token')
@@ -46,13 +48,43 @@ export class UserPlatformController {
     summary: 'Connect a social platform',
     description: 'Connects a social media platform to the authenticated user',
   })
+  @ApiBody({
+    type: CreateUserPlatformDto,
+    examples: {
+      youtube: {
+        summary: 'Connect a YouTube account',
+        value: {
+          platform: 'youtube',
+          username: 'creator123',
+          accessToken: 'oauth-access-token',
+          refreshToken: 'oauth-refresh-token',
+        },
+      },
+    },
+  })
   @ApiResponse({
     status: 201,
     description: 'Platform connected',
     type: UserPlatformResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid input' })
-  async create(@Request() req: any, @Body() data: UserPlatformCreateInput) {
+  @ApiBadRequestResponse({
+    description: 'Validation failed: platform must be a non-empty string',
+    type: ValidationErrorResponseDto,
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed',
+        error: 'Bad Request',
+        details: [
+          {
+            field: 'platform',
+            errors: ['platform should not be empty', 'platform must be a string'],
+          },
+        ],
+      },
+    },
+  })
+  async create(@Request() req: any, @Body() data: CreateUserPlatformDto) {
     const created = await this.userPlatformService.create({
       ...data,
       userId: req.user.id,
@@ -127,18 +159,46 @@ export class UserPlatformController {
     summary: 'Update platform connection',
     description: 'Updates an existing social platform connection',
   })
+  @ApiBody({
+    type: UpdateUserPlatformDto,
+    examples: {
+      refreshCredentials: {
+        summary: 'Replace OAuth credentials',
+        value: {
+          accessToken: 'new-oauth-access-token',
+          refreshToken: 'new-oauth-refresh-token',
+        },
+      },
+    },
+  })
   @ApiParam({ name: 'id', description: 'Platform connection ID' })
   @ApiResponse({
     status: 200,
     description: 'Platform connection updated',
     type: UserPlatformResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Invalid input' })
+  @ApiBadRequestResponse({
+    description: 'Validation failed: supplied fields must be non-empty strings',
+    type: ValidationErrorResponseDto,
+    schema: {
+      example: {
+        statusCode: 400,
+        message: 'Validation failed',
+        error: 'Bad Request',
+        details: [
+          {
+            field: 'accessToken',
+            errors: ['accessToken should not be empty', 'accessToken must be a string'],
+          },
+        ],
+      },
+    },
+  })
   @ApiNotFoundResponse({ description: 'Platform connection not found' })
   async update(
     @Request() req: any,
     @Param('id') id: string,
-    @Body() data: UserPlatformUpdateInput,
+    @Body() data: UpdateUserPlatformDto,
   ) {
     const updated = await this.userPlatformService.update(
       Number(id),

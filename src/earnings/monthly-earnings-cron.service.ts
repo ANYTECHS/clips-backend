@@ -1,22 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
-import { EarningsService } from './earnings.service';
+import { EarningsAggregationService } from './earnings-aggregation.service';
+import { Currency } from './earnings.types';
 
 /**
- * Runs on the first day of every month at midnight (0 0 1 * *).
+ * Runs on the first day of every month at midnight UTC (0 0 1 * *).
  *
  * Generates a permanent MonthlyEarning summary for every user who had
- * earnings in the previous calendar month.  Records are immutable once
+ * earnings in the previous calendar month. Records are immutable once
  * created (upsert with no-op on conflict) so historical data is auditable.
- *
- * Acceptance criteria (Issue #779):
- *  - Monthly cron configured            ✔  @Cron('0 0 1 * *')
- *  - Monthly summary generated          ✔  generateMonthlySummaries()
- *  - Platform breakdown stored          ✔  platformBreakdown JSON field
- *  - Duplicate summaries prevented      ✔  upsert on (userId, year, month)
- *  - Previous months remain immutable   ✔  update clause is empty (no-op)
- *  - Job failures logged                ✔  try/catch with Logger.error
+ * Uses UTC consistently. Closes #992.
  */
 @Injectable()
 export class MonthlyEarningsCronService {
@@ -24,20 +18,18 @@ export class MonthlyEarningsCronService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly earningsService: EarningsService,
+    private readonly aggregation: EarningsAggregationService,
   ) {}
 
   /**
    * Cron: 0 0 1 * * — first day of every month at 00:00 UTC.
-   * Generates MonthlyEarning records for the previous calendar month.
    */
   @Cron('0 0 1 * *', { name: 'monthly-earnings-summary' })
   async handleMonthlyEarningsCron(): Promise<void> {
     const now = new Date();
-    // Target: previous calendar month
     const targetDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
     const year = targetDate.getUTCFullYear();
-    const month = targetDate.getUTCMonth() + 1; // 1-indexed
+    const month = targetDate.getUTCMonth() + 1;
 
     this.logger.log(
       `[MonthlyEarningsCron] Starting summary generation for ${year}-${String(month).padStart(2, '0')}`,
@@ -59,18 +51,19 @@ export class MonthlyEarningsCronService {
   }
 
   /**
-   * Generate (or skip if already present) MonthlyEarning records for all
-   * active users for the given year/month.  This is intentionally idempotent
-   * so it can be called manually for backfills without creating duplicates.
-   *
-   * @param year  Full calendar year, e.g. 2026
-   * @param month Calendar month 1-12
+   * Generate MonthlyEarning records for all users with earnings in period.
+   * Idempotent: upsert with no-op update prevents duplicates.
    */
   async generateMonthlySummaries(year: number, month: number): Promise<void> {
     const from = new Date(Date.UTC(year, month - 1, 1));
-    const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)); // last ms of last day
+    const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
-    const userIds = await this.earningsService.getActiveUserIds();
+    // Distinct users with earnings in UTC month
+    const rows = await this.prisma.earning.findMany({
+      where: { date: { gte: from, lte: to }, deletedAt: null },
+      select: { clip: { select: { video: { select: { userId: true } } } } },
+    });
+    const userIds = [...new Set(rows.map((r) => r.clip.video.userId))];
 
     if (userIds.length === 0) {
       this.logger.log(`[MonthlyEarningsCron] No active users found for ${year}-${month}`);
@@ -82,38 +75,42 @@ export class MonthlyEarningsCronService {
 
     for (const userId of userIds) {
       try {
-        const summary = await this.earningsService.aggregateEarnings(userId, from, to);
+        const period = await this.aggregation.getEarningsByPeriod(
+          userId,
+          from,
+          to,
+          Currency.USD,
+        );
 
-        // Skip users with zero earnings in this period
-        if (summary.totalAmount === 0) {
+        if (!period || period.total === 0) {
           skipped++;
           continue;
         }
 
+        // Group by currency: store target currency + platform breakdown
+        const platformBreakdown: Record<string, number> = {};
+        for (const item of period.items || []) {
+          const key = item.source || 'unknown';
+          platformBreakdown[key] = (platformBreakdown[key] || 0) + item.amount;
+        }
+
         await this.prisma.monthlyEarning.upsert({
           where: { userId_year_month: { userId, year, month } },
-          // Only create — never overwrite historical data (immutability requirement)
           create: {
             userId,
             year,
             month,
-            totalAmount: summary.totalAmount,
-            currency: summary.currency,
-            platformBreakdown: summary.platformBreakdown,
+            totalAmount: period.total,
+            currency: period.currency,
+            platformBreakdown,
           },
-          // No-op update: if the record already exists we leave it untouched.
-          // This prevents accidental mutation of auditable historical records.
           update: {},
         });
 
         created++;
-        this.logger.debug(
-          `[MonthlyEarningsCron] user=${userId} ${year}-${month} totalAmount=${summary.totalAmount}`,
-        );
       } catch (userError) {
-        // Log per-user failures but continue processing other users
         this.logger.error(
-          `[MonthlyEarningsCron] Failed to process user ${userId}: ${
+          `[MonthlyEarningsCron] Failed for user ${userId}: ${
             userError instanceof Error ? userError.message : String(userError)
           }`,
         );

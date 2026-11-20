@@ -73,7 +73,20 @@ export class PaginatedNftTransfersResponseDto {
   @ApiProperty({ example: 42 })
   tokenId!: number;
 
-  @ApiProperty({ type: [NftTransferItemDto] })
+  @ApiProperty({
+    type: [NftTransferItemDto],
+    example: [
+      {
+        id: 1,
+        tokenId: 42,
+        fromAddress: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        toAddress: 'GBXXYQVNHHZSL3VQNNNQRXB2FHQWZYTQJ6JRYVJL7XP2KXFBH3TFQX',
+        txHash: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
+        transferredAt: '2026-08-29T10:00:00.000Z',
+        salePrice: null,
+      },
+    ],
+  })
   transfers!: NftTransferItemDto[];
 
   @ApiPropertyOptional({

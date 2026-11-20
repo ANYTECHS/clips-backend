@@ -13,7 +13,7 @@ import { DEFAULT_CHAIN, SUPPORTED_CHAINS, SupportedChain } from '../chain.consta
 import {
   chainDisplayName,
   validateAddressForChain,
-} from '../../shared/validation';
+} from '@clipcash/shared';
 
 /**
  * Wallet provider types supported per chain:
@@ -74,6 +74,7 @@ export class CreateWalletConnectionDto {
     description: `The blockchain network. Defaults to "${DEFAULT_CHAIN}" when omitted.`,
     enum: SUPPORTED_CHAINS,
     default: DEFAULT_CHAIN,
+    example: DEFAULT_CHAIN,
   })
   @IsOptional()
   @IsString()

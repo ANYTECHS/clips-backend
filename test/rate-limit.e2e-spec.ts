@@ -29,7 +29,7 @@ function buildThrottlerModule() {
     imports: [
       ThrottlerModule.forRoot({
         throttlers: [
-          { name: 'default', ttl: 60000, limit: 10 },
+          { name: 'default', ttl: 60000, limit: 100 },
           { name: 'auth', ttl: 60000, limit: 5 },
         ],
       }),
@@ -55,6 +55,20 @@ describe('Rate Limiting (e2e)', () => {
 
   afterEach(async () => {
     await app?.close();
+  });
+
+  it('should rate limit the default endpoint after 100 requests', async () => {
+    for (let i = 0; i < 100; i++) {
+      const response = await request(app.getHttpServer()).get(
+        '/test-throttling/default',
+      );
+      expect(response.status).toBe(200);
+    }
+
+    const response = await request(app.getHttpServer()).get(
+      '/test-throttling/default',
+    );
+    expect(response.status).toBe(429);
   });
 
   it('should rate limit strict auth endpoint after 5 requests', async () => {

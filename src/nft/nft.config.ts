@@ -25,9 +25,14 @@ export class NftConfig {
   /** ClipCash treasury wallet address (Stellar). Delegated from ConfigService. */
   readonly platformWallet: string;
 
+  /** Minimum seconds between successful mints from the same wallet. */
+  readonly nftMintWalletCooldownSeconds: number;
+
   constructor(private readonly configService: ConfigService) {
     this.platformRoyaltyBps = configService.platformRoyaltyBps;
     this.creatorRoyaltyBps = configService.creatorRoyaltyBps;
     this.platformWallet = configService.platformWallet;
+    this.nftMintWalletCooldownSeconds =
+      configService.nftMintWalletCooldownSeconds;
   }
 }

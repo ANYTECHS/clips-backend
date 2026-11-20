@@ -27,7 +27,10 @@ import { PayoutStateMachineService } from './payout-state-machine.service';
 import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
+import { PayoutExportService } from './payout-export.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 import { CommonModule } from '../common/common.module';
+import { CircuitBreakerModule } from '../common/circuit-breaker/circuit-breaker.module';
 
 @Module({
   imports: [
@@ -38,6 +41,7 @@ import { CommonModule } from '../common/common.module';
     MetricsModule,
     EarningsModule,
     CommonModule,
+    CircuitBreakerModule,
     BullModule.registerQueue({
       name: PAYOUT_RETRY_QUEUE,
       defaultJobOptions: { priority: PAYOUT_RETRY_QUEUE_PRIORITY },
@@ -55,6 +59,7 @@ import { CommonModule } from '../common/common.module';
   providers: [
     PayoutsService,
     PayoutReceiptService,
+    PayoutExportService,
     FeeService,
     PayoutMethodService,
     SoftDeleteService,
@@ -64,6 +69,7 @@ import { CommonModule } from '../common/common.module';
     PayoutLimitsService,
     PayoutValidationService,
     PayoutProcessingService,
+    StellarPayoutVerificationService,
     ConfigService,
     BalanceService,
     PayoutStateMachineService,
@@ -76,6 +82,7 @@ import { CommonModule } from '../common/common.module';
     PayoutLimitsService,
     PayoutValidationService,
     PayoutProcessingService,
+    StellarPayoutVerificationService,
     BalanceService,
     SoftDeleteService,
   ],

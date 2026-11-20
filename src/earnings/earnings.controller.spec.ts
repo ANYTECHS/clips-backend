@@ -4,6 +4,7 @@ import { EarningsController } from './earnings.controller';
 import { EarningsService } from './earnings.service';
 import { EarningsAggregationService } from './earnings-aggregation.service';
 import { EarningsExportService } from './earnings-export.service';
+import { DailyEarningsAggregationService } from './daily-earnings-aggregation.service';
 import { LeaderboardService } from './leaderboard.service';
 import { Currency } from './earnings.types';
 
@@ -31,6 +32,10 @@ describe('EarningsController', () => {
     exportEarningsCsv: jest.fn(),
   };
 
+  const mockDailyEarningsAggregationService = {
+    getDailyEarnings: jest.fn(),
+  };
+
   const mockLeaderboardService = {
     getLeaderboard: jest.fn(),
     getUserRank: jest.fn(),
@@ -52,12 +57,42 @@ describe('EarningsController', () => {
         { provide: EarningsService, useValue: mockEarningsService },
         { provide: EarningsAggregationService, useValue: mockEarningsAggregationService },
         { provide: EarningsExportService, useValue: mockEarningsExportService },
+        {
+          provide: DailyEarningsAggregationService,
+          useValue: mockDailyEarningsAggregationService,
+        },
         { provide: LeaderboardService, useValue: mockLeaderboardService },
       ],
     }).compile();
 
     controller = module.get<EarningsController>(EarningsController);
     jest.clearAllMocks();
+  });
+
+  describe('getDailyEarnings', () => {
+    it('delegates to DailyEarningsAggregationService with date/currency filters', async () => {
+      const payload = {
+        items: [{ id: 1, date: new Date(), currency: 'USD', totalAmount: 10 }],
+        filters: { from: null, to: null, currency: 'USD' },
+      };
+      mockDailyEarningsAggregationService.getDailyEarnings.mockResolvedValue(payload);
+
+      const result = await controller.getDailyEarnings(mockRequest(7), {
+        from: '2026-09-01',
+        to: '2026-09-27',
+        currency: 'USD',
+      });
+
+      expect(mockDailyEarningsAggregationService.getDailyEarnings).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          currency: 'USD',
+          from: expect.any(Date),
+          to: expect.any(Date),
+        }),
+      );
+      expect(result).toEqual(payload);
+    });
   });
 
   // ─── Dashboard ──────────────────────────────────────────────────────────
@@ -134,7 +169,12 @@ describe('EarningsController', () => {
       mockEarningsAggregationService.getEarningsByPlatform.mockResolvedValue(platformData);
 
       const result = await controller.getEarningsByPlatform(mockRequest(1));
-      expect(mockEarningsAggregationService.getEarningsByPlatform).toHaveBeenCalledWith(1);
+      expect(mockEarningsAggregationService.getEarningsByPlatform).toHaveBeenCalledWith(
+        1,
+        undefined,
+        undefined,
+        undefined,
+      );
       expect(result).toEqual(platformData);
     });
   });
@@ -143,7 +183,7 @@ describe('EarningsController', () => {
 
   describe('exportEarnings', () => {
     it('streams CSV with correct headers', async () => {
-      const csv = 'date,clip title,amount,currency,source,transactionId\n2025-01-01T00:00:00.000Z,My Clip,25.5,USD,royalty,';
+      const csv = 'date,clipTitle,amount,currency,source,transactionId\n2025-01-01T00:00:00.000Z,My Clip,25.5,USD,royalty,42';
       mockEarningsExportService.exportEarningsCsv.mockResolvedValue({
         filename: 'earnings-export-2025-01-01.csv',
         content: csv,
@@ -189,8 +229,17 @@ describe('EarningsController', () => {
       const leaderboard = { data: [], updatedAt: new Date().toISOString() };
       mockLeaderboardService.getLeaderboard.mockResolvedValue(leaderboard);
 
-      const result = await controller.getLeaderboard(10);
-      expect(mockLeaderboardService.getLeaderboard).toHaveBeenCalledWith(10);
+      const result = await controller.getLeaderboard({
+        page: 1,
+        limit: 10,
+        anonymize: true,
+      });
+      expect(mockLeaderboardService.getLeaderboard).toHaveBeenCalledWith({
+        page: 1,
+        limit: 10,
+        anonymize: true,
+        anonymizeEarnings: undefined,
+      });
       expect(result).toEqual(leaderboard);
     });
   });

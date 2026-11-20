@@ -21,6 +21,26 @@ export interface ClipData {
   originalVideoDuration?: number;
   /** Username / handle of the clip creator */
   creatorHandle?: string;
+  /** Collection branding and metadata associated with this NFT */
+  collection?: {
+    collectionId: string;
+    name: string;
+    type: string;
+    metadata: Record<string, unknown>;
+  };
+}
+
+export function collectClipPlatforms(
+  sourcePlatform: string | null | undefined,
+  clipPosts: { platform: string }[] = [],
+): string[] {
+  return [
+    ...new Set(
+      [sourcePlatform, ...clipPosts.map((post) => post.platform)]
+        .map((platform) => platform?.trim())
+        .filter((platform): platform is string => Boolean(platform)),
+    ),
+  ];
 }
 
 /** Result of building metadata plus uploading it to IPFS */
@@ -74,7 +94,10 @@ export class NftMetadataService {
       { trait_type: 'Platform', value: 'ClipCash' },
     ];
 
-    if (clip.originalVideoDuration !== undefined && clip.originalVideoDuration !== null) {
+    if (
+      clip.originalVideoDuration !== undefined &&
+      clip.originalVideoDuration !== null
+    ) {
       attributes.push({
         trait_type: 'Original Video Duration',
         value: clip.originalVideoDuration,
@@ -101,12 +124,34 @@ export class NftMetadataService {
       });
     }
 
+    if (clip.collection) {
+      attributes.push({
+        trait_type: 'Collection',
+        value: clip.collection.name,
+      });
+      attributes.push({
+        trait_type: 'Collection Type',
+        value: clip.collection.type,
+      });
+    }
+
     return {
       name: clip.title?.trim() || `Clip #${clip.id}`,
       description: clip.caption?.trim() || `ClipCash generated clip ${clip.id}`,
       image: clip.thumbnail ?? clip.clipUrl,
       animation_url: clip.clipUrl,
       attributes,
+      ...(clip.collection
+        ? {
+            collection: {
+              name: clip.collection.name,
+              family: 'ClipCash',
+              collectionId: clip.collection.collectionId,
+              type: clip.collection.type,
+              metadata: clip.collection.metadata,
+            },
+          }
+        : {}),
       seller_fee_basis_points: royaltyBps,
       ...(royaltyRecipient ? { fee_recipient: royaltyRecipient } : {}),
       royalty: {
@@ -116,9 +161,12 @@ export class NftMetadataService {
         asset: asset.code,
         ...(asset.contractId ? { assetContractId: asset.contractId } : {}),
       },
+      duration: clip.duration,
       viralityScore: clip.viralityScore ?? 0,
-      originalDuration: clip.duration,
+      originalDuration: clip.originalVideoDuration ?? clip.duration,
       createdAt: clip.createdAt.toISOString(),
+      platforms: clip.platforms ?? [],
+      thumbnail: clip.thumbnail ?? clip.clipUrl,
     };
   }
 

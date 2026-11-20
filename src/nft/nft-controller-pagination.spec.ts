@@ -1,3 +1,5 @@
+import { QueueRateLimitGuard } from '../common/guards/queue-rate-limit.guard';
+import { NftMintStatusService } from './nft-mint-status.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { NftController } from './nft.controller';
@@ -12,6 +14,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { AdminContractService } from './admin-contract.service';
+import { AdminConfigService } from './admin-config.service';
+import { NftApprovalService } from './nft-approval.service';
+import { ClaimRoyaltyService } from './claim-royalty.service';
+import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { GasMetricsService } from './gas-metrics.service';
 import { NftTransferService } from './nft-transfer.service';
 import { NftTransferHistoryService } from './nft-transfer-history.service';
@@ -34,10 +40,15 @@ async function makeController(ownershipService: Partial<NftOwnershipService>) {
       { provide: RoyaltyConfigurationService, useValue: {} },
       { provide: MintSignatureVerificationService, useValue: {} },
       { provide: AdminContractService, useValue: {} },
+      { provide: AdminConfigService, useValue: {} },
+      { provide: NftApprovalService, useValue: {} },
       { provide: GasMetricsService, useValue: {} },
       { provide: NftTransferService, useValue: { prepareTransferTx: jest.fn() } },
       { provide: NftTransferHistoryService, useValue: { getTransfers: jest.fn() } },
       { provide: NftMetadataRefreshService, useValue: { prepareRefreshWithCooldown: jest.fn() } },
+      { provide: ClaimRoyaltyService, useValue: {} },
+      { provide: RoyaltyClaimHistoryService, useValue: {} },
+      { provide: NftMintStatusService, useValue: { getOrCreate: jest.fn() } },
     ],
   }).compile();
 

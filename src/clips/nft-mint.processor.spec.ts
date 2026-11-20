@@ -24,17 +24,21 @@ function makeProcessor() {
   return new NftMintProcessor(mockNftMintService as any, mockMetricsService as any);
 }
 
-function makeJob(overrides: Partial<NftMintJob> = {}): Job<NftMintJob> {
+function makeJob(
+  dataOverrides: Partial<NftMintJob> = {},
+  jobOverrides: Partial<Job<NftMintJob>> = {},
+): Job<NftMintJob> {
   return {
     id: 'nft-job-1',
     data: {
       clipId: 42,
       walletAddress: 'GABC...XYZ',
       userId: 7,
-      ...overrides,
+      ...dataOverrides,
     },
     opts: { attempts: NFT_MINT_JOB_OPTIONS.attempts },
     attemptsMade: 0,
+    ...jobOverrides,
   } as unknown as Job<NftMintJob>;
 }
 
@@ -103,7 +107,7 @@ describe('NftMintProcessor.process()', () => {
 describe('NftMintProcessor.onFailed()', () => {
   it('records final_failure metric', () => {
     const processor = makeProcessor();
-    const job = makeJob();
+    const job = makeJob({}, { attemptsMade: 3 });
 
     processor.onFailed(job, new Error('irreversible failure'));
 

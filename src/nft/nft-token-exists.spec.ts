@@ -1,3 +1,4 @@
+import { NftMintStatusService } from './nft-mint-status.service';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { NftController } from './nft.controller';
@@ -12,12 +13,17 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoyaltyConfigurationService } from './royalty-configuration.service';
 import { MintSignatureVerificationService } from './mint-signature-verification.service';
 import { AdminContractService } from './admin-contract.service';
+import { AdminConfigService } from './admin-config.service';
+import { NftApprovalService } from './nft-approval.service';
+import { ClaimRoyaltyService } from './claim-royalty.service';
+import { RoyaltyClaimHistoryService } from './royalty-claim-history.service';
 import { GasMetricsService } from './gas-metrics.service';
 import { NftTransferService } from './nft-transfer.service';
 import { NftTransferHistoryService } from './nft-transfer-history.service';
 import { NftMetadataRefreshService } from './nft-metadata-refresh.service';
 import { NftMintGuard } from './guards/nft-mint.guard';
 import { LoginGuard } from '../auth/guards/login.guard';
+import { QueueRateLimitGuard } from '../common/guards/queue-rate-limit.guard';
 
 describe('NftController – GET /nfts/:id/exists (Issue #688)', () => {
   let controller: NftController;
@@ -45,15 +51,22 @@ describe('NftController – GET /nfts/:id/exists (Issue #688)', () => {
         { provide: RoyaltyConfigurationService, useValue: { getCreatorRoyaltyBps: jest.fn(), getPlatformWallet: jest.fn() } },
         { provide: MintSignatureVerificationService, useValue: { verify: jest.fn() } },
         { provide: AdminContractService, useValue: { getPauseStatus: jest.fn(), preparePauseTx: jest.fn() } },
+        { provide: AdminConfigService, useValue: {} },
+        { provide: NftApprovalService, useValue: {} },
         { provide: GasMetricsService, useValue: { getStats: jest.fn() } },
         { provide: NftTransferService, useValue: { prepareTransferTx: jest.fn() } },
         { provide: NftTransferHistoryService, useValue: { getTransfers: jest.fn() } },
         { provide: NftMetadataRefreshService, useValue: { prepareRefreshWithCooldown: jest.fn() } },
+        { provide: ClaimRoyaltyService, useValue: {} },
+        { provide: RoyaltyClaimHistoryService, useValue: {} },
+        { provide: NftMintStatusService, useValue: { getOrCreate: jest.fn() } },
       ],
     })
       .overrideGuard(LoginGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(NftMintGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(QueueRateLimitGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

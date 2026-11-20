@@ -48,6 +48,13 @@ export class ValidationErrorResponseDto {
   @ApiProperty({
     description: 'Per-field validation errors',
     type: [ValidationFieldError],
+    example: [
+      { field: 'email', errors: ['Please provide a valid email address'] },
+      {
+        field: 'password',
+        errors: ['Password must be at least 10 characters long'],
+      },
+    ],
   })
   details: ValidationFieldError[];
 }

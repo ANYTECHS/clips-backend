@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 /** Body for POST /nfts/:id/burn */
 export class BurnNftDto {
@@ -12,12 +12,23 @@ export class BurnNftDto {
   @IsString()
   @IsNotEmpty()
   walletAddress: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Refund the currently unclaimed royalty balance to the configured royalty recipient during burn. The contract must recalculate the balance atomically when the transaction is submitted.',
+    example: true,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  refundRoyalties?: boolean;
 }
 
 /** Success response for POST /nfts/:id/burn — an unsigned XDR for the owner to sign. */
 export class BurnNftResponseDto {
   @ApiProperty({
-    description: 'Unsigned Soroban transaction XDR calling burn(owner, token_id)',
+    description:
+      'Unsigned Soroban transaction XDR calling burn(owner, token_id, refund_royalties)',
     example: 'AAAAAgAAAAA...',
   })
   xdr: string;
@@ -39,6 +50,26 @@ export class BurnNftResponseDto {
 
   @ApiProperty({ description: 'Stellar network', example: 'testnet' })
   network: string;
+
+  @ApiProperty({
+    description: 'Whether the transaction requests an atomic royalty refund',
+    example: true,
+  })
+  refundRoyalties: boolean;
+
+  @ApiProperty({
+    description: 'Configured royalty recipient, or null when no refund is requested',
+    nullable: true,
+    example: 'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF',
+  })
+  refundRecipient: string | null;
+
+  @ApiProperty({
+    description:
+      'Estimated refund in stroops. The contract recalculates the eligible amount at submission.',
+    example: '12500000',
+  })
+  refundAmount: string;
 }
 
 /** 403 body when the caller does not own the NFT being burned. */

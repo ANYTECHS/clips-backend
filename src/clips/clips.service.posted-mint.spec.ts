@@ -3,19 +3,13 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ClipsService } from './clips.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { POSTED_CLIP_MINT_ERROR } from './clip-post-status.util';
+import { buildClipRecordWithNftStatus } from '../../test/fixtures/clip.fixture';
 
 describe('ClipsService — posted clips cannot be minted (Issue #764)', () => {
   let service: ClipsService;
   let prisma: { clip: { findUnique: jest.Mock; update: jest.Mock } };
 
-  const mintableClip = {
-    id: 1,
-    nftStatus: 'none',
-    mintAddress: null,
-    postStatus: null,
-    postedAt: null,
-    clipPosts: [],
-  };
+  const mintableClip = buildClipRecordWithNftStatus('none');
 
   beforeEach(async () => {
     prisma = {

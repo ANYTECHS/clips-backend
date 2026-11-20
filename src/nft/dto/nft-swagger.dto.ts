@@ -24,7 +24,19 @@ export class NftOwnershipResultDto {
     description: 'Whether the wallet owns the NFT',
     example: true,
   })
-  valid: boolean;
+  owner: boolean;
+
+  @ApiProperty({
+    description: 'Human-readable result message',
+    example: 'Wallet owns NFT',
+  })
+  message: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the wallet owns the NFT (backward-compatible field)',
+    example: true,
+  })
+  valid?: boolean;
 
   @ApiPropertyOptional({
     description: 'Error message when valid is false',
@@ -35,11 +47,21 @@ export class NftOwnershipResultDto {
 
 export class NftOwnerResponseDto {
   @ApiProperty({
-    description: 'The Stellar wallet address of the owner, or null if not minted',
+    description:
+      'The Stellar wallet address of the owner, or null if not minted',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
     nullable: true,
   })
   owner: string | null;
+
+  @ApiProperty({
+    description:
+      'ClipCash database Clip ID stored on-chain inside `TokenData.clip_id`, ' +
+      'linking this NFT back to its original clip. Null when the token does not exist.',
+    example: 42,
+    nullable: true,
+  })
+  clipId: number | null;
 }
 
 export class WalletNftsResponseDto {
@@ -63,7 +85,8 @@ export class WalletNftsResponseDto {
   balance: number;
 
   @ApiPropertyOptional({
-    description: 'Cursor (offset) for the next page. Null when no more pages exist.',
+    description:
+      'Cursor (offset) for the next page. Null when no more pages exist.',
     example: 20,
     nullable: true,
   })
@@ -94,7 +117,7 @@ export class NftRoyaltyResponseDto {
 
   @ApiProperty({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GC6X********UTZF3',
+    example: 'GABF...KJ93XD',
   })
   recipient: string;
 }
@@ -124,6 +147,12 @@ export class RoyaltyRecipientDto {
 }
 
 export class NftMintResponseDto {
+  @ApiProperty({
+    example: 'viral-clips',
+    description: 'NFT collection containing this token',
+  })
+  collectionId: string;
+
   @ApiProperty({ example: '42', description: 'Clip ID that was minted' })
   clipId: string;
 
@@ -163,7 +192,14 @@ export class NftMintResponseDto {
 
 export class NftPrepareMintResponseDto {
   @ApiProperty({
-    description: 'Unsigned Soroban transaction XDR for the client wallet to sign',
+    description: 'NFT collection slug associated with this token',
+    example: 'viral-clips',
+  })
+  collectionId: string;
+
+  @ApiProperty({
+    description:
+      'Unsigned Soroban transaction XDR for the client wallet to sign',
     example:
       'AAAAAgAAAABjc+6XXsdHPixc8hbEdqMxK3+GpP9M7FLQ8kG2fH3+AAAAAGQAAAAAAAAAAQAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGAAAAAAAAAABjc+6XXsdHPixc8hbEdqMxK3+GpP9M7FLQ8kG2fH3+',
   })
@@ -286,7 +322,10 @@ export class NftMetadataAttributeDto {
   @ApiProperty({ example: 'Virality Score' })
   trait_type: string;
 
-  @ApiProperty({ example: 87, description: 'String or numeric attribute value' })
+  @ApiProperty({
+    example: 87,
+    description: 'String or numeric attribute value',
+  })
   value: string | number;
 }
 
@@ -299,7 +338,7 @@ export class NftRoyaltyInfoDto {
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address of the royalty recipient',
-    example: 'GC6X********UTZF3',
+    example: 'GABF...KJ93XD',
   })
   recipient?: string;
 }
@@ -314,6 +353,12 @@ export class NftMetadataResponseDto {
   @ApiProperty({ example: 'https://cdn.example.com/thumbs/42.jpg' })
   image: string;
 
+  @ApiProperty({
+    example: 'https://cdn.example.com/thumbs/42.jpg',
+    description: 'Thumbnail image URI for the clip',
+  })
+  thumbnail: string;
+
   @ApiProperty({ example: 'https://cdn.example.com/clips/42.mp4' })
   animation_url: string;
 
@@ -324,33 +369,58 @@ export class NftMetadataResponseDto {
       { trait_type: 'Clip Duration', value: 34 },
       { trait_type: 'Virality Score', value: 87 },
       { trait_type: 'Creation Date', value: '2026-07-20T09:30:00.000Z' },
+      { trait_type: 'Posted Platforms', value: 'tiktok, youtube' },
       { trait_type: 'Royalty BPS', value: 1000 },
       { trait_type: 'Royalty Percent', value: 10 },
     ],
   })
   attributes: NftMetadataAttributeDto[];
 
-  @ApiProperty({ example: 1000, description: 'Creator royalty in basis points' })
+  @ApiProperty({
+    example: 1000,
+    description: 'Creator royalty in basis points',
+  })
   seller_fee_basis_points: number;
 
   @ApiPropertyOptional({
     description: 'Masked Stellar wallet address receiving the fee',
-    example: 'GC6X********UTZF3',
+    example: 'GABF...KJ93XD',
   })
   fee_recipient?: string;
 
   @ApiProperty({
     type: NftRoyaltyInfoDto,
     description: 'Explicit royalty block for marketplaces / mint clients',
+    example: {
+      bps: 1000,
+      percent: 10,
+      recipient: 'GABC...X92K',
+    },
   })
   royalty: NftRoyaltyInfoDto;
 
-  @ApiPropertyOptional({ example: 87, description: 'Clip virality score' })
-  viralityScore?: number;
+  @ApiProperty({ example: 34, description: 'Clip duration in seconds' })
+  duration: number;
 
-  @ApiPropertyOptional({ example: 34, description: 'Original clip duration in seconds' })
+  @ApiProperty({ example: 87, description: 'Clip virality score' })
+  viralityScore: number;
+
+  @ApiPropertyOptional({
+    example: 34,
+    description: 'Original clip duration in seconds',
+  })
   originalDuration?: number;
 
-  @ApiPropertyOptional({ example: '2026-07-20T09:30:00.000Z', description: 'Creation timestamp' })
-  createdAt?: string;
+  @ApiProperty({
+    example: '2026-07-20T09:30:00.000Z',
+    description: 'Creation timestamp',
+  })
+  createdAt: string;
+
+  @ApiProperty({
+    example: ['tiktok', 'youtube'],
+    description: 'Platforms the clip targets',
+    type: [String],
+  })
+  platforms: string[];
 }

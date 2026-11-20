@@ -9,6 +9,9 @@ import { BadRequestException } from '@nestjs/common';
 import {
   checkedRoyaltyAmount,
   checkedBpsAdd,
+  checkedDivide,
+  checkedSubtract,
+  checkedMultiply,
 } from './safe-math.helper';
 
 // ── checkedRoyaltyAmount ─────────────────────────────────────────────────────
@@ -226,5 +229,208 @@ describe('checkedBpsAdd', () => {
     expect(() => checkedBpsAdd(justAboveMax, justAboveMax)).toThrow(
       BadRequestException,
     );
+  });
+});
+
+// ── checkedDivide ────────────────────────────────────────────────────────────
+
+describe('checkedDivide', () => {
+  it('performs basic integer division (floor)', () => {
+    expect(checkedDivide(100_000_000, 10_000)).toBe(10_000);
+    expect(checkedDivide(100, 4)).toBe(25);
+  });
+
+  it('floors fractional results', () => {
+    expect(checkedDivide(7, 2)).toBe(3); // 7/2 = 3.5 → 3
+    expect(checkedDivide(99, 10)).toBe(9); // 99/10 = 9.9 → 9
+  });
+
+  it('returns 0 when dividend is less than divisor', () => {
+    expect(checkedDivide(5, 10)).toBe(0);
+    expect(checkedDivide(1, 1000)).toBe(0);
+  });
+
+  it('handles dividend = 0', () => {
+    expect(checkedDivide(0, 1000)).toBe(0);
+  });
+
+  it('returns dividend when divisor is 1', () => {
+    expect(checkedDivide(12_345_678, 1)).toBe(12_345_678);
+  });
+
+  it('handles large but safe dividends and divisors', () => {
+    const largeDiv = 9_000_000_000_000;
+    const divisor = 1000;
+    expect(checkedDivide(largeDiv, divisor)).toBe(9_000_000_000);
+  });
+
+  it('throws BadRequestException for divide by zero (divisor = 0)', () => {
+    expect(() => checkedDivide(100, 0)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for negative divisor', () => {
+    expect(() => checkedDivide(100, -5)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for negative dividend', () => {
+    expect(() => checkedDivide(-100, 10)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for fractional dividend', () => {
+    expect(() => checkedDivide(10.5, 2)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for fractional divisor', () => {
+    expect(() => checkedDivide(100, 2.5)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for NaN dividend', () => {
+    expect(() => checkedDivide(NaN, 10)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for NaN divisor', () => {
+    expect(() => checkedDivide(100, NaN)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException when result exceeds MAX_SAFE_INTEGER', () => {
+    // Construct a case where the result would exceed MAX_SAFE_INTEGER
+    // result = dividend / divisor > MAX_SAFE_INTEGER
+    // Use dividend = MAX_SAFE_INT + divisor, divisor = 1
+    const divisor = 1;
+    const dividend = Number.MAX_SAFE_INTEGER + 1; // This pushes result over the limit
+    expect(() => checkedDivide(dividend, divisor)).toThrow(BadRequestException);
+  });
+});
+
+// ── checkedSubtract ──────────────────────────────────────────────────────────
+
+describe('checkedSubtract', () => {
+  it('performs basic subtraction', () => {
+    expect(checkedSubtract(1000, 200)).toBe(800);
+    expect(checkedSubtract(100, 50)).toBe(50);
+  });
+
+  it('handles subtrahend = 0', () => {
+    expect(checkedSubtract(500, 0)).toBe(500);
+  });
+
+  it('returns 0 when minuend equals subtrahend', () => {
+    expect(checkedSubtract(1000, 1000)).toBe(0);
+  });
+
+  it('handles minuend = 0, subtrahend = 0', () => {
+    expect(checkedSubtract(0, 0)).toBe(0);
+  });
+
+  it('correctly subtracts large but safe values', () => {
+    const large = 9_000_000_000_000;
+    const small = 1_000_000_000;
+    expect(checkedSubtract(large, small)).toBe(8_999_000_000_000);
+  });
+
+  it('throws BadRequestException for underflow (subtrahend > minuend)', () => {
+    expect(() => checkedSubtract(100, 150)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for negative minuend', () => {
+    expect(() => checkedSubtract(-50, 10)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for negative subtrahend', () => {
+    expect(() => checkedSubtract(100, -50)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for fractional minuend', () => {
+    expect(() => checkedSubtract(10.5, 2)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for fractional subtrahend', () => {
+    expect(() => checkedSubtract(100, 25.5)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for NaN minuend', () => {
+    expect(() => checkedSubtract(NaN, 10)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for NaN subtrahend', () => {
+    expect(() => checkedSubtract(100, NaN)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException when result exceeds MAX_SAFE_INTEGER', () => {
+    // This is hard to trigger with subtraction since the result is always smaller.
+    // We construct a case with large representable numbers.
+    const minuend = Number.MAX_SAFE_INTEGER + 1; // Just above safe range
+    const subtrahend = 0;
+    expect(() => checkedSubtract(minuend, subtrahend)).toThrow(
+      BadRequestException,
+    );
+  });
+});
+
+// ── checkedMultiply ──────────────────────────────────────────────────────────
+
+describe('checkedMultiply', () => {
+  it('performs basic multiplication', () => {
+    expect(checkedMultiply(100, 20)).toBe(2000);
+    expect(checkedMultiply(1000, 2000)).toBe(2_000_000);
+  });
+
+  it('returns 0 when either operand is 0', () => {
+    expect(checkedMultiply(0, 500)).toBe(0);
+    expect(checkedMultiply(500, 0)).toBe(0);
+    expect(checkedMultiply(0, 0)).toBe(0);
+  });
+
+  it('returns operand when multiplying by 1', () => {
+    expect(checkedMultiply(12_345, 1)).toBe(12_345);
+    expect(checkedMultiply(1, 67_890)).toBe(67_890);
+  });
+
+  it('correctly multiplies royalty BPS values', () => {
+    // 100 stroops × 1500 bps (intermediate for later division)
+    expect(checkedMultiply(100, 1500)).toBe(150_000);
+  });
+
+  it('handles large but safe products', () => {
+    // sqrt(MAX_SAFE_INTEGER) ≈ 94,906,265
+    const a = 10_000_000;
+    const b = 10_000_000;
+    expect(checkedMultiply(a, b)).toBe(100_000_000_000_000);
+  });
+
+  it('throws BadRequestException for negative first operand', () => {
+    expect(() => checkedMultiply(-100, 50)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for negative second operand', () => {
+    expect(() => checkedMultiply(100, -50)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for fractional first operand', () => {
+    expect(() => checkedMultiply(10.5, 20)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for fractional second operand', () => {
+    expect(() => checkedMultiply(100, 50.5)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException for NaN operands', () => {
+    expect(() => checkedMultiply(NaN, 100)).toThrow(BadRequestException);
+    expect(() => checkedMultiply(100, NaN)).toThrow(BadRequestException);
+  });
+
+  it('throws BadRequestException when product exceeds MAX_SAFE_INTEGER', () => {
+    // Use values that will overflow: just above sqrt(MAX_SAFE_INTEGER)
+    const large = 100_000_000; // 10^8
+    const alsoLarge = 100_000_000; // 10^8
+    // 10^8 * 10^8 = 10^16, which exceeds MAX_SAFE_INTEGER (≈ 9 × 10^15)
+    expect(() => checkedMultiply(large, alsoLarge)).toThrow(BadRequestException);
+  });
+
+  it('accepts the maximum safe product just under MAX_SAFE_INTEGER', () => {
+    // sqrt(MAX_SAFE_INTEGER) ≈ 94_906_265
+    const maxSqrt = 94_906_265;
+    const result = checkedMultiply(maxSqrt, maxSqrt);
+    expect(result).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
   });
 });

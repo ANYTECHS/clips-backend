@@ -15,14 +15,16 @@ import {
   GetApprovedResponseDto,
   IsApprovedForAllResponseDto,
   SetApprovalForAllResponseDto,
+  RevokeNftApprovalResponseDto,
+  RevokeAllNftApprovalsResponseDto,
 } from './dto/nft-approval.dto';
 
 /**
  * NFT marketplace approval helpers (Issue #842).
  *
- * Implements approve / set_approval_for_all / get_approved / is_approved_for_all
- * against the ClipCash Soroban NFT contract. Mutations return unsigned XDR for
- * the owner to sign; queries simulate view calls.
+ * Implements SEP-0050 approve / approve_for_all / get_approved /
+ * is_approved_for_all calls. Mutations return unsigned XDR for the owner to
+ * sign; queries simulate view calls.
  */
 @Injectable()
 export class NftApprovalService {
@@ -57,22 +59,25 @@ export class NftApprovalService {
   }
 
   /**
-   * Prepare `approve(owner, spender, token_id)`. Empty spender revokes approval.
+  * Prepare SEP-0050 `approve(approver, approved, token_id, live_until_ledger)`.
+  * Approving the owner address revokes the token approval.
    */
   async prepareApprove(
     tokenId: number,
     ownerAddress: string,
     spenderAddress?: string | null,
+    liveUntilLedger?: number,
   ): Promise<ApproveNftResponseDto> {
     if (!Number.isInteger(tokenId) || tokenId < 0) {
       throw new BadRequestException('tokenId must be a non-negative integer');
     }
     this.assertAddress(ownerAddress, 'ownerAddress');
 
+    this.assertLiveUntilLedger(liveUntilLedger, false);
+
     const spender = (spenderAddress ?? '').trim();
-    if (spender) {
-      this.assertAddress(spender, 'spenderAddress');
-    }
+    const approvedAddress = spender || ownerAddress;
+    this.assertAddress(approvedAddress, 'spenderAddress');
 
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
     const sourceAccount = await this.circuitBreakerService.execute(
@@ -81,15 +86,12 @@ export class NftApprovalService {
     );
 
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
-    const spenderScVal = spender
-      ? StellarSdk.Address.fromString(spender).toScVal()
-      : StellarSdk.nativeToScVal(null);
-
     const op = contract.call(
       'approve',
       StellarSdk.Address.fromString(ownerAddress).toScVal(),
-      spenderScVal,
+      StellarSdk.Address.fromString(approvedAddress).toScVal(),
       StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
+      StellarSdk.nativeToScVal(liveUntilLedger, { type: 'u32' }),
     );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -104,27 +106,25 @@ export class NftApprovalService {
       xdr: tx.toXDR(),
       tokenId,
       owner: ownerAddress,
-      spender,
+      spender: approvedAddress,
+      liveUntilLedger,
       contractId: this.CONTRACT_ID,
       network: this.stellarService.network,
-      emits: 'Approval',
+      emits: 'approve',
     };
   }
 
   /**
-   * Prepare `set_approval_for_all(owner, operator, approved)`.
+  * Prepare SEP-0050 `approve_for_all(owner, operator, live_until_ledger)`.
    */
   async prepareSetApprovalForAll(
     ownerAddress: string,
     operatorAddress: string,
-    approved: boolean,
+    liveUntilLedger: number,
   ): Promise<SetApprovalForAllResponseDto> {
     this.assertAddress(ownerAddress, 'ownerAddress');
     this.assertAddress(operatorAddress, 'operatorAddress');
-
-    if (typeof approved !== 'boolean') {
-      throw new BadRequestException('approved must be a boolean');
-    }
+    this.assertLiveUntilLedger(liveUntilLedger, true);
 
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
     const sourceAccount = await this.circuitBreakerService.execute(
@@ -134,10 +134,10 @@ export class NftApprovalService {
 
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
     const op = contract.call(
-      'set_approval_for_all',
+      'approve_for_all',
       StellarSdk.Address.fromString(ownerAddress).toScVal(),
       StellarSdk.Address.fromString(operatorAddress).toScVal(),
-      StellarSdk.nativeToScVal(approved, { type: 'bool' }),
+      StellarSdk.nativeToScVal(liveUntilLedger, { type: 'u32' }),
     );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
@@ -152,11 +152,101 @@ export class NftApprovalService {
       xdr: tx.toXDR(),
       owner: ownerAddress,
       operator: operatorAddress,
-      approved,
+      approved: liveUntilLedger !== 0,
+      liveUntilLedger,
       contractId: this.CONTRACT_ID,
       network: this.stellarService.network,
-      emits: 'ApprovalForAll',
+      emits: 'approve_for_all',
     };
+  }
+
+  /** Prepare the owner-authorized `revoke_approval(token_id)` call. */
+  async prepareRevokeApproval(
+    tokenId: number,
+    ownerAddress: string,
+  ): Promise<RevokeNftApprovalResponseDto> {
+    if (
+      !Number.isInteger(tokenId) ||
+      tokenId < 0 ||
+      tokenId > 0xffff_ffff
+    ) {
+      throw new BadRequestException('tokenId must be a u32');
+    }
+    this.assertAddress(ownerAddress, 'ownerAddress');
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(ownerAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call(
+      'revoke_approval',
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    );
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      tokenId,
+      owner: ownerAddress,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+      emits: 'revoke_approval',
+    };
+  }
+
+  /** Prepare the owner-authorized `revoke_all_approvals()` call. */
+  async prepareRevokeAllApprovals(
+    ownerAddress: string,
+  ): Promise<RevokeAllNftApprovalsResponseDto> {
+    this.assertAddress(ownerAddress, 'ownerAddress');
+
+    const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
+    const sourceAccount = await this.circuitBreakerService.execute(
+      this.sorobanCircuitBreakerConfig,
+      async () => server.getAccount(ownerAddress),
+    );
+
+    const contract = new StellarSdk.Contract(this.CONTRACT_ID);
+    const op = contract.call('revoke_all_approvals');
+    const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: '10000',
+      networkPassphrase: this.stellarService.networkPassphrase,
+    })
+      .addOperation(op)
+      .setTimeout(StellarSdk.TimeoutInfinite)
+      .build();
+
+    return {
+      xdr: tx.toXDR(),
+      owner: ownerAddress,
+      contractId: this.CONTRACT_ID,
+      network: this.stellarService.network,
+      emits: 'revoke_all_approvals',
+    };
+  }
+
+  private assertLiveUntilLedger(
+    liveUntilLedger: number | undefined,
+    allowRevoke: boolean,
+  ): asserts liveUntilLedger is number {
+    if (
+      !Number.isInteger(liveUntilLedger) ||
+      liveUntilLedger! < (allowRevoke ? 0 : 1) ||
+      liveUntilLedger! > 0xffff_ffff
+    ) {
+      throw new BadRequestException(
+        `liveUntilLedger must be an integer between ${allowRevoke ? 0 : 1} and 4294967295`,
+      );
+    }
   }
 
   /**
