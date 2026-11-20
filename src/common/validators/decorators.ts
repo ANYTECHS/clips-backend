@@ -1,6 +1,8 @@
 import { ValidateBy, ValidationOptions } from 'class-validator';
-import { IsValidPlatformConstraint } from './is-valid-platform.validator';
-import { IsValidPlatformsConstraint } from './is-valid-platform.validator';
+import {
+  IsValidPlatformConstraint,
+  IsValidPlatformsConstraint,
+} from './is-valid-platform.validator';
 import {
   IsValidRoyaltyBpsConstraint,
   RoyaltyBpsValidationOptions,
@@ -13,6 +15,8 @@ import { IsIso4217CurrencyCodeConstraint } from './is-iso4217-currency-code.vali
 import { IsUserEmailConstraint } from './is-user-email.validator';
 import { IsPasswordConstraint, PasswordOptions } from './is-password.validator';
 import { IsTotpCodeConstraint } from './is-totp-code.validator';
+import { IsSupportedCurrencyConstraint } from './is-supported-currency.validator';
+import { IsValidPlanConstraint } from './is-valid-plan.validator';
 
 export { CLIP_ROYALTY_BPS_MAX };
 export type { RoyaltyBpsValidationOptions, XlmAmountOptions, PasswordOptions };
@@ -20,6 +24,36 @@ export type { RoyaltyBpsValidationOptions, XlmAmountOptions, PasswordOptions };
 // ---------------------------------------------------------------------------
 // Pre-existing decorators
 // ---------------------------------------------------------------------------
+
+// Array validation factories and standalone duplicate-rejection decorator.
+export {
+  IsIdArray,
+  IsStringArray,
+  IsNestedArray,
+  NoDuplicates,
+} from './array-validators';
+export type {
+  IdArrayOptions,
+  StringArrayOptions,
+  NestedArrayOptions,
+  ArrayFieldOptions,
+} from './array-validators';
+export {
+  SUPPORTED_CURRENCY_CODES,
+  CURRENCY_ENUM,
+  CURRENCY_API_PROPERTY,
+  CURRENCY_API_PROPERTY_OPTIONAL,
+  normalizeCurrencyCode,
+  isSupportedCurrencyCode,
+} from './is-supported-currency.validator';
+
+export {
+  SUBSCRIPTION_PLANS,
+  normalizePlanIdentifier,
+  isValidPlan,
+} from './is-valid-plan.validator';
+
+// ── Platform ─────────────────────────────────────────────────────────────────
 
 export function IsValidPlatform(
   validationOptions?: ValidationOptions,
@@ -46,6 +80,8 @@ export function IsValidPlatforms(
     validationOptions,
   );
 }
+
+// ── Royalty BPS ───────────────────────────────────────────────────────────────
 
 export function IsValidRoyaltyBps(
   options?: RoyaltyBpsValidationOptions,
@@ -165,6 +201,22 @@ export function IsIso4217CurrencyCode(
  * ```
  */
 export function IsUserEmail(
+// ── Subscription plan ─────────────────────────────────────────────────────────
+
+/**
+ * Validates that a string is a supported subscription plan identifier.
+ * Accepted values: basic, pro, elite, agency. Comparison is
+ * case-insensitive; leading/trailing whitespace is trimmed before matching.
+ *
+ * Pricing and duration for each plan are determined exclusively by backend
+ * configuration, not the request. This decorator validates only that the
+ * identifier is known — it never validates or accepts user-supplied prices.
+ *
+ * @example
+ * \@IsValidPlan()
+ * plan: string;
+ */
+export function IsValidPlan(
   validationOptions?: ValidationOptions,
 ): PropertyDecorator {
   return ValidateBy(
@@ -172,6 +224,9 @@ export function IsUserEmail(
       name: 'isUserEmail',
       constraints: [],
       validator: new IsUserEmailConstraint(),
+      name: 'isValidPlan',
+      constraints: [],
+      validator: new IsValidPlanConstraint(),
     },
     validationOptions,
   );
@@ -212,6 +267,18 @@ export function IsPassword(
  * ```
  */
 export function IsTotpCode(
+// ── Currency ──────────────────────────────────────────────────────────────────
+
+/**
+ * Validates that a string is a supported ISO 4217 currency code (or crypto
+ * equivalent). Accepted values: USD, EUR, GBP, XLM, USDC. Comparison is
+ * case-insensitive; leading/trailing whitespace is trimmed before matching.
+ *
+ * @example
+ * \@IsSupportedCurrency()
+ * currency: string;
+ */
+export function IsSupportedCurrency(
   validationOptions?: ValidationOptions,
 ): PropertyDecorator {
   return ValidateBy(
@@ -219,6 +286,9 @@ export function IsTotpCode(
       name: 'isTotpCode',
       constraints: [],
       validator: new IsTotpCodeConstraint(),
+      name: 'isSupportedCurrency',
+      constraints: [],
+      validator: new IsSupportedCurrencyConstraint(),
     },
     validationOptions,
   );

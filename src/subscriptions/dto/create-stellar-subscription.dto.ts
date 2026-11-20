@@ -7,11 +7,21 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsValidPlan } from '../../common/validators/decorators';
+import { SUBSCRIPTION_PLANS } from '../subscriptions.constants';
 
 export class CreateStellarSubscriptionDto {
-  @ApiProperty({ example: 'pro', description: 'Subscription plan identifier' })
+  @ApiProperty({
+    enum: SUBSCRIPTION_PLANS,
+    example: 'pro',
+    description:
+      'Subscription plan identifier. ' +
+      `Supported values: ${SUBSCRIPTION_PLANS.join(', ')}. ` +
+      'Plan pricing and duration are set by backend configuration.',
+  })
   @IsString()
   @IsNotEmpty()
+  @IsValidPlan()
   plan: string;
 
   @ApiProperty({
