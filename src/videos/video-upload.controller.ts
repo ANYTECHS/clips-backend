@@ -34,6 +34,7 @@ import {
 import { VideoUploadService } from './video-upload.service';
 import { Auth } from '../auth/decorators/auth.decorator';
 import {
+  UploadVideoRequestDto,
   UploadVideoResponseDto,
   UploadVideoErrorDto,
 } from './dto/upload-video.dto.js';
@@ -45,7 +46,10 @@ import {
 } from './validators/video-file.validator';
 import * as path from 'path';
 import * as os from 'os';
-import { VideoUploadMetadataDto, SUPPORTED_VIDEO_FORMATS, VIDEO_TITLE_MAX, VIDEO_DESCRIPTION_MAX } from './dto/video-upload-metadata.dto';
+import {
+  VideoUploadMetadataDto,
+  SUPPORTED_VIDEO_FORMATS,
+} from './dto/video-upload-metadata.dto';
 
 
 const ALLOWED_EXTENSIONS = SUPPORTED_VIDEO_FORMATS.map((f) => `.${f}`);
@@ -76,30 +80,11 @@ export class VideoUploadController {
       'Accepts a multipart/form-data video file (mp4, mov, avi, webm), saves it to a ' +
       'temporary directory, validates format/size/duration, creates a Video record, and ' +
       'enqueues a clip-generation job. Returns a jobId for polling status. ' +
+      'Cloudinary clip URLs are available on generated clip records after processing completes. ' +
       'Maximum file size: 500 MB. Maximum duration: 4 hours.',
   })
   @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        file: {
-          type: 'string',
-          format: 'binary',
-          description: 'Video file to upload (mp4, mov, avi, webm — max 500 MB)',
-        },
-        title: {
-          type: 'string',
-          maxLength: VIDEO_TITLE_MAX,
-          description: 'Optional title for the video. Defaults to the original filename.',
-        },
-        description: { type: 'string', maxLength: VIDEO_DESCRIPTION_MAX, description: 'Optional description' },
-        format: { type: 'string', enum: [...SUPPORTED_VIDEO_FORMATS], description: 'Optional declared format' },
-        sourceUrl: { type: 'string', format: 'uri', description: 'Optional http(s) source URL' },
-      },
-      required: ['file'],
-    },
-  })
+  @ApiBody({ type: UploadVideoRequestDto })
   @ApiResponse({
     status: 202,
     description: 'Video upload accepted and queued for processing',
@@ -110,6 +95,9 @@ export class VideoUploadController {
       'Unsupported extension/MIME type, file content is not a real video (magic-byte check), ' +
       'empty file, or video duration exceeds 4 hours',
     type: UploadVideoErrorDto,
+  })
+  @ApiInternalServerErrorResponse({
+    description: 'Failed to process the uploaded video',
   })
   @ApiPayloadTooLargeResponse({
     description:

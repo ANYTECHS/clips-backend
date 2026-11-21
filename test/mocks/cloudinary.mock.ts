@@ -1,34 +1,28 @@
 /**
- * Reusable Cloudinary mock for E2E / integration tests in the test/ directory.
+ * Reusable Cloudinary SDK and service mocks for tests under test/.
  *
- * Low-level SDK mock usage:
- *   jest.mock('cloudinary', () => require('../mocks/cloudinary.mock'));
+ * SDK usage:
+ *   jest.mock('cloudinary', () => require('./mocks/cloudinary.mock'));
  *
- * High-level service mock usage:
- *   import { MockCloudinaryService } from '../mocks/cloudinary.mock';
+ * Service usage:
  *   { provide: CloudinaryService, useClass: MockCloudinaryService }
  */
+import {
+  FAKE_PUBLIC_ID,
+  FAKE_SECURE_URL,
+  defaultUploadResult,
+  failNextCloudinaryUpload,
+  resetCloudinaryMock,
+  v2,
+} from '../../src/__mocks__/cloudinary';
 
-export const FAKE_SECURE_URL =
-  'https://res.cloudinary.com/demo/video/upload/clips/test-clip.mp4';
-export const FAKE_PUBLIC_ID = 'clips/test-clip';
-
-export const defaultUploadResult = {
-  secure_url: FAKE_SECURE_URL,
-  public_id: FAKE_PUBLIC_ID,
-  resource_type: 'video',
-};
-
-export const v2 = {
-  config: jest.fn(),
-  uploader: {
-    /** Simulates a successful upload. Override per-test via mockImplementation. */
-    upload_stream: jest.fn().mockImplementation((_options: unknown, callback: Function) => {
-      callback(null, defaultUploadResult);
-      return { on: jest.fn() };
-    }),
-    destroy: jest.fn().mockResolvedValue({ result: 'ok' }),
-  },
+export {
+  FAKE_PUBLIC_ID,
+  FAKE_SECURE_URL,
+  defaultUploadResult,
+  failNextCloudinaryUpload,
+  resetCloudinaryMock,
+  v2,
 };
 
 export default { v2 };
@@ -43,7 +37,7 @@ export class MockCloudinaryService {
     return {
       secure_url: `${FAKE_SECURE_URL.replace('test-clip', publicId)}`,
       thumbnail_url: `https://res.cloudinary.com/demo/video/upload/${publicId}.jpg`,
-      public_id: publicId,
+      public_id: publicId || FAKE_PUBLIC_ID,
     };
   }
 

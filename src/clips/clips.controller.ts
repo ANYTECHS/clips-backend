@@ -317,9 +317,17 @@ export class ClipsController {
       'Cloudinary and updates clipUrl + thumbnail. viralityScore and title are preserved.',
   })
   @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
-  @ApiResponse({ status: 200, description: 'Updated clip record with new clipUrl and thumbnail' })
+  @ApiOkResponse({
+    description:
+      'Updated clip record, including its Cloudinary-hosted clipUrl and thumbnail',
+    type: ClipResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Clip ID must be a positive integer' })
   @ApiNotFoundResponse({ description: 'Clip not found' })
   @ApiForbiddenResponse({ description: 'Clip does not belong to the requesting user' })
+  @ApiInternalServerErrorResponse({
+    description: 'Clip regeneration or Cloudinary upload failed',
+  })
   @ApiResponse({ status: 429, description: 'Too many active jobs' })
   regenerate(@Param('id', ParsePositiveIntPipe) id: number, @Req() req: Request) {
     const userId: number = Number(
