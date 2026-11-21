@@ -1,4 +1,6 @@
 import {
+  ApiBadRequestResponse,
+  ApiExtraModels,
   Body,
   Controller,
   Delete,
@@ -23,8 +25,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { SorobanIndexerService } from './soroban-indexer.service';
-import { ContractPauseService } from './contract-pause.service';
-import { SOROBAN_NFT_EVENT_TYPES } from './event-types';
+import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
 import {
   BlockchainEventsQueryDto,
   BlockchainEventsResponseDto,
@@ -81,7 +82,8 @@ const EVENTS_DESCRIPTION =
 
 @ApiTags('blockchain', 'soroban', 'NFTs')
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
-@Controller()
+@ApiExtraModels(ValidationErrorResponseDto)
+@Controller('blockchain')
 export class BlockchainController {
   constructor(
     private readonly indexerService: SorobanIndexerService,
@@ -103,12 +105,18 @@ export class BlockchainController {
   @ApiQuery({
     name: 'type',
     required: false,
+    description:
+      'Event type filter (Mint, Transfer, RoyaltyPaid, Burn, RoyaltyClaimed)',
     description: 'Filter by event type. Leave empty to return all types.',
     enum: [...SOROBAN_NFT_EVENT_TYPES],
   })
   @ApiQuery({ name: 'tokenId', required: false, type: Number, description: 'Filter by on-chain token ID.' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiBadRequestResponse({
+    description: 'Invalid query parameters',
+    type: ValidationErrorResponseDto,
+  })
   @ApiOkResponse({
     description: 'Paginated indexed events',
     type: BlockchainEventsResponseDto,
