@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ClipsService } from './clips.service';
 import {
@@ -16,7 +16,7 @@ describe('ClipsService.enqueueClip', () => {
     positionRatio: 0.5,
   };
 
-  function makeService(queue?: { add: jest.Mock }) {
+  function makeService(queue?: { add?: jest.Mock; getJob?: jest.Mock }) {
     return new ClipsService(
       {} as any,
       {} as any,
@@ -64,5 +64,35 @@ describe('ClipsService.enqueueClip', () => {
     await expect(service.enqueueClip(dto)).rejects.toThrow(
       'Clip generation queue is unavailable',
     );
+  });
+
+  it('returns asynchronous job status', async () => {
+    const queue = {
+      getJob: jest.fn().mockResolvedValue({
+        attemptsMade: 1,
+        failedReason: undefined,
+        returnvalue: { status: 'success' },
+        getState: jest.fn().mockResolvedValue('active'),
+        getProgress: jest.fn().mockResolvedValue({ percent: 60, step: 'ffmpeg_processing' }),
+      }),
+    };
+    const service = makeService(queue);
+
+    await expect(service.getClipGenerationStatus('job-123')).resolves.toEqual({
+      jobId: 'job-123',
+      state: 'active',
+      attemptsMade: 1,
+      failedReason: undefined,
+      result: { status: 'success' },
+      progress: { percent: 60, step: 'ffmpeg_processing' },
+    });
+  });
+
+  it('returns 404 for an unknown clip generation job', async () => {
+    const service = makeService({ getJob: jest.fn().mockResolvedValue(undefined) });
+
+    await expect(
+      service.getClipGenerationStatus('missing-job'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

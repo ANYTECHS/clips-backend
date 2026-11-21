@@ -114,6 +114,28 @@ export class ClipsController {
     return this.clipsService.enqueueClip(dto);
   }
 
+  /**
+   * GET /clips/generate/:jobId/status
+   *
+   * Returns the current BullMQ state and progress for an asynchronous job.
+   */
+  @Get('generate/:jobId/status')
+  @ApiOperation({
+    summary: 'Get clip-generation job status',
+    description:
+      'Returns BullMQ state, retry count, progress, result, and failure details for a clip-generation job.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'BullMQ job ID returned by POST /clips/generate',
+    type: String,
+  })
+  @ApiOkResponse({ description: 'Current asynchronous clip-generation job status' })
+  @ApiNotFoundResponse({ description: 'Clip-generation job not found' })
+  getGenerationStatus(@Param('jobId') jobId: string) {
+    return this.clipsService.getClipGenerationStatus(jobId);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // List & Fetch
   // ─────────────────────────────────────────────────────────────────────────

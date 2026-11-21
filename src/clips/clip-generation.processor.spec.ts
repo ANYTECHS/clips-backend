@@ -168,6 +168,16 @@ describe('ClipGenerationProcessor', () => {
   });
 
   describe('process()', () => {
+    it('uses only mocked external boundaries and makes no real FFmpeg, Cloudinary, or AI calls', async () => {
+      const { processor, cloudinaryService, videoService } = makeProcessor();
+
+      await processor.process(makeJob());
+
+      expect(cutClip).toHaveBeenCalledTimes(1);
+      expect(cloudinaryService.uploadVideoFromBuffer).toHaveBeenCalledTimes(1);
+      expect(videoService.detectViralTimestamps).not.toHaveBeenCalled();
+    });
+
     it('cuts and uploads a clip using the controlled FFmpeg output', async () => {
       const { processor, cloudinaryService } = makeProcessor();
       const readFileSpy = jest.spyOn(cloudinaryService, 'readFileToBuffer');

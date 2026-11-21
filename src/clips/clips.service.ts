@@ -769,6 +769,26 @@ export class ClipsService {
     };
   }
 
+  async getClipGenerationStatus(jobId: string) {
+    if (!this.clipQueue) {
+      throw new Error('Clip generation queue is unavailable');
+    }
+
+    const job = await this.clipQueue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException(`Clip generation job ${jobId} not found`);
+    }
+
+    return {
+      jobId,
+      state: await job.getState(),
+      attemptsMade: job.attemptsMade,
+      failedReason: job.failedReason,
+      result: job.returnvalue,
+      progress: await job.getProgress(),
+    };
+  }
+
   /**
    * Issue #866 — List clips with pagination and selective field loading.
    *
