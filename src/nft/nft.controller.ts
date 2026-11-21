@@ -93,6 +93,7 @@ import {
   RevokeAllNftApprovalsResponseDto,
 } from './dto/nft-approval.dto';
 import { AdminConfigService } from './admin-config.service';
+import { AdminContractService } from './admin-contract.service';
 import { NftApprovalService } from './nft-approval.service';
 import {
   BurnNftDto,
@@ -136,6 +137,7 @@ import {
   MintStatusResponseDto,
   MintStatusNotFoundDto,
 } from './dto/mint-status-response.dto';
+import { MintEnqueueResponseDto } from './dto/mint-enqueue-response.dto';
 import {
   MetadataValidationResponseDto,
   ValidateNftMetadataDto,
@@ -506,6 +508,7 @@ export class NftController {
     return this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId);
   }
 
+  @Auth()
   @UseGuards(NftMintGuard, QueueRateLimitGuard)
   @Post('mint')
   @HttpCode(HttpStatus.CREATED)
@@ -778,7 +781,6 @@ export class NftController {
         error: 'Unauthorized',
       },
     },
-      'Unauthorized — Bearer JWT required, or wallet signature invalid',
   })
   @ApiForbiddenResponse({
     description: 'Caller does not own the clip',
@@ -853,9 +855,7 @@ export class NftController {
   @ApiResponse({
     status: 202,
     description: 'Mint job enqueued; returns jobId for status tracking',
-    schema: {
-      example: { jobId: 'nft-mint-clip-42', delayed: false, delayMs: 0 },
-    },
+    type: MintEnqueueResponseDto,
   })
   @ApiBadRequestResponse({ description: 'Invalid mint payload' })
   @ApiUnauthorizedResponse({
@@ -2319,10 +2319,6 @@ export class NftController {
   @ApiOperation({
     summary: 'Grant or revoke operator approval for all tokens (Issue #675)',
     description:
-      'Calls the Soroban `set_approval_for_all(owner, operator, approved)` ' +
-      'function. When `approved` is true, `operatorAddress` may call ' +
-      "`transfer_from` on any of the owner's tokens. " +
-      'Set `approved` to false to revoke. Returns an unsigned XDR for signing.',
       'Calls SEP-0050 `approve_for_all(owner, operator, live_until_ledger)`. ' +
       'Set `liveUntilLedger` to 0 to revoke; otherwise it is the approval expiry ledger. ' +
       'Returns an unsigned XDR for signing.',
@@ -2355,11 +2351,6 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
   @ApiBadRequestResponse({ description: 'Invalid Stellar address' })
   async prepareSetApprovalForAll(
-    @Body()
-    body: {
-      ownerAddress: string;
-      operatorAddress: string;
-      approved: boolean;
     @Body() body: {
       ownerAddress: string;
       operatorAddress: string;

@@ -9,10 +9,11 @@ This document is the authoritative reference for the ClipCash REST API. It cover
 ## Table of Contents
 
 1. [Base URL & Versioning](#base-url--versioning)
-2. [Authentication](#authentication)
-3. [Common Headers](#common-headers)
-4. [Common Error Responses](#common-error-responses)
-5. [Endpoints](#endpoints)
+2. [Contract testing](#contract-testing)
+3. [Authentication](#authentication)
+4. [Common Headers](#common-headers)
+5. [Common Error Responses](#common-error-responses)
+6. [Endpoints](#endpoints)
    - [Auth](#auth)
    - [Users](#users)
    - [Videos](#videos)
@@ -23,11 +24,11 @@ This document is the authoritative reference for the ClipCash REST API. It cover
    - [NFT / Mint](#nft--mint)
    - [Subscriptions](#subscriptions)
    - [Health & Metrics](#health--metrics)
-6. [Workflows](#workflows)
+7. [Workflows](#workflows)
    - [Clip Curation](#clip-curation-workflow)
    - [NFT Minting](#nft-minting-workflow)
-7. [Pagination](#pagination)
-8. [API Versioning](#api-versioning)
+8. [Pagination](#pagination)
+9. [API Versioning](#api-versioning)
 
 ---
 
@@ -39,6 +40,33 @@ This document is the authoritative reference for the ClipCash REST API. It cover
 | Production | `https://api.clipcash.app` (example) |
 
 The API does **not** currently use URL versioning (e.g. `/v1/`). All endpoints are served from the root path.
+
+## Contract testing
+
+Swagger is the API reference; Pact checks the HTTP behavior consumed by the
+frontend. The consumer examples are in
+[`src/tests/pact/api-contract.pact.spec.ts`](../src/tests/pact/api-contract.pact.spec.ts)
+and cover authentication, clips, videos, earnings, wallets, payouts, and NFT
+mint enqueue. Pact writes the consumer contract to
+`src/tests/pact/pacts/clips-frontend-clips-backend-api.json`.
+
+The provider suite starts the real Nest controllers with isolated service
+fixtures, verifies the generated Pact file, checks Swagger request/response
+DTO and bearer-auth metadata, and exercises invalid request bodies. No external
+database, Redis, or Pact Broker is required.
+
+Run both sides locally with:
+
+```sh
+npm run test:contract
+```
+
+The consumer suite must run before provider verification because it generates
+the Pact file. For an intentional API change, update the DTO and its Swagger
+decorators first, then update the consumer interaction and regenerate the Pact
+file with the command above. Review the generated contract with the code change.
+The GitHub Actions contract workflow runs these same steps for pushes and pull
+requests; a provider mismatch fails the check.
 
 ---
 
@@ -155,8 +183,19 @@ Register a new user with email and password.
 
 ```json
 {
-  "accessToken": "eyJhbGci...",
-  "refreshToken": "eyJhbGci..."
+  "user": {
+    "id": 1,
+    "email": "user@example.com",
+    "name": "Jane Doe",
+    "picture": null,
+    "mfaEnabled": false,
+    "emailVerified": true
+  },
+  "tokens": {
+    "accessToken": "eyJhbGci...",
+    "refreshToken": "eyJhbGci..."
+  },
+  "csrfToken": "..."
 }
 ```
 
