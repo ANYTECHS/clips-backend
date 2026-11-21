@@ -203,7 +203,7 @@ export class NftApprovalService {
     };
   }
 
-  /** Prepare the owner-authorized `revoke_all_approvals()` call. */
+  /** Prepare the owner-authorized `revoke_all_approvals(owner)` call. */
   async prepareRevokeAllApprovals(
     ownerAddress: string,
   ): Promise<RevokeAllNftApprovalsResponseDto> {
@@ -216,7 +216,10 @@ export class NftApprovalService {
     );
 
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
-    const op = contract.call('revoke_all_approvals');
+    const op = contract.call(
+      'revoke_all_approvals',
+      StellarSdk.Address.fromString(ownerAddress).toScVal(),
+    );
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: '10000',
       networkPassphrase: this.stellarService.networkPassphrase,

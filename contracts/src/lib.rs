@@ -5,6 +5,8 @@ use soroban_sdk::{contract, contractimpl, Symbol, Env, Address, String};
 mod types;
 mod storage;
 mod error;
+mod token;
+mod nft;
 
 use types::*;
 use storage::*;
@@ -47,6 +49,16 @@ impl ClipCashNFT {
         if creator_royalty_bps > 10000 || platform_royalty_bps > 10000 {
             return Err(ContractError::InvalidRoyaltyBps);
         }
+        // Prevent front-running initialization with an arbitrary owner.
+        owner.require_auth();
+
+        // Validate royalty basis points (max 100%)
+        if creator_royalty_bps > 10000 || platform_royalty_bps > 10000 {
+            return Err(ContractError::InvalidRoyaltyBps);
+        }
+
+        // Ensure royalties don't exceed 100%
+        // Both values are <= 10_000 here, so this u32 sum cannot overflow.
         if creator_royalty_bps + platform_royalty_bps > 10000 {
             return Err(ContractError::RoyaltyExceedsCap);
         }
@@ -348,6 +360,8 @@ impl ClipCashNFT {
         if creator_royalty_bps > 10000 || platform_royalty_bps > 10000 {
             return Err(ContractError::InvalidRoyaltyBps);
         }
+
+        // Both values are <= 10_000 here, so this u32 sum cannot overflow.
         if creator_royalty_bps + platform_royalty_bps > 10000 {
             return Err(ContractError::RoyaltyExceedsCap);
         }
@@ -382,6 +396,9 @@ impl ClipCashNFT {
     pub fn transfer_ownership(env: Env, new_owner: Address) -> Result<(), ContractError> {
         let current_owner = get_owner(&env).ok_or(ContractError::NotInitialized)?;
         current_owner.require_auth();
+        // New owner must also authorize, so ownership cannot be sent to a
+        // mistyped or uncontrolled address.
+        new_owner.require_auth();
 
         set_owner(&env, &new_owner);
 
@@ -1057,6 +1074,8 @@ mod tests {
     #[test]
     fn test_initialization() {
         let env = soroban_sdk::Env::default();
+        let env = Env::default();
+        env.mock_all_auths();
         let contract_id = env.register(ClipCashNFT, ());
         let client = ClipCashNFTClient::new(&env, &contract_id);
         let owner = Address::generate(&env);

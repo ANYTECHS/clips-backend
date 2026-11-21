@@ -35,6 +35,7 @@ import {
   TRANSACTION_STATUS_FAILURE_EXAMPLE,
   TRANSACTION_STATUS_PENDING_EXAMPLE,
 } from './dto/transaction-status.dto';
+import { ParseStellarHashPipe } from '../common/pipes';
 
 @ApiTags('transactions')
 @ApiBearerAuth('access-token')
@@ -144,7 +145,7 @@ export class TransactionsController {
   })
   @ApiParam({
     name: 'hash',
-    description: '64-char hex transaction hash',
+    description: '64-character lowercase hex Stellar/Soroban transaction hash',
     example: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
   })
   @ApiOkResponse({
@@ -166,9 +167,9 @@ export class TransactionsController {
     },
   })
   @ApiNotFoundResponse({ description: 'Hash not tracked and not found on Horizon' })
-  @ApiBadRequestResponse({ description: 'Invalid hash format' })
+  @ApiBadRequestResponse({ description: 'Invalid hash format — must be 64 hex characters' })
   async getStatus(
-    @Param('hash') hash: string,
+    @Param('hash', ParseStellarHashPipe) hash: string,
   ): Promise<TransactionStatusResponseDto> {
     return this.confirmationService.getStatus(hash);
   }

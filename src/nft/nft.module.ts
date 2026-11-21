@@ -1,3 +1,5 @@
+import { MintAuthorizationService } from './mint-authorization.service';
+import { NftMintAuthorizationController } from './nft-mint-authorization.controller';
 import { Module } from '@nestjs/common';
 import { IpfsUploadModule } from './ipfs-upload.module';
 import { NftOwnershipModule } from './nft-ownership.module';
@@ -68,6 +70,7 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
     NftFreezeAdminGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
+    MintAuthorizationService,
     AdminContractService,
     NftTransferService,
     NftTransferHistoryService,
@@ -82,6 +85,7 @@ import { BlockchainModule } from '../blockchain/blockchain.module';
     SorobanFeeEstimationService,
   ],
   controllers: [
+    NftMintAuthorizationController,
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,
