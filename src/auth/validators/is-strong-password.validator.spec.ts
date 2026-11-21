@@ -35,9 +35,10 @@ describe('IsStrongPasswordConstraint (#1142)', () => {
     expect(message.suggestions).toBe('Password is strong');
   });
 
-  it('provides helpful suggestions when characters are missing', () => {
-    validator.validate('alllowercasepassword');
+  it('provides helpful suggestions for a predictable password', () => {
+    validator.validate('passwordpassword');
     const message = JSON.parse(validator.defaultMessage({} as any));
     expect(message.score).toBeLessThan(3);
+    expect(message.suggestions).toBeDefined();
   });
 });

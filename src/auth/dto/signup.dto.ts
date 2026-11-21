@@ -1,11 +1,4 @@
-import {
-  IsEmail,
-  IsStrongPassword,
-  IsString,
-  MaxLength,
-  MinLength,
-} from 'class-validator';
-import { IsEmail, IsString } from 'class-validator';
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsValidPassword,
@@ -37,14 +30,6 @@ export class SignupDto {
   email: string;
 
   @ApiProperty({
-    description:
-      'User password meeting strength requirements:\n' +
-      '- Minimum 10 characters long\n' +
-      '- Minimum zxcvbn password score of 3 (scale 0-4)\n' +
-      '- Requires diverse characters (uppercase, lowercase, numbers, symbols)\n' +
-      '- Common words, dictionary phrases, and easily guessable patterns are rejected\n\n' +
-      'Validation failure returns a structured JSON string in error message:\n' +
-      '`{"score": 1, "feedback": ["This is a very common password"], "suggestions": "Add another word or two"}`',
     description: `User password: ${PASSWORD_REQUIREMENTS}. Never returned in responses.`,
     example: 'Str0ngP@ssw0rd!2026',
     minLength: PASSWORD_MIN_LENGTH,
