@@ -31,6 +31,7 @@ import { SignupDto } from './dto/signup.dto';
 import { MagicLinkRequestDto } from './dto/magic-link.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LoginDto } from './dto/login.dto';
+import { LoginResponseDto } from './dto/login-response.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { CsrfService } from '../csrf/csrf.service';
@@ -48,18 +49,6 @@ export class AuthController {
   @Post('signup')
   @ApiOperation({ summary: 'Register a new user account' })
   @ApiResponse({ status: 201, description: 'User created successfully' })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad Request - Validation failed or user already exists',
-    schema: {
-      example: {
-        statusCode: 400,
-        message: [
-          'name must be at least 2 characters long',
-          'Invalid email format',
-          'Password is too short (min 8 characters)',
-        ],
-        error: 'Bad Request',
   @ApiResponse({ status: 400, description: 'Invalid input or user already exists' })
   @ApiOperation({
     summary: 'Register a new user account',
@@ -123,7 +112,11 @@ export class AuthController {
 
   @Post('login')
   @ApiOperation({ summary: 'Authenticate user and get access tokens' })
-  @ApiResponse({ status: 200, description: 'Login successful' })
+  @ApiResponse({
+    status: 200,
+    description: 'Login successful',
+    type: LoginResponseDto,
+  })
   @ApiResponse({
     status: 400,
     description: 'Bad Request - Validation failed or invalid credentials',
@@ -484,17 +477,6 @@ export class AuthController {
   @Post('reset-password')
   @ApiOperation({ summary: 'Reset password', description: 'Sets new password using reset token' })
   @ApiResponse({ status: 200, description: 'Password reset successful' })
-  @ApiResponse({
-    status: 400,
-    description: 'Bad Request - Validation failed or requirements not met',
-    schema: {
-      example: {
-        statusCode: 400,
-        message: [
-          'Reset token is required',
-          'Password must be at least 8 characters long',
-        ],
-        error: 'Bad Request',
   @ApiResponse({ status: 400, description: 'Invalid token or password requirements not met' })
   @ApiOperation({
     summary: 'Reset password',

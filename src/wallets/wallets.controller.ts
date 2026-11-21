@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   Delete,
   Get,
@@ -39,6 +38,7 @@ import { WalletNftsQueryDto } from './dto/wallet-nfts-query.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
 import { WalletBalanceResult } from '../stellar/stellar.service';
 import { NftOwnershipService } from '../nft/nft-ownership.service';
+import { ParseStellarAddressPipe } from '../common/pipes';
 
 interface AuthRequest extends Request {
   user: { userId: number; email: string | null };
@@ -328,7 +328,7 @@ export class WalletsController {
   })
   @ApiParam({
     name: 'address',
-    description: 'Stellar wallet address (56-character G... address)',
+    description: '56-character Stellar G... wallet address',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @ApiQuery({
@@ -374,17 +374,11 @@ export class WalletsController {
       },
     },
   })
-  @ApiBadRequestResponse({ description: 'Invalid Stellar wallet address format' })
+  @ApiBadRequestResponse({ description: 'Invalid Stellar wallet address — must be a 56-character G... address' })
   async getWalletNfts(
-    @Param('address') address: string,
+    @Param('address', ParseStellarAddressPipe) address: string,
     @Query() query: WalletNftsQueryDto,
   ) {
-    if (!address || address.length !== 56 || !address.startsWith('G')) {
-      throw new BadRequestException(
-        'Invalid Stellar wallet address: must be a 56-character G... address',
-      );
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 

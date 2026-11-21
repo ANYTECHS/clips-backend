@@ -16,6 +16,7 @@ import { AdminGuard } from '../common/guards/admin.guard';
 import { PayoutsService } from './payouts.service';
 import { PayoutResponseDto } from './dto/payout-responses.dto';
 import { RejectPayoutDto } from './dto/payout-review.dto';
+import { ParsePositiveIntPipe } from '../common/pipes';
 
 @ApiTags('Admin')
 @ApiHeader({
@@ -45,21 +46,21 @@ export class AdminPayoutsController {
 
   @Post(':id/approve')
   @ApiOperation({ summary: 'Approve a pending payout' })
-  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiParam({ name: 'id', description: 'Positive integer payout ID', type: Number, example: 1 })
   @ApiResponse({
     status: 200,
     description: 'Payout approved',
     type: PayoutResponseDto,
   })
-  @ApiBadRequestResponse({ description: 'Payout not in pending status' })
+  @ApiBadRequestResponse({ description: 'Invalid payout ID or payout not in pending status' })
   @ApiNotFoundResponse({ description: 'Payout not found' })
-  approve(@Param('id') id: string) {
-    return this.payoutsService.approvePayout(parseInt(id, 10));
+  approve(@Param('id', ParsePositiveIntPipe) id: number) {
+    return this.payoutsService.approvePayout(id);
   }
 
   @Post(':id/reject')
   @ApiOperation({ summary: 'Reject a pending or approved payout' })
-  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiParam({ name: 'id', description: 'Positive integer payout ID', type: Number, example: 1 })
   @ApiBody({ type: RejectPayoutDto })
   @ApiResponse({
     status: 200,
@@ -67,10 +68,10 @@ export class AdminPayoutsController {
     type: PayoutResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Payout cannot be rejected in current status',
+    description: 'Invalid payout ID or payout cannot be rejected in current status',
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
-  reject(@Param('id') id: string, @Body() dto: RejectPayoutDto) {
-    return this.payoutsService.rejectPayout(parseInt(id, 10), dto.reason);
+  reject(@Param('id', ParsePositiveIntPipe) id: number, @Body() dto: RejectPayoutDto) {
+    return this.payoutsService.rejectPayout(id, dto.reason);
   }
 }

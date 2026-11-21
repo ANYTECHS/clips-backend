@@ -40,6 +40,7 @@ import {
   QueueRateLimitGuard,
   QueueRateLimit,
 } from '../common/guards/queue-rate-limit.guard';
+import { ParseStellarAddressPipe } from '../common/pipes';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
@@ -92,6 +93,7 @@ import {
   RevokeAllNftApprovalsResponseDto,
 } from './dto/nft-approval.dto';
 import { AdminConfigService } from './admin-config.service';
+import { AdminContractService } from './admin-contract.service';
 import { NftApprovalService } from './nft-approval.service';
 import {
   BurnNftDto,
@@ -135,6 +137,7 @@ import {
   MintStatusResponseDto,
   MintStatusNotFoundDto,
 } from './dto/mint-status-response.dto';
+import { MintEnqueueResponseDto } from './dto/mint-enqueue-response.dto';
 import {
   MetadataValidationResponseDto,
   ValidateNftMetadataDto,
@@ -307,17 +310,20 @@ export class NftController {
     return { id, exists };
   }
 
-  @Get('/wallets/:address/nfts')
+  @Get(['/wallets/:address/nfts', 'wallet/:address'])
   @ApiOperation({
-    summary: 'Get paginated NFTs owned by a wallet (Issue #838)',
+    summary: 'Get paginated NFTs owned by a wallet (Issues #838, #1330)',
     description:
       'Calls on-chain get_user_tokens(owner, limit, cursor) when available, with a safe ' +
       'ledger fallback. Returns token IDs plus nextCursor for large collections without ' +
-      'loading the entire owner vector into the API response.',
+      'loading the entire owner vector into the API response. Also served at ' +
+      'GET /nfts/wallet/:address. A wallet with no NFTs returns an empty tokenIds array, ' +
+      'total 0 and nextCursor null. The cursor is an offset, so it is only reliable while ' +
+      "the wallet's holdings do not change between pages.",
   })
   @ApiParam({
     name: 'address',
-    description: 'Stellar wallet address',
+    description: '56-character Stellar G... wallet address',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @ApiQuery({
@@ -338,16 +344,12 @@ export class NftController {
     type: PaginatedUserTokensResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Invalid wallet address or pagination parameters',
+    description: 'Invalid Stellar wallet address or pagination parameters',
   })
   async getWalletNfts(
-    @Param('address') address: string,
+    @Param('address', ParseStellarAddressPipe) address: string,
     @Query() query: GetUserTokensQueryDto,
   ): Promise<PaginatedUserTokensResponseDto> {
-    if (!address || address.length !== 56 || !address.startsWith('G')) {
-      throw new BadRequestException('Invalid Stellar wallet address');
-    }
-
     const limit = query.limit ?? 20;
     const cursor = query.cursor ?? 0;
 
@@ -506,6 +508,7 @@ export class NftController {
     return this.nftMintService.uploadMetadataToIPFS(dto.clipId, collectionId);
   }
 
+  @Auth()
   @UseGuards(NftMintGuard, QueueRateLimitGuard)
   @Post('mint')
   @HttpCode(HttpStatus.CREATED)
@@ -778,7 +781,6 @@ export class NftController {
         error: 'Unauthorized',
       },
     },
-      'Unauthorized — Bearer JWT required, or wallet signature invalid',
   })
   @ApiForbiddenResponse({
     description: 'Caller does not own the clip',
@@ -853,9 +855,7 @@ export class NftController {
   @ApiResponse({
     status: 202,
     description: 'Mint job enqueued; returns jobId for status tracking',
-    schema: {
-      example: { jobId: 'nft-mint-clip-42', delayed: false, delayMs: 0 },
-    },
+    type: MintEnqueueResponseDto,
   })
   @ApiBadRequestResponse({ description: 'Invalid mint payload' })
   @ApiUnauthorizedResponse({
@@ -2319,10 +2319,6 @@ export class NftController {
   @ApiOperation({
     summary: 'Grant or revoke operator approval for all tokens (Issue #675)',
     description:
-      'Calls the Soroban `set_approval_for_all(owner, operator, approved)` ' +
-      'function. When `approved` is true, `operatorAddress` may call ' +
-      "`transfer_from` on any of the owner's tokens. " +
-      'Set `approved` to false to revoke. Returns an unsigned XDR for signing.',
       'Calls SEP-0050 `approve_for_all(owner, operator, live_until_ledger)`. ' +
       'Set `liveUntilLedger` to 0 to revoke; otherwise it is the approval expiry ledger. ' +
       'Returns an unsigned XDR for signing.',
@@ -2355,11 +2351,6 @@ export class NftController {
   @ApiUnauthorizedResponse({ description: 'Bearer JWT required' })
   @ApiBadRequestResponse({ description: 'Invalid Stellar address' })
   async prepareSetApprovalForAll(
-    @Body()
-    body: {
-      ownerAddress: string;
-      operatorAddress: string;
-      approved: boolean;
     @Body() body: {
       ownerAddress: string;
       operatorAddress: string;
