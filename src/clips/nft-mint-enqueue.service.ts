@@ -47,6 +47,7 @@ export class NftMintEnqueueService {
     clipId: number;
     walletAddress: string;
     userId: number;
+    collectionId?: string;
   }): Promise<{ jobId: string; delayed: boolean; delayMs: number }> {
     const jobId = NftMintEnqueueService.jobIdForClip(input.clipId);
 
@@ -69,6 +70,7 @@ export class NftMintEnqueueService {
         clipId: input.clipId,
         walletAddress: input.walletAddress,
         userId: input.userId,
+        collectionId: input.collectionId,
       },
       baseOptions: {
         ...NFT_MINT_JOB_OPTIONS,

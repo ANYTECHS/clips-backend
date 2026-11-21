@@ -1,9 +1,11 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Module, OnModuleInit, Optional, Inject } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { BullModule } from '@nestjs/bullmq';
+import { BullModule, getQueueToken } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { QueueConfigService } from './queue-config.service';
 import { RetryBackoffConfigService } from './retry-backoff-config.service';
 import { QueueHealthService } from './queue-health.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import {
   CLIP_GENERATION_QUEUE,
   CLIP_GENERATION_QUEUE_PRIORITY,
@@ -69,4 +71,39 @@ export const REGISTERED_QUEUE_NAMES = [
   providers: [QueueConfigService, RetryBackoffConfigService, QueueHealthService],
   exports: [BullModule, QueueConfigService, RetryBackoffConfigService, QueueHealthService],
 })
-export class QueueModule {}
+export class QueueModule implements OnModuleInit {
+  constructor(
+    @Optional() private readonly shutdownService?: GracefulShutdownService,
+    @Optional()
+    @Inject(getQueueToken(CLIP_GENERATION_QUEUE))
+    private readonly clipGenQueue?: Queue,
+    @Optional()
+    @Inject(getQueueToken(CLIP_POSTING_QUEUE))
+    private readonly clipPostQueue?: Queue,
+    @Optional()
+    @Inject(getQueueToken(NFT_MINT_QUEUE))
+    private readonly nftMintQueue?: Queue,
+    @Optional()
+    @Inject(getQueueToken(EMAIL_DELIVERY_QUEUE))
+    private readonly emailQueue?: Queue,
+    @Optional()
+    @Inject(getQueueToken(ANOMALY_DETECTION_QUEUE))
+    private readonly anomalyQueue?: Queue,
+  ) {}
+
+  onModuleInit(): void {
+    if (!this.shutdownService) return;
+    const queues = [
+      this.clipGenQueue,
+      this.clipPostQueue,
+      this.nftMintQueue,
+      this.emailQueue,
+      this.anomalyQueue,
+    ];
+    for (const q of queues) {
+      if (q) {
+        this.shutdownService.registerQueue(q);
+      }
+    }
+  }
+}
