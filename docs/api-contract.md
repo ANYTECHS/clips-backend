@@ -690,7 +690,7 @@ Get available balance for payout. Formula: `totalEarned - totalPaidOut - totalPe
 
 #### `POST /payouts/request`
 
-Request a payout.
+Create a payout request for the authenticated user. The amount must meet the configured minimum/maximum and not exceed the user's available earnings balance. `method` must be `stellar` or `fiat`; a Stellar request requires an active Stellar wallet, while a fiat request requires a default payout method. The response includes the created payout's initial status (`approved` for amounts below the manual-review threshold, otherwise `under_review`).
 
 **Request body:**
 
@@ -698,14 +698,59 @@ Request a payout.
 {
   "amount": 100.00,
   "currency": "USD",
-  "method": "stellar",
-  "walletId": 1
+  "method": "stellar"
 }
 ```
 
-**Response `201`:** Created payout object.
+**Response `201`:**
 
-**Response `400`:** Amount below minimum (`MIN_PAYOUT_USD`) or exceeds available balance.
+```json
+{
+  "payoutId": "payout_123",
+  "id": 123,
+  "amount": 100.00,
+  "currency": "USD",
+  "method": "stellar",
+  "status": "approved",
+  "feeAmount": 1.00,
+  "finalAmount": 99.00,
+  "createdAt": "2026-11-20T03:00:00.000Z"
+}
+```
+
+`destinations` may be supplied instead of `method` to split the payout between fiat and Stellar destinations. Each destination uses either `percentage` or `amount`; the percentages must sum to 100, or the amounts must sum to the request amount.
+
+**Response `400`:** Invalid request fields or payout method, amount below the configured minimum, amount above the configured maximum, insufficient available balance, or missing payout destination.
+
+**Response `401`:** Missing or invalid bearer token.
+
+**Response `409`:** The user already has an open payout request.
+
+---
+
+#### `GET /payouts`
+
+List the authenticated user's payout records. Supports optional `status`, `page` (default `1`), and `limit` (default `20`, maximum `100`) query parameters.
+
+**Response `200`:** Paginated payout objects with status and transaction/confirmation details.
+
+**Response `400`:** Invalid status or pagination query parameter.
+
+**Response `401`:** Missing or invalid bearer token.
+
+---
+
+#### `GET /payouts/:id`
+
+Get one payout by its integer ID. Only payouts owned by the authenticated user are returned.
+
+**Response `200`:** Payout details including current status, fee/net amount, and transaction/confirmation details when available.
+
+**Response `400`:** The ID is not a valid integer.
+
+**Response `401`:** Missing or invalid bearer token.
+
+**Response `404`:** Payout does not exist or is not owned by the authenticated user.
 
 ---
 

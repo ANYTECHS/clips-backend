@@ -3,6 +3,7 @@ import {
   INestApplication,
   ValidationPipe,
   ExecutionContext,
+  UnauthorizedException,
 } from '@nestjs/common';
 import request from 'supertest';
 import { PayoutsController } from '../src/payouts/payouts.controller';
@@ -16,9 +17,22 @@ import { EarningsService } from '../src/earnings/earnings.service';
 import { PayoutApprovalService } from '../src/payouts/payout-approval.service';
 import { PAYOUT_RETRY_QUEUE } from '../src/payouts/payout-retry.queue';
 import { ConfigService } from '../src/config/config.service';
+import { BalanceService } from '../src/payouts/balance.service';
+import { PayoutExportService } from '../src/payouts/payout-export.service';
+import { PayoutLimitsService } from '../src/payouts/payout-limits.service';
+import { PayoutValidationService } from '../src/payouts/payout-validation.service';
+import { PayoutProcessingService } from '../src/payouts/payout-processing.service';
+import { PayoutRetryStrategyService } from '../src/payouts/payout-retry-strategy.service';
+import { StellarPayoutVerificationService } from '../src/payouts/stellar-payout-verification.service';
+import { MailService } from '../src/auth/mail.service';
+import { CurrencyService } from '../src/common/services/currency.service';
+import { createAuthenticatedRequest } from '../src/testing/authenticated-request.util';
 import * as StellarSdk from '@stellar/stellar-sdk';
 
 const USER_ID = 9001;
+const TEST_USER = { id: USER_ID, email: 'user@example.com' };
+const earnings: Array<{ userId: number; amount: number }> = [];
+const payouts: Array<Record<string, any>> = [];
 
 const mockPrisma: any = {
   payout: {
@@ -26,6 +40,8 @@ const mockPrisma: any = {
     create: jest.fn(),
     aggregate: jest.fn(),
     findUnique: jest.fn(),
+    findMany: jest.fn(),
+    count: jest.fn(),
     update: jest.fn(),
     updateMany: jest.fn(),
   },
@@ -39,12 +55,16 @@ const mockPrisma: any = {
     findFirst: jest.fn(),
   },
 };
+mockPrisma.$transaction = jest.fn(
+  (callback: (transaction: typeof mockPrisma) => Promise<unknown>) =>
+    callback(mockPrisma),
+);
 
 const mockStellarService = {
   horizonUrl: 'https://horizon-testnet.stellar.org',
   networkPassphrase: 'Test SDF Network ; September 2015',
   getAccountBalance: jest.fn(),
-  validateAddress: jest.fn().mockReturnValue({ valid: true }),
+  validateAddress: jest.fn(),
 };
 
 const mockFeeService = {
@@ -56,10 +76,50 @@ const mockReceiptService = {
 };
 
 const mockQueue = { add: jest.fn() };
+const getEarningsSummary = async (userId: number) => {
+  const totalEarnings = earnings
+    .filter((earning) => earning.userId === userId)
+    .reduce((sum, earning) => sum + earning.amount, 0);
+  const reservedAmount = payouts
+    .filter(
+      (payout) =>
+        payout.userId === userId &&
+        !['failed', 'rejected', 'cancelled'].includes(payout.status),
+    )
+    .reduce((sum, payout) => sum + payout.amount, 0);
+
+  return {
+    totalEarnings,
+    availableBalance: totalEarnings - reservedAmount,
+  };
+};
+const mockEarningsService = {
+  getUserTotalEarnings: jest.fn(getEarningsSummary),
+};
+
+function matchesPayoutWhere(payout: Record<string, any>, where: any): boolean {
+  if (where.id !== undefined && payout.id !== where.id) return false;
+  if (where.userId !== undefined && payout.userId !== where.userId)
+    return false;
+  if (where.deletedAt === null && payout.deletedAt !== null) return false;
+  if (where.status?.in && !where.status.in.includes(payout.status)) {
+    return false;
+  }
+  if (typeof where.status === 'string' && payout.status !== where.status) {
+    return false;
+  }
+  if (where.transactionId?.not === null && payout.transactionId === null) {
+    return false;
+  }
+  return true;
+}
 
 class AuthenticatedGuard {
   canActivate(ctx: ExecutionContext) {
     const req = ctx.switchToHttp().getRequest();
+    if (!req.headers.authorization?.startsWith('Bearer ')) {
+      throw new UnauthorizedException();
+    }
     req.user = { userId: USER_ID, email: 'user@example.com' };
     return true;
   }
@@ -67,6 +127,7 @@ class AuthenticatedGuard {
 
 describe('Payouts E2E', () => {
   let app: INestApplication;
+  let http: ReturnType<typeof createAuthenticatedRequest>;
 
   async function buildApp() {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -76,7 +137,7 @@ describe('Payouts E2E', () => {
         { provide: PrismaService, useValue: mockPrisma },
         { provide: StellarService, useValue: mockStellarService },
         { provide: PayoutReceiptService, useValue: mockReceiptService },
-        { provide: EarningsService, useValue: {} },
+        { provide: EarningsService, useValue: mockEarningsService },
         { provide: FeeService, useValue: mockFeeService },
         {
           provide: PayoutApprovalService,
@@ -85,6 +146,29 @@ describe('Payouts E2E', () => {
         {
           provide: ConfigService,
           useValue: { minStellarPayout: 10, platformWallet: 'GPLATFORM' },
+        },
+        {
+          provide: CurrencyService,
+          useValue: {
+            convert: jest.fn(async (amount: number) => ({ amount, rate: 1 })),
+          },
+        },
+        {
+          provide: PayoutLimitsService,
+          useValue: { getLimits: () => ({ min: 10, max: 10000 }) },
+        },
+        PayoutValidationService,
+        PayoutProcessingService,
+        { provide: PayoutRetryStrategyService, useValue: {} },
+        { provide: StellarPayoutVerificationService, useValue: {} },
+        { provide: MailService, useValue: {} },
+        {
+          provide: BalanceService,
+          useValue: { getAvailableBalance: jest.fn() },
+        },
+        {
+          provide: PayoutExportService,
+          useValue: { exportPayouts: jest.fn() },
         },
         { provide: PAYOUT_RETRY_QUEUE, useValue: mockQueue },
         // InjectQueue uses a Bull-specific token of the form `BullQueue_${queueName}`
@@ -108,65 +192,132 @@ describe('Payouts E2E', () => {
   }
 
   beforeEach(async () => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
+    earnings.splice(0, earnings.length, { userId: USER_ID, amount: 120 });
+    payouts.splice(0, payouts.length);
+
+    mockPrisma.$transaction.mockImplementation(
+      (callback: (transaction: typeof mockPrisma) => Promise<unknown>) =>
+        callback(mockPrisma),
+    );
+    mockEarningsService.getUserTotalEarnings.mockImplementation(
+      getEarningsSummary,
+    );
+    mockPrisma.payout.findFirst.mockImplementation(async ({ where }: any) => {
+      const payout = payouts.find((candidate) =>
+        matchesPayoutWhere(candidate, where),
+      );
+      if (!payout) return null;
+      if (where.include?.wallet) {
+        return {
+          ...payout,
+          wallet: {
+            address: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+          },
+        };
+      }
+      return payout;
+    });
+    mockPrisma.payout.create.mockImplementation(async ({ data }: any) => {
+      const payout = {
+        ...data,
+        id: payouts.length + 1,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        deletedAt: null,
+        transactionId: null,
+        stellarXdr: null,
+      };
+      payouts.push(payout);
+      return payout;
+    });
+    mockPrisma.payout.findMany.mockImplementation(async ({ where }: any) =>
+      payouts.filter((payout) => matchesPayoutWhere(payout, where)),
+    );
+    mockPrisma.payout.count.mockImplementation(
+      async ({ where }: any) =>
+        payouts.filter((payout) => matchesPayoutWhere(payout, where)).length,
+    );
+    mockPrisma.payout.updateMany.mockImplementation(
+      async ({ where, data }: any) => {
+        const matching = payouts.filter((payout) =>
+          matchesPayoutWhere(payout, where),
+        );
+        matching.forEach((payout) => Object.assign(payout, data));
+        return { count: matching.length };
+      },
+    );
+    mockPrisma.wallet.findFirst.mockResolvedValue({
+      id: 11,
+      userId: USER_ID,
+      address: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+      chain: 'stellar',
+      deletedAt: null,
+    });
+    mockPrisma.payoutMethod.findFirst.mockResolvedValue(null);
+    mockStellarService.validateAddress.mockReturnValue({ valid: true });
+    mockStellarService.getAccountBalance.mockResolvedValue(200);
+    mockFeeService.calculateFee.mockResolvedValue({
+      feeAmount: 1,
+      feePercentage: 1,
+      finalAmount: 119,
+    });
+
     app = await buildApp();
+    http = createAuthenticatedRequest(TEST_USER, {
+      app: app.getHttpServer(),
+    });
   });
 
   afterEach(async () => {
     if (app) await app.close();
+    jest.restoreAllMocks();
   });
 
-  it('POST /payouts/request creates a payout record (stellar)', async () => {
-    // No existing pending payout
-    mockPrisma.payout.findFirst.mockResolvedValue(null);
-
-    // Earnings total 120, nothing paid out
-    mockPrisma.earning.aggregate.mockResolvedValue({ _sum: { amount: 120 } });
-    mockPrisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
-
-    // Wallet exists for stellar method
-    mockPrisma.wallet.findFirst.mockResolvedValue({ id: 11, address: 'GDEST' });
-
-    // Fee calculation
-    mockFeeService.calculateFee.mockResolvedValue({
-      feeAmount: 1,
-      feePercentage: 1,
-      finalAmount: 119,
-    });
-
-    const created = {
-      id: 7,
-      userId: USER_ID,
-      walletId: 11,
-      amount: 120,
-      currency: 'USD',
-      method: 'stellar',
-      status: 'pending',
-      feeAmount: 1,
-      finalAmount: 119,
-      createdAt: new Date(),
-    };
-    mockPrisma.payout.create.mockResolvedValue(created);
-
-    const res = await request(app.getHttpServer())
+  it('creates and persists an authenticated Stellar payout visible in list and detail', async () => {
+    const res = await http
       .post('/payouts/request')
       .send({ amount: 120, currency: 'USD', method: 'stellar' })
       .expect(201);
 
-    expect(res.body.id).toBe(7);
-    expect(mockPrisma.payout.create).toHaveBeenCalled();
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        id: 1,
+        amount: 120,
+        currency: 'USD',
+        method: 'stellar',
+        status: 'approved',
+      }),
+    );
+    expect(payouts).toHaveLength(1);
+    expect(payouts[0]).toEqual(
+      expect.objectContaining({
+        userId: USER_ID,
+        walletId: 11,
+        amount: 120,
+        currency: 'USD',
+        method: 'stellar',
+        status: 'approved',
+      }),
+    );
+
+    const list = await http.get('/payouts').expect(200);
+    expect(list.body.items).toEqual([
+      expect.objectContaining({ id: 1, status: 'approved' }),
+    ]);
+
+    const details = await http.get('/payouts/1').expect(200);
+    expect(details.body).toEqual(
+      expect.objectContaining({
+        id: 1,
+        amount: 120,
+        method: 'stellar',
+        status: 'approved',
+      }),
+    );
   });
 
   it('trims string fields and transforms numeric payloads for payout requests', async () => {
-    mockPrisma.payout.findFirst.mockResolvedValue(null);
-    mockPrisma.earning.aggregate.mockResolvedValue({ _sum: { amount: 120 } });
-    mockPrisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
-    mockPrisma.wallet.findFirst.mockResolvedValue({ id: 11, address: 'GDEST' });
-    mockFeeService.calculateFee.mockResolvedValue({
-      feeAmount: 1,
-      feePercentage: 1,
-      finalAmount: 119,
-    });
     mockPrisma.payout.create.mockResolvedValue({
       id: 8,
       userId: USER_ID,
@@ -180,7 +331,7 @@ describe('Payouts E2E', () => {
       createdAt: new Date(),
     });
 
-    await request(app.getHttpServer())
+    await http
       .post('/payouts/request')
       .send({ amount: '120', currency: ' USD ', method: ' stellar ' })
       .expect(201);
@@ -196,30 +347,40 @@ describe('Payouts E2E', () => {
     );
   });
 
-  it('validates minimum payout amount', async () => {
-    mockPrisma.payout.findFirst.mockResolvedValue(null);
-
-    // Request below default min (10)
+  it('rejects payout requests without authentication', async () => {
     await request(app.getHttpServer())
+      .post('/payouts/request')
+      .send({ amount: 120, currency: 'USD', method: 'stellar' })
+      .expect(401);
+  });
+
+  it('validates minimum payout amount', async () => {
+    // Request below default min (10)
+    await http
       .post('/payouts/request')
       .send({ amount: 5, currency: 'USD', method: 'stellar' })
       .expect(400);
   });
 
   it('validates insufficient balance', async () => {
-    mockPrisma.payout.findFirst.mockResolvedValue(null);
-    // Earnings total 20, already paid 0 -> available 20
-    mockPrisma.earning.aggregate.mockResolvedValue({ _sum: { amount: 20 } });
-    mockPrisma.payout.aggregate.mockResolvedValue({ _sum: { amount: 0 } });
+    earnings.splice(0, earnings.length, { userId: USER_ID, amount: 20 });
 
-    await request(app.getHttpServer())
+    await http
       .post('/payouts/request')
       .send({ amount: 50, currency: 'USD', method: 'stellar' })
       .expect(400);
   });
 
+  it('rejects an invalid payout method', async () => {
+    await http
+      .post('/payouts/request')
+      .send({ amount: 50, currency: 'USD', method: 'paypal' })
+      .expect(400);
+    expect(mockPrisma.payout.create).not.toHaveBeenCalled();
+  });
+
   it('rejects unexpected properties on payout request payloads', async () => {
-    await request(app.getHttpServer())
+    await http
       .post('/payouts/request')
       .send({
         amount: 120,
@@ -285,7 +446,7 @@ describe('Payouts E2E', () => {
 
     process.env.STELLAR_WALLET_ADDRESS = 'GPLATFORM';
 
-    const res = await request(app.getHttpServer())
+    const res = await http
       .post('/payouts/initiate-stellar')
       .send({ payoutId: 101, amount: 100 })
       .expect(201);
@@ -315,14 +476,14 @@ describe('Payouts E2E', () => {
   });
 
   it('rejects Stellar payout amounts that cannot be represented on-chain', async () => {
-    await request(app.getHttpServer())
+    await http
       .post('/payouts/initiate-stellar')
       .send({ payoutId: 101, amount: 100.00000001 })
       .expect(400);
   });
 
   it('rejects unexpected properties on initiate-stellar payloads', async () => {
-    await request(app.getHttpServer())
+    await http
       .post('/payouts/initiate-stellar')
       .send({ payoutId: 101, amount: 100, unexpected: true })
       .expect(400)

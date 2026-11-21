@@ -362,6 +362,7 @@ export class PayoutsService {
       page,
       limit,
     );
+
     const items = result.items.map((p) => ({
       ...p,
       fee: (p as { feeAmount?: number }).feeAmount,

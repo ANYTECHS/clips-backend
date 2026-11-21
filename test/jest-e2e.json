@@ -11,6 +11,8 @@
   },
   "moduleNameMapper": {
     "^@prisma/client$": "<rootDir>/../src/__mocks__/@prisma/client.ts",
+    "^@clipcash/shared$": "<rootDir>/../src/shared/index.ts",
+    "^@clipcash/shared/(.*)$": "<rootDir>/../src/shared/$1",
     "^cockatiel$": "<rootDir>/../src/__mocks__/cockatiel.ts",
     "^fluent-ffmpeg$": "<rootDir>/__mocks__/fluent-ffmpeg.ts",
     "^(\\.{1,2}/.*)\\.js$": "$1"

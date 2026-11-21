@@ -28,6 +28,7 @@ export class RolesGuard implements CanActivate {
           ? 'unauthorized-admin'
           : 'Insufficient permissions',
         errorCode: isAdminOnly ? 'UNAUTHORIZED_ADMIN' : 'FORBIDDEN',
+        reason: `Required roles: ${requiredRoles.join(', ')}`,
       });
     }
 
