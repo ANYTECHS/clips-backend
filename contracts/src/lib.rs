@@ -5,6 +5,7 @@ use soroban_sdk::{contract, contractimpl, Symbol, Env, Address, storage::Persist
 mod types;
 mod storage;
 mod error;
+mod nft;
 
 use types::*;
 use storage::*;

@@ -137,7 +137,7 @@ describe('NftApprovalService (Issue #842)', () => {
       xdr: 'mock-approve-xdr',
     });
     expect(mockGetAccount).toHaveBeenCalledWith(OWNER);
-    expect(mockCall).toHaveBeenCalledWith('revoke_all_approvals');
+    expect(mockCall).toHaveBeenCalledWith('revoke_all_approvals', expect.anything());
   });
 
   it('rejects token IDs outside the u32 range for revocation', async () => {
