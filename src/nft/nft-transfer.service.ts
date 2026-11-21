@@ -16,6 +16,7 @@ import {
 } from '../common/circuit-breaker/circuit-breaker.service';
 import { TransferNftResponseDto } from './dto/transfer-nft.dto';
 import { AdminContractService } from './admin-contract.service';
+import { ContractPauseService } from '../blockchain/contract-pause.service';
 
 /**
  * Builds unsigned Soroban `transfer_with_royalty` transactions (Issue #843).
@@ -38,6 +39,7 @@ export class NftTransferService {
     private readonly prisma: PrismaService,
     private readonly circuitBreakerService: CircuitBreakerService,
     private readonly adminContractService: AdminContractService,
+    private readonly contractPauseService: ContractPauseService,
   ) {}
 
   private get CONTRACT_ID(): string {
@@ -57,6 +59,8 @@ export class NftTransferService {
     salePrice: number,
     royaltyBpsOverride?: number,
   ): Promise<TransferNftResponseDto> {
+    await this.contractPauseService.assertNotPaused();
+
     if (tokenId <= 0) {
       throw new BadRequestException('Token ID must be a positive integer');
     }

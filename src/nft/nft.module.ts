@@ -42,6 +42,7 @@ import { NftStandardQueriesService } from './nft-standard-queries.service';
 import { NftStandardQueriesController } from './nft-standard-queries.controller';
 import { SorobanFeeEstimationService } from './soroban-fee-estimation.service';
 import { ClipsModule } from '../clips/clips.module';
+import { BlockchainModule } from '../blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -53,6 +54,7 @@ import { ClipsModule } from '../clips/clips.module';
     RedisModule,
     ClipsModule,
     ConfigModule,
+    BlockchainModule,
   ],
   providers: [
     NftConfig,
