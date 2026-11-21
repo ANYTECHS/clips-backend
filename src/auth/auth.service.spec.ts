@@ -138,6 +138,7 @@ describe('AuthService', () => {
 
       // Password must be hashed before persisting
       const createCall = mockPrisma.user.create.mock.calls[0][0];
+      expect(createCall.data.name).toBe(dto.name);
       expect(createCall.data.password).not.toBe(dto.password);
       const isHashed = await bcrypt.compare(dto.password, createCall.data.password);
       expect(isHashed).toBe(true);

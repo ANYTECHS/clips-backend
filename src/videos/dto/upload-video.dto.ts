@@ -1,4 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { VideoUploadMetadataDto } from './video-upload-metadata.dto';
+
+export class UploadVideoRequestDto extends VideoUploadMetadataDto {
+  @ApiProperty({
+    description: 'Video file to upload (mp4, mov, avi, or webm; max 500 MB)',
+    type: 'string',
+    format: 'binary',
+  })
+  file: string;
+}
 
 export class UploadVideoResponseDto {
   @ApiProperty({
@@ -50,7 +60,12 @@ export class UploadVideoErrorDto {
   @ApiProperty({
     description: 'Error code',
     example: 'INVALID_FORMAT',
-    enum: ['INVALID_FORMAT', 'FILE_TOO_LARGE', 'DURATION_EXCEEDED', 'UPLOAD_FAILED'],
+    enum: [
+      'INVALID_FORMAT',
+      'FILE_TOO_LARGE',
+      'DURATION_EXCEEDED',
+      'UPLOAD_FAILED',
+    ],
   })
   code: string;
 }

@@ -32,6 +32,8 @@ import { MagicLinkRequestDto } from './dto/magic-link.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LoginDto } from './dto/login.dto';
 import { LoginResponseDto } from './dto/login-response.dto';
+import { AuthSuccessResponseDto } from './dto/auth-responses.dto';
+import { TokenResponseDto } from './dto/token-response.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { CsrfService } from '../csrf/csrf.service';
@@ -47,15 +49,18 @@ export class AuthController {
   ) {}
 
   @Post('signup')
-  @ApiOperation({ summary: 'Register a new user account' })
-  @ApiResponse({ status: 201, description: 'User created successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid input or user already exists' })
   @ApiOperation({
     summary: 'Register a new user account',
     description:
       'Registers a user account. Password must be at least 10 characters long with a minimum zxcvbn score of 3 (scale 0-4).',
   })
-  @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiBody({ type: SignupDto })
+  @ApiResponse({
+    status: 201,
+    description:
+      'User created successfully. With use_cookies=true, tokens are set as HttpOnly cookies and omitted from the response body.',
+    type: AuthSuccessResponseDto,
+  })
   @ApiResponse({
     status: 400,
     description:
@@ -112,6 +117,7 @@ export class AuthController {
 
   @Post('login')
   @ApiOperation({ summary: 'Authenticate user and get access tokens' })
+  @ApiBody({ type: LoginDto })
   @ApiResponse({
     status: 200,
     description: 'Login successful',
@@ -131,7 +137,6 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Invalid credentials' })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
   @ApiResponse({ status: 429, description: 'Too many requests - brute force protection' })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
@@ -160,16 +165,45 @@ export class AuthController {
   }
 
   @Get('google')
-  @ApiOperation({ summary: 'Initiate Google OAuth flow', description: 'Redirects to Google for authentication' })
+  @ApiOperation({
+    summary: 'Initiate Google OAuth flow',
+    description:
+      'Starts the Google authorization redirect. No Google client credentials are supplied by the caller.',
+  })
   @ApiResponse({ status: 302, description: 'Redirects to Google OAuth' })
+  @ApiResponse({ status: 401, description: 'OAuth authorization failed' })
   @UseGuards(AuthGuard('google'))
   googleAuth() {
     return;
   }
 
   @Get('google/callback')
-  @ApiOperation({ summary: 'Google OAuth callback', description: 'Handles Google OAuth redirect' })
-  @ApiResponse({ status: 200, description: 'Authentication successful' })
+  @ApiOperation({
+    summary: 'Google OAuth callback',
+    description:
+      'Completes Google OAuth and establishes an authenticated session using HttpOnly cookies.',
+  })
+  @ApiQuery({
+    name: 'code',
+    required: true,
+    description: 'Authorization code returned by Google',
+  })
+  @ApiQuery({
+    name: 'state',
+    required: false,
+    description: 'OAuth state value used to correlate the authorization request',
+  })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Authentication successful. Access and refresh tokens are set as HttpOnly cookies.',
+    schema: {
+      example: {
+        user: { id: 42, email: 'user@example.com', name: 'Jane Doe' },
+        csrfToken: 'csrf-token-value',
+      },
+    },
+  })
   @ApiResponse({ status: 401, description: 'Authentication failed' })
   @UseGuards(AuthGuard('google'))
   async googleCallback(
@@ -405,7 +439,13 @@ export class AuthController {
 
   @Post('refresh')
   @ApiOperation({ summary: 'Refresh access token', description: 'Get new access token using refresh token' })
-  @ApiResponse({ status: 200, description: 'Tokens refreshed successfully' })
+  @ApiBody({ type: RefreshTokenDto })
+  @ApiResponse({
+    status: 200,
+    description:
+      'Tokens refreshed successfully. With use_cookies=true, tokens are set as HttpOnly cookies and the response body is empty.',
+    type: TokenResponseDto,
+  })
   @ApiResponse({
     status: 400,
     description: 'Bad Request - Validation failed or refresh token missing',
@@ -417,8 +457,10 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Invalid or expired refresh token' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({
+    status: 401,
+    description: 'Refresh token is invalid, expired, revoked, or unauthorized',
+  })
   @ApiQuery({ name: 'use_cookies', required: false, description: 'Return tokens in cookies instead of body' })
   @HttpCode(HttpStatus.OK)
   async refresh(

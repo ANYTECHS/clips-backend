@@ -286,7 +286,7 @@ export class AuthService {
     // Create user + email verification token atomically
     const { user } = await this.prisma.withTransaction(async (tx) => {
       const user = await tx.user.create({
-        data: { email, password: hashedPassword },
+        data: { email, name: signupDto.name, password: hashedPassword },
       });
       await tx.emailVerificationToken.create({
         data: { userId: user.id, tokenHash, expiresAt },
