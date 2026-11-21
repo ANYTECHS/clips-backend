@@ -2,6 +2,7 @@ import { IsString, IsOptional, IsInt, IsArray } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsValidPlatforms } from '../../common/validators/decorators';
+import { IsYouTubeUrl, YOUTUBE_URL_FORMATS } from '../../common/validators/is-youtube-url.validator';
 import { TrimString } from '../../common/decorators/trim-string.decorator';
 import type { SupportedPlatform } from '../../common/validators/is-valid-platform.validator';
 
@@ -46,6 +47,15 @@ export class CreateVideoDto {
   @TrimString()
   @IsString()
   sourceUrl?: string;
+
+  @ApiPropertyOptional({
+    description: `YouTube video URL to process. Accepted formats: ${YOUTUBE_URL_FORMATS.join(', ')}`,
+    example: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+  })
+  @IsOptional()
+  @TrimString()
+  @IsYouTubeUrl()
+  youtubeUrl?: string;
 
   @ApiPropertyOptional({
     description: 'Thumbnail URL',

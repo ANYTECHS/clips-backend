@@ -82,6 +82,9 @@ model Clip {
   platform      String?
   title         String?
   caption       String?
+  description   String?
+  visibility    String     @default("public")
+  metadata      Json?
   startTime     Float
   endTime       Float
   duration      Float
