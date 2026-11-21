@@ -6,6 +6,7 @@ mod types;
 mod storage;
 mod error;
 mod token;
+mod nft;
 
 use types::*;
 use storage::*;

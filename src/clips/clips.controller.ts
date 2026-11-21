@@ -24,6 +24,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { ParsePositiveIntPipe } from '../common/pipes';
 import {
   ApiBadRequestResponse,
   ApiBearerAuth,
@@ -182,11 +183,12 @@ export class ClipsController {
    */
   @Get(':id')
   @ApiOperation({ summary: 'Get a single clip by ID' })
-  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
   @ApiOkResponse({ description: 'Clip found', type: ClipResponseDto })
   @ApiNotFoundResponse({ description: 'Clip not found' })
-  async findOne(@Param('id') id: string) {
-    const clip = await this.clipsService.findById(Number(id));
+  @ApiBadRequestResponse({ description: 'Invalid clip ID — must be a positive integer' })
+  async findOne(@Param('id', ParsePositiveIntPipe) id: number) {
+    const clip = await this.clipsService.findById(id);
     if (!clip) throw new NotFoundException(`Clip ${id} not found`);
     return clip;
   }
@@ -270,16 +272,16 @@ export class ClipsController {
       'Re-runs FFmpeg with the original timestamps, uploads a new version to ' +
       'Cloudinary and updates clipUrl + thumbnail. viralityScore and title are preserved.',
   })
-  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
   @ApiResponse({ status: 200, description: 'Updated clip record with new clipUrl and thumbnail' })
   @ApiNotFoundResponse({ description: 'Clip not found' })
   @ApiForbiddenResponse({ description: 'Clip does not belong to the requesting user' })
   @ApiResponse({ status: 429, description: 'Too many active jobs' })
-  regenerate(@Param('id') id: string, @Req() req: Request) {
+  regenerate(@Param('id', ParsePositiveIntPipe) id: number, @Req() req: Request) {
     const userId: number = Number(
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
-    return this.clipsService.regenerate(userId, Number(id));
+    return this.clipsService.regenerate(userId, id);
   }
 
   /**
@@ -293,12 +295,12 @@ export class ClipsController {
     description:
       'Update the auto-generated caption for a clip. Useful for customizing social media posts.',
   })
-  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
   @ApiResponse({ status: 200, description: 'Caption updated' })
   @ApiBadRequestResponse({ description: 'caption is required and must be a string' })
   @ApiNotFoundResponse({ description: 'Clip not found' })
   async updateCaption(
-    @Param('id') id: string,
+    @Param('id', ParsePositiveIntPipe) id: number,
     @Body('caption') caption: string,
     @Req() req: Request,
   ) {
@@ -308,7 +310,7 @@ export class ClipsController {
     const userId: number = Number(
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
-    return this.clipsService.updateCaption(Number(id), userId, caption);
+    return this.clipsService.updateCaption(id, userId, caption);
   }
 
   /**
@@ -324,7 +326,7 @@ export class ClipsController {
       'Configure creator royalty (0–1500 BPS) for a clip before minting. ' +
       '100 BPS = 1%. Defaults to 1000 (10%) when omitted.',
   })
-  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
   @ApiOkResponse({
     description: 'Royalty BPS updated',
     schema: { example: { id: 42, royaltyBps: 1000 } },
@@ -333,7 +335,7 @@ export class ClipsController {
   @ApiForbiddenResponse({ description: 'Clip does not belong to the requesting user' })
   @ApiNotFoundResponse({ description: 'Clip not found' })
   async updateRoyalty(
-    @Param('id') id: string,
+    @Param('id', ParsePositiveIntPipe) id: number,
     @Body() dto: UpdateClipRoyaltyDto,
     @Req() req: Request,
   ) {
@@ -341,7 +343,7 @@ export class ClipsController {
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
     return this.clipsService.updateRoyalty(
-      Number(id),
+      id,
       userId,
       dto.royaltyBps ?? DEFAULT_CLIP_ROYALTY_BPS,
     );
@@ -360,7 +362,7 @@ export class ClipsController {
       'Allow creators to configure a custom royalty percentage (0–15%) per clip before minting. ' +
       'Defaults to 1000 BPS (10%) when omitted.',
   })
-  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
   @ApiOkResponse({
     description: 'Stored royalty in basis points',
     type: SetRoyaltyBpsResponseDto,
@@ -389,7 +391,7 @@ export class ClipsController {
     summary: 'Get clip NFT royalty BPS (Issue #747)',
     description: 'Returns the configured royalty BPS for a clip, defaulting to 1000 (10%).',
   })
-  @ApiParam({ name: 'id', description: 'Clip ID', type: Number })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
   @ApiOkResponse({
     description: 'Current royalty BPS for the clip',
     type: SetRoyaltyBpsResponseDto,
