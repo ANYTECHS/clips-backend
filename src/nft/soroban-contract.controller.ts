@@ -3,6 +3,7 @@ import {
   ApiResponse,
   ApiBadGatewayResponse,
   ApiInternalServerErrorResponse,
+  ApiOkResponse,
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
@@ -10,10 +11,6 @@ import { StellarService } from '../stellar/stellar.service';
 import { AdminContractService } from './admin-contract.service';
 import { SorobanPauseInfoDto, SorobanPauseReasonDto } from './dto/soroban-pause.dto';
 import { ContractInfoDto } from './dto/contract-info.dto';
-import {
-  SorobanPauseInfoDto,
-  SorobanPauseReasonDto,
-} from './dto/soroban-pause.dto';
 import { SorobanFeeEstimationService } from './soroban-fee-estimation.service';
 import {
   EstimateMintFeeQueryDto,

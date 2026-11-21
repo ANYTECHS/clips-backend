@@ -29,6 +29,7 @@ import {
   RoyaltyCalculationResponseDto,
 } from './dto/clip-royalty.dto';
 import { Auth } from '../auth/decorators/auth.decorator';
+import { ParseStellarAddressPipe } from '../common/pipes';
 
 /**
  * Endpoints for managing clip-level royalty configurations
@@ -225,13 +226,17 @@ export class ClipRoyaltyController {
   })
   @ApiParam({
     name: 'address',
-    description: 'Stellar wallet address of the royalty recipient',
+    description: '56-character Stellar G... wallet address of the royalty recipient',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @ApiResponse({
     status: 200,
     description: 'Royalties retrieved successfully',
     type: [ClipRoyaltyResponseDto],
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid Stellar wallet address',
   })
   @ApiResponse({
     status: 401,
@@ -242,7 +247,7 @@ export class ClipRoyaltyController {
     description: 'Forbidden - admin access required',
   })
   async getRoyaltiesForRecipient(
-    @Param('address') address: string,
+    @Param('address', ParseStellarAddressPipe) address: string,
   ): Promise<ClipRoyaltyResponseDto[]> {
     return this.clipRoyaltyService.getRoyaltiesForRecipient(address);
   }
