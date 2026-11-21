@@ -27,6 +27,7 @@ import {
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { JobPriorityLevel } from '../queue/job-priority';
 
 /**
  * Entry point for payout operations. Owns payout creation and the
@@ -722,12 +723,15 @@ export class PayoutsService {
     });
   }
 
-  async batchProcessPayouts(payoutIds: number[]): Promise<{
+  async batchProcessPayouts(
+    payoutIds: number[],
+    priority?: JobPriorityLevel | number,
+  ): Promise<{
     processed: number;
     failed: number;
     results: Array<{ id: number; status: string; error?: string }>;
   }> {
-    return this.payoutProcessingService.batchProcessPayouts(payoutIds);
+    return this.payoutProcessingService.batchProcessPayouts(payoutIds, priority);
   }
 
   async cancelPayout(userId: number, payoutId: number): Promise<{ id: number; status: string }> {

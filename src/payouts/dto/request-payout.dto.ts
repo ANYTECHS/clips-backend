@@ -17,6 +17,7 @@ import {
   IsSupportedCurrency,
   CURRENCY_API_PROPERTY,
 } from '../../common/validators/decorators';
+import { JobPriorityLevel } from '../../queue/job-priority';
 
 /** @deprecated Use CreatePayoutDto */
 export type RequestPayoutDto = CreatePayoutDto;
@@ -134,6 +135,20 @@ export class CreatePayoutDto {
   @ValidateNested({ each: true })
   @Type(() => PayoutDestinationDto)
   destinations?: PayoutDestinationDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Optional job priority level for payout processing. ' +
+      'Supported values: critical, high, normal, low. ' +
+      'Note: critical priority requires administrator privileges.',
+    enum: JobPriorityLevel,
+    example: JobPriorityLevel.NORMAL,
+  })
+  @IsOptional()
+  @IsEnum(JobPriorityLevel, {
+    message: 'priority must be one of: critical, high, normal, low',
+  })
+  priority?: JobPriorityLevel;
 }
 
 /** Alias matching Issue #980 task naming. */

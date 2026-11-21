@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { BullRootModuleOptions } from '@nestjs/bullmq';
+import {
+  DEFAULT_JOB_PRIORITY_NUMERIC,
+  JobPriorityLevel,
+  QueuePriorityBehavior,
+  assertAuthorizedJobPriority,
+  getQueuePriorityBehavior,
+  toBullMQPriority,
+} from './job-priority';
 
 export interface QueueRuntimeConfig {
   prefix: string;
@@ -8,6 +16,7 @@ export interface QueueRuntimeConfig {
   defaultBackoffDelayMs: number;
   removeOnComplete: number;
   removeOnFail: number;
+  defaultPriority: number;
 }
 
 @Injectable()
@@ -46,6 +55,11 @@ export class QueueConfigService {
       ),
       removeOnComplete: this.getInteger('QUEUE_REMOVE_ON_COMPLETE', 1000, 0),
       removeOnFail: this.getInteger('QUEUE_REMOVE_ON_FAIL', 5000, 0),
+      defaultPriority: this.getInteger(
+        'QUEUE_DEFAULT_PRIORITY',
+        DEFAULT_JOB_PRIORITY_NUMERIC,
+        1,
+      ),
     };
   }
 
@@ -63,8 +77,51 @@ export class QueueConfigService {
         },
         removeOnComplete: runtime.removeOnComplete,
         removeOnFail: runtime.removeOnFail,
+        priority: runtime.defaultPriority,
       },
     };
+  }
+
+  /**
+   * Resolves the effective priority for a job in a given queue.
+   * If a per-job override is provided, it is converted to a BullMQ integer priority.
+   * Otherwise, queue-specific environment override or default behavior is used.
+   */
+  getQueuePriority(
+    queueName: string,
+    overridePriority?: JobPriorityLevel | number | string,
+  ): number {
+    const behavior = this.getQueueBehavior(queueName);
+
+    if (overridePriority !== undefined && overridePriority !== null && behavior.allowJobPriorityOverride) {
+      return toBullMQPriority(overridePriority, behavior.defaultPriority);
+    }
+
+    const envKey = `QUEUE_PRIORITY_${queueName.replace(/-/g, '_').toUpperCase()}`;
+    const rawEnv = this.config.get<string>(envKey);
+    if (rawEnv !== undefined && rawEnv.trim() !== '') {
+      return this.parseInteger(envKey, rawEnv, behavior.defaultPriority, 1);
+    }
+
+    return behavior.defaultPriority;
+  }
+
+  /**
+   * Returns queue-specific priority behavior configuration.
+   */
+  getQueueBehavior(queueName: string): QueuePriorityBehavior {
+    return getQueuePriorityBehavior(queueName);
+  }
+
+  /**
+   * Verifies that the caller has sufficient privileges for the requested priority level.
+   * Rejects non-admin assignment of critical priority with 403 Forbidden.
+   */
+  validatePriorityAuthorization(
+    priority?: JobPriorityLevel | string,
+    user?: { role?: string } | null,
+  ): void {
+    assertAuthorizedJobPriority(priority, user);
   }
 
   private getBoolean(key: string, fallback: boolean): boolean {
