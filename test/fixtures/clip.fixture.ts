@@ -5,6 +5,9 @@ export type SupportedClipStatus =
   | 'pending'
   | 'processing'
   | 'completed'
+  | 'success'
+  | 'upload_failed'
+  | 'upload_processed'
   | 'failed'
   | 'cancelled';
 
@@ -69,7 +72,9 @@ export function buildClipList(
   ];
 
   return Array.from({ length: count }, (_, i) => {
-    const createdAt = new Date(Date.now() - i * 30_000); // 30 seconds apart
+    const createdAt = new Date(
+      new Date('2026-01-15T10:05:00.000Z').getTime() - i * 30_000,
+    );
     return buildClip({
       id: i + 1,
       videoId: Math.floor(i / 5) + 1, // Group clips by video
@@ -142,7 +147,9 @@ export function buildClipRecordList(
   ];
 
   return Array.from({ length: count }, (_, i) => {
-    const createdAt = new Date(Date.now() - i * 30_000); // 30 seconds apart
+    const createdAt = new Date(
+      new Date('2026-01-15T10:05:00.000Z').getTime() - i * 30_000,
+    );
     return buildClipRecord({
       id: i + 1,
       videoId: Math.floor(i / 5) + 1,
@@ -248,6 +255,13 @@ export function buildClipWithNftStatus(
   });
 }
 
+export function buildClipRecordWithNftStatus(
+  nftStatus: SupportedNftStatus,
+  overrides: Record<string, unknown> = {},
+) {
+  return buildClipWithNftStatus(nftStatus, overrides);
+}
+
 /**
  * Build a Clip record with post status (e.g., for social media platforms).
  * Useful for testing social media posting workflows.
@@ -313,17 +327,18 @@ export function buildClipWithMultipleEarnings(
   overrides: Record<string, unknown> = {},
 ) {
   const baseDate = new Date('2026-01-15T00:00:00.000Z');
+  const sources = ['royalty', 'subscription', 'ad'];
   const earnings = Array.from({ length: earningCount }, (_, i) => ({
     id: i + 1,
     clipId: 1,
-    amount: Math.random() * 50,
+    amount: 12.5 + i * 7.25,
     currency: 'USD',
-    amountInBaseCurrency: Math.random() * 50,
+    amountInBaseCurrency: 12.5 + i * 7.25,
     exchangeRate: 1.0,
     date: new Date(baseDate.getTime() + i * 24 * 60 * 60 * 1000),
-    source: ['royalty', 'subscription', 'ad'][Math.floor(Math.random() * 3)],
-    isAnomaly: Math.random() > 0.8,
-    anomalyReason: Math.random() > 0.8 ? 'Unusual spike' : null,
+    source: sources[i % sources.length],
+    isAnomaly: i % 5 === 4,
+    anomalyReason: i % 5 === 4 ? 'Unusual spike' : null,
     createdAt: new Date(baseDate.getTime() + i * 24 * 60 * 60 * 1000),
     deletedAt: null,
   }));
