@@ -24,6 +24,17 @@ pub enum ContractError {
     AlreadyExists = 7,
     /// Wallet does not hold enough for the operation. → 400
     InsufficientBalance = 8,
+    /// `claim_royalties` found nothing owed for the token (also what a second
+    /// claim in a row returns, because the first one reset the balance).
+    NoRoyaltiesToClaim = 9,
+    /// A royalty operation needs the payment asset, but `set_royalty_asset`
+    /// has not been called.
+    RoyaltyAssetNotSet = 10,
+    InvalidAmount = 11,
+    /// `migrate` was called on storage that is already at the current schema.
+    AlreadyMigrated = 12,
+    /// A checked counter or balance operation overflowed.
+    Overflow = 13,
     /// Mint or transfer attempted while the contract is paused.
     ContractPaused = 9,
     /// pause() called when a pause is already active or pending.
@@ -63,6 +74,11 @@ impl core::fmt::Display for ContractError {
             ContractError::NotFound => write!(f, "Not found"),
             ContractError::AlreadyExists => write!(f, "Already exists"),
             ContractError::InsufficientBalance => write!(f, "Insufficient balance"),
+            ContractError::NoRoyaltiesToClaim => write!(f, "No royalties to claim"),
+            ContractError::RoyaltyAssetNotSet => write!(f, "Royalty asset not set"),
+            ContractError::InvalidAmount => write!(f, "Invalid amount"),
+            ContractError::AlreadyMigrated => write!(f, "Already migrated"),
+            ContractError::Overflow => write!(f, "Arithmetic overflow"),
             ContractError::ContractPaused => write!(f, "Contract is paused"),
             ContractError::AlreadyPaused => write!(f, "Contract is already paused"),
             ContractError::NotPaused => write!(f, "Contract is not paused"),
