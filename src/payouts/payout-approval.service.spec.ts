@@ -33,4 +33,22 @@ describe('PayoutApprovalService', () => {
 
     expect(service.resolveInitialStatus(500)).toBe('under_review');
   });
+
+  it('allows approval only from review states', () => {
+    const service = new PayoutApprovalService();
+    expect(service.canApprove('under_review')).toBe(true);
+    expect(service.canApprove('pending_review')).toBe(true);
+    expect(service.canApprove('pending_approval')).toBe(true);
+    expect(service.canApprove('approved')).toBe(false);
+    expect(service.canApprove('completed')).toBe(false);
+  });
+
+  it('allows rejection only before approval', () => {
+    const service = new PayoutApprovalService();
+    expect(service.canReject('under_review')).toBe(true);
+    expect(service.canReject('pending_review')).toBe(true);
+    expect(service.canReject('pending_approval')).toBe(true);
+    expect(service.canReject('approved')).toBe(false);
+    expect(service.canReject('completed')).toBe(false);
+  });
 });

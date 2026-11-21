@@ -13,9 +13,9 @@ export class MonthlySummaryService {
     this.logger.log('Starting monthly earnings summary generation');
 
     const now = new Date();
-    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const year = lastMonth.getFullYear();
-    const month = lastMonth.getMonth() + 1;
+    const lastMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const year = lastMonth.getUTCFullYear();
+    const month = lastMonth.getUTCMonth() + 1;
 
     try {
       const users = await this.prisma.user.findMany({
@@ -39,8 +39,8 @@ export class MonthlySummaryService {
     year: number,
     month: number,
   ): Promise<void> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 1);
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 1));
 
     const earnings = await this.prisma.earning.findMany({
       where: {
@@ -56,11 +56,7 @@ export class MonthlySummaryService {
         deletedAt: null,
       },
       include: {
-        clip: {
-          select: {
-            platform: true,
-          },
-        },
+        clip: { select: { platform: true } },
       },
     });
 
@@ -68,37 +64,36 @@ export class MonthlySummaryService {
       return;
     }
 
-    const totalAmount = earnings.reduce((sum, e) => sum + e.amount, 0);
-    const platformBreakdown: Record<string, number> = {};
-
+    const buckets = new Map<string, { total: number; platforms: Record<string, number> }>();
     for (const earning of earnings) {
-      const platform = earning.clip.platform || 'unknown';
-      platformBreakdown[platform] =
-        (platformBreakdown[platform] || 0) + earning.amount;
+      const currency = String(earning.currency || 'USD').toUpperCase();
+      const bucket = buckets.get(currency) ?? { total: 0, platforms: {} };
+      const platform = earning.source || earning.clip.platform || 'unknown';
+      bucket.total += earning.amount;
+      bucket.platforms[platform] = (bucket.platforms[platform] || 0) + earning.amount;
+      buckets.set(currency, bucket);
     }
 
-    await this.prisma.monthlyEarning.upsert({
-      where: {
-        userId_year_month: {
+    for (const [currency, bucket] of buckets) {
+      await this.prisma.monthlyEarning.upsert({
+        where: {
+          userId_year_month_currency: { userId, year, month, currency },
+        },
+        create: {
           userId,
           year,
           month,
+          totalAmount: bucket.total,
+          currency,
+          platformBreakdown: bucket.platforms,
         },
-      },
-      create: {
-        userId,
-        year,
-        month,
-        totalAmount,
-        currency: 'USD',
-        platformBreakdown,
-      },
-      update: {
-        totalAmount,
-        platformBreakdown,
-        updatedAt: new Date(),
-      },
-    });
+        update: {
+          totalAmount: bucket.total,
+          platformBreakdown: bucket.platforms,
+          updatedAt: new Date(),
+        },
+      });
+    }
 
     this.logger.log(
       `Generated monthly summary for user ${userId}: ${year}-${month}`,

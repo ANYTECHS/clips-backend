@@ -440,6 +440,7 @@ export class EarningsAggregationService {
     };
   }
 
+  async getMonthlySummary(userId: number, year: number, month: number, currency?: string) {
   async getMonthlySummary(
     userId: number,
     year: number,
@@ -454,6 +455,24 @@ export class EarningsAggregationService {
     if (!Number.isInteger(month) || month < 1 || month > 12) {
       throw new BadRequestException('Invalid month. Use 1-12.');
     }
+    const normalizedCurrency = currency?.trim().toUpperCase();
+    const summaries = await this.prisma.monthlyEarning.findMany({
+      where: {
+        userId,
+        year,
+        month,
+        ...(normalizedCurrency ? { currency: normalizedCurrency } : {}),
+      },
+      orderBy: { currency: 'asc' },
+    });
+    if (summaries.length === 0) {
+      // Fallback: compute live from period (UTC) when cron has not run yet
+      const from = new Date(Date.UTC(year, month - 1, 1));
+      const earnings = await this.prisma.earning.findMany({
+        where: {
+          clip: { video: { userId } },
+          date: { gte: from, lt: new Date(Date.UTC(year, month, 1)) },
+          deletedAt: null,
     const normalizedCurrency = currency?.toUpperCase();
     const currencyFilter = normalizedCurrency
       ? { currency: normalizedCurrency }
@@ -477,6 +496,28 @@ export class EarningsAggregationService {
         select: {
           amount: true,
           currency: true,
+          source: true,
+          clip: { select: { platform: true } },
+        },
+      });
+      const buckets = new Map<string, { total: number; platforms: Record<string, number> }>();
+      for (const earning of earnings) {
+        const earningCurrency = String(earning.currency || 'USD').toUpperCase();
+        if (normalizedCurrency && earningCurrency !== normalizedCurrency) continue;
+        const bucket = buckets.get(earningCurrency) ?? { total: 0, platforms: {} };
+        const platform = earning.source || earning.clip?.platform || 'unknown';
+        bucket.total += earning.amount;
+        bucket.platforms[platform] = (bucket.platforms[platform] || 0) + earning.amount;
+        buckets.set(earningCurrency, bucket);
+      }
+      const live = [...buckets.entries()].map(([itemCurrency, bucket]) => ({
+        id: 0,
+        userId,
+        year,
+        month,
+        totalAmount: bucket.total,
+        currency: itemCurrency,
+        platformBreakdown: bucket.platforms,
           clip: { select: { platform: true } },
         },
       });
@@ -515,8 +556,15 @@ export class EarningsAggregationService {
             platformBreakdown: roundBreakdown(bucket.platformBreakdown),
           })),
         generated: false,
+      }));
+      return {
+        summaries: live,
+        filters: { year, month, currency: normalizedCurrency ?? null },
       };
     }
+    return {
+      summaries: summaries.map((summary) => ({ ...summary, generated: true })),
+      filters: { year, month, currency: normalizedCurrency ?? null },
 
     return {
       userId,

@@ -262,6 +262,25 @@ export class PayoutsController {
     type: PayoutResponseDto,
   })
   @ApiBadRequestResponse({
+    description: 'Amount below minimum or above maximum for USD',
+    content: {
+      'application/json': {
+        examples: {
+          belowMinimum: payoutError(
+            400,
+            'Bad Request',
+            'Minimum payout for USD is 5. Requested amount: 3.',
+          ),
+          aboveMaximum: payoutError(
+            400,
+            'Bad Request',
+            'Maximum payout for USD is 10000. Requested amount: 12000.',
+          ),
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({
     description:
       'Invalid amount, insufficient balance, or validation failed',
     schema: {

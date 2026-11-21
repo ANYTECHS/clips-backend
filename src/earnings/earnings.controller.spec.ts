@@ -27,6 +27,7 @@ describe('EarningsController', () => {
     getMonthlySummary: jest.fn(),
     getLeaderboard: jest.fn(),
     softDelete: jest.fn(),
+    getMonthlySummary: jest.fn(),
   };
 
   const mockEarningsExportService = {

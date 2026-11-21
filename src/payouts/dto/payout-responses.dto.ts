@@ -67,6 +67,13 @@ export class PayoutResponseDto {
   approvedBy?: number | null;
 
   @ApiPropertyOptional({
+    example: 7,
+    description: 'Admin user ID who performed the last approval or rejection',
+    nullable: true,
+  })
+  reviewedBy?: number | null;
+
+  @ApiPropertyOptional({
     example: 'Insufficient documentation',
     description: 'Rejection reason when status is rejected',
     nullable: true,
