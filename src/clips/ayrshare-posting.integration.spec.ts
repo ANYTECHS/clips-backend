@@ -5,7 +5,7 @@
  *  - Mocks the Ayrshare SDK and processes jobs end-to-end
  *  - Handles multi-platform posting (success + partial failure)
  *  - Persists results to the DB via Prisma
- *  - Retries on failure and gives up gracefully on final attempt
+ *  - Retries on failure and marks exhausted jobs permanently failed
  */
 
 import { Test, TestingModule } from '@nestjs/testing';
@@ -14,13 +14,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AyrshareService } from './ayrshare.service';
 import { UserPlatformService } from '../user-platform/user-platform.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
+import { ClipPublishService } from './clip-publish.service';
 import type { Job } from 'bullmq';
 import type { ClipPostingJob } from './clip-posting.queue';
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 const mockPrisma = {
-  clipPost: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+  clip: { findUnique: jest.fn() },
+  clipPost: {
+    findMany: jest.fn(),
+    updateMany: jest.fn(),
+    upsert: jest.fn(),
+    create: jest.fn(),
+  },
 };
 
 const mockAyrshare = { post: jest.fn() };
@@ -32,6 +40,14 @@ const mockMetrics = {
   recordJobCompletion: jest.fn(),
   recordJobFailure: jest.fn(),
 };
+
+const mockShutdown = { register: jest.fn() };
+const mockPostingQueue = { add: jest.fn() };
+const mockQueueOverflow = { enqueue: jest.fn() };
+const mockConfig = {
+  get: jest.fn((_key: string, fallback?: string) => fallback),
+};
+let persistedPosts: Array<Record<string, any>>;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -63,6 +79,48 @@ describe('Ayrshare posting queue — integration', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    persistedPosts = [];
+    mockPrisma.clip.findUnique.mockResolvedValue({
+      id: 42,
+      video: { userId: 7 },
+      clipUrl: 'https://cdn.example.com/clip-42.mp4',
+      caption: '#viral clip',
+      title: 'Clip 42',
+    });
+    mockPrisma.clipPost.upsert.mockRejectedValue(
+      new Error('create pending row'),
+    );
+    mockPrisma.clipPost.create.mockImplementation(({ data }) => {
+      persistedPosts.push({ ...data });
+      return Promise.resolve(data);
+    });
+    mockPrisma.clipPost.findMany.mockImplementation(({ where }) =>
+      Promise.resolve(
+        persistedPosts
+          .filter(
+            (post) =>
+              post.clipId === where.clipId &&
+              where.platform.in.includes(post.platform),
+          )
+          .map(({ platform, status }) => ({ platform, status })),
+      ),
+    );
+    mockPrisma.clipPost.updateMany.mockImplementation(({ where, data }) => {
+      const post = persistedPosts.find(
+        (candidate) =>
+          candidate.clipId === where.clipId &&
+          candidate.platform === where.platform,
+      );
+      if (post) Object.assign(post, data);
+      return Promise.resolve({ count: post ? 1 : 0 });
+    });
+    mockPostingQueue.add.mockResolvedValue({ id: 'post-job-42' });
+    mockQueueOverflow.enqueue.mockImplementation(
+      async ({ queue, jobName, data, baseOptions }) => {
+        const job = await queue.add(jobName, data, baseOptions);
+        return { jobId: job.id, delayed: false, delayMs: 0 };
+      },
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -71,10 +129,70 @@ describe('Ayrshare posting queue — integration', () => {
         { provide: AyrshareService, useValue: mockAyrshare },
         { provide: UserPlatformService, useValue: mockUserPlatformService },
         { provide: MetricsService, useValue: mockMetrics },
+        { provide: GracefulShutdownService, useValue: mockShutdown },
       ],
     }).compile();
 
     processor = module.get(ClipPostingProcessor);
+  });
+
+  it('creates a posting job, processes selected platforms, and persists success', async () => {
+    mockUserPlatformService.findAll.mockResolvedValue([
+      { platform: 'tiktok' },
+      { platform: 'instagram' },
+      { platform: 'youtube' },
+    ]);
+    mockAyrshare.post.mockResolvedValue([
+      { platform: 'tiktok', success: true, postId: 'tt-42' },
+      { platform: 'instagram', success: true, postId: 'ig-42' },
+    ]);
+    const publishService = new ClipPublishService(
+      mockPrisma as any,
+      mockUserPlatformService as any,
+      mockPostingQueue as any,
+      mockQueueOverflow as any,
+      mockConfig as any,
+    );
+
+    const accepted = await publishService.publish(42, 7, [
+      'tiktok',
+      'instagram',
+    ]);
+    const [jobName, jobData, jobOptions] = mockPostingQueue.add.mock.calls[0];
+    await processor.process(
+      makeJob(jobData, {
+        id: 'post-job-42',
+        opts: jobOptions,
+      } as any),
+    );
+
+    expect(accepted).toEqual({
+      clipId: 42,
+      jobId: 'post-job-42',
+      status: 'queued',
+      platforms: ['tiktok', 'instagram'],
+    });
+    expect(jobName).toBe('post-clip');
+    expect(mockAyrshare.post).toHaveBeenCalledWith(
+      'https://cdn.example.com/clip-42.mp4',
+      '#viral clip',
+      ['tiktok', 'instagram'],
+    );
+    expect(persistedPosts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          platform: 'tiktok',
+          status: 'published',
+          postId: 'tt-42',
+        }),
+        expect.objectContaining({
+          platform: 'instagram',
+          status: 'published',
+          postId: 'ig-42',
+        }),
+      ]),
+    );
+    expect(persistedPosts).toHaveLength(2);
   });
 
   // ── No connected platforms ─────────────────────────────────────────────────
@@ -156,25 +274,34 @@ describe('Ayrshare posting queue — integration', () => {
     expect(mockPrisma.clipPost.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { clipId: 42, platform: 'instagram' },
-        data: expect.objectContaining({ status: 'failed', error: 'rate limited' }),
+        data: expect.objectContaining({
+          status: 'failed',
+          error: 'rate limited',
+        }),
       }),
     );
   });
 
   // ── Final attempt — no more retries ───────────────────────────────────────
 
-  it('does not throw on final attempt even when platforms fail', async () => {
+  it('throws an unrecoverable error on the final attempt', async () => {
     mockUserPlatformService.findAll.mockResolvedValue([{ platform: 'tiktok' }]);
     mockAyrshare.post.mockResolvedValue([
       { platform: 'tiktok', success: false, error: 'account suspended' },
     ]);
 
-    const job = makeJob({ platforms: ['tiktok'] }, { attemptsMade: 4, opts: { attempts: 5 } } as any);
-    await expect(processor.process(job)).resolves.toBeUndefined();
+    const job = makeJob({ platforms: ['tiktok'] }, {
+      attemptsMade: 4,
+      opts: { attempts: 5 },
+    } as any);
+    await expect(processor.process(job)).rejects.toThrow(/No retries remain/);
 
     expect(mockPrisma.clipPost.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ status: 'failed', error: 'account suspended' }),
+        data: expect.objectContaining({
+          status: 'failed',
+          error: 'account suspended',
+        }),
       }),
     );
   });
