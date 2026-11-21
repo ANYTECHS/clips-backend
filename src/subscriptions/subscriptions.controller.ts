@@ -29,6 +29,7 @@ import { StellarPaymentService } from './stellar-payment.service';
 import {
   CreateStellarSubscriptionDto,
   StellarPaymentIntentDto,
+  VerifyStellarPaymentQueryDto,
 } from './dto/create-stellar-subscription.dto';
 import { Auth } from '../auth/decorators/auth.decorator';
 
@@ -192,12 +193,11 @@ export class SubscriptionsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @HttpCode(HttpStatus.OK)
   async verifyStellarPayment(
-    @Query('paymentIntentId') paymentIntentId: string,
-    @Query('transactionHash') transactionHash: string,
+    @Query() query: VerifyStellarPaymentQueryDto,
   ) {
     const verified = await this.stellarPaymentService.verifyPayment(
-      paymentIntentId,
-      transactionHash,
+      query.paymentIntentId,
+      query.transactionHash,
     );
     return { verified };
   }

@@ -21,6 +21,7 @@ import {
   RoyaltyBreakdownResponse,
   RoyaltyPaidEventResponse,
 } from './dto/prepare-transfer.dto';
+import { ContractPauseService } from '../blockchain/contract-pause.service';
 
 /**
  * A single royalty recipient entry.
@@ -73,6 +74,7 @@ export class NftService {
     private readonly config: NftConfig,
     @Optional() private readonly clipsService?: ClipsService,
     @Optional() private readonly gasMetricsService?: GasMetricsService,
+    @Optional() private readonly contractPauseService?: ContractPauseService,
   ) {}
 
   /**
@@ -116,6 +118,10 @@ export class NftService {
    */
   async mintClip(dto: CreateMintDto): Promise<MintResult> {
     this.validateConfig();
+
+    if (this.contractPauseService) {
+      await this.contractPauseService.assertNotPaused();
+    }
 
     const existing = this.clipMintStatus.get(dto.clipId);
     if (existing?.nftStatus === 'minted' || existing?.mintAddress) {

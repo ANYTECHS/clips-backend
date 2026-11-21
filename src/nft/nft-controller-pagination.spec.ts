@@ -244,4 +244,33 @@ describe('NftController - Paginated User Tokens (Issue #704)', () => {
       expect(page3.nextCursor).toBe(60);
     });
   });
+
+  describe('GET /nfts/wallet/:address (Issue #1330)', () => {
+    it('is served by the same handler as /nfts/wallets/:address/nfts', () => {
+      const paths = Reflect.getMetadata(
+        'path',
+        NftController.prototype.getWalletNfts,
+      );
+      expect(paths).toEqual(
+        expect.arrayContaining(['/wallets/:address/nfts', 'wallet/:address']),
+      );
+    });
+
+    it('returns an empty page for a wallet with no NFTs', async () => {
+      const ownershipService = {
+        getUserTokensPaginated: jest.fn().mockResolvedValue({
+          tokenIds: [],
+          nextCursor: null,
+          total: 0,
+        }),
+      };
+      const controller = await makeController(ownershipService);
+
+      const result = await controller.getWalletNfts(VALID_ADDRESS, {});
+
+      expect(result.tokenIds).toEqual([]);
+      expect(result.nextCursor).toBeNull();
+      expect(result.total).toBe(0);
+    });
+  });
 });

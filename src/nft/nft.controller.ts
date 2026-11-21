@@ -40,6 +40,7 @@ import {
   QueueRateLimitGuard,
   QueueRateLimit,
 } from '../common/guards/queue-rate-limit.guard';
+import { ParseStellarAddressPipe } from '../common/pipes';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
@@ -309,17 +310,20 @@ export class NftController {
     return { id, exists };
   }
 
-  @Get('/wallets/:address/nfts')
+  @Get(['/wallets/:address/nfts', 'wallet/:address'])
   @ApiOperation({
-    summary: 'Get paginated NFTs owned by a wallet (Issue #838)',
+    summary: 'Get paginated NFTs owned by a wallet (Issues #838, #1330)',
     description:
       'Calls on-chain get_user_tokens(owner, limit, cursor) when available, with a safe ' +
       'ledger fallback. Returns token IDs plus nextCursor for large collections without ' +
-      'loading the entire owner vector into the API response.',
+      'loading the entire owner vector into the API response. Also served at ' +
+      'GET /nfts/wallet/:address. A wallet with no NFTs returns an empty tokenIds array, ' +
+      'total 0 and nextCursor null. The cursor is an offset, so it is only reliable while ' +
+      "the wallet's holdings do not change between pages.",
   })
   @ApiParam({
     name: 'address',
-    description: 'Stellar wallet address',
+    description: '56-character Stellar G... wallet address',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @ApiQuery({
@@ -340,16 +344,12 @@ export class NftController {
     type: PaginatedUserTokensResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Invalid wallet address or pagination parameters',
+    description: 'Invalid Stellar wallet address or pagination parameters',
   })
   async getWalletNfts(
-    @Param('address') address: string,
+    @Param('address', ParseStellarAddressPipe) address: string,
     @Query() query: GetUserTokensQueryDto,
   ): Promise<PaginatedUserTokensResponseDto> {
-    if (!address || address.length !== 56 || !address.startsWith('G')) {
-      throw new BadRequestException('Invalid Stellar wallet address');
-    }
-
     const limit = query.limit ?? 20;
     const cursor = query.cursor ?? 0;
 

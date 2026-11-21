@@ -39,8 +39,10 @@ import {
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { VideoUploadMetadataDto, SUPPORTED_VIDEO_FORMATS, VIDEO_TITLE_MAX, VIDEO_DESCRIPTION_MAX } from './dto/video-upload-metadata.dto';
 
-const ALLOWED_EXTENSIONS = ['.mp4', '.mov', '.avi', '.webm'];
+
+const ALLOWED_EXTENSIONS = SUPPORTED_VIDEO_FORMATS.map((f) => `.${f}`);
 const ALLOWED_MIME_TYPES = [
   'video/mp4',
   'video/quicktime',
@@ -82,8 +84,12 @@ export class VideoUploadController {
         },
         title: {
           type: 'string',
+          maxLength: VIDEO_TITLE_MAX,
           description: 'Optional title for the video. Defaults to the original filename.',
         },
+        description: { type: 'string', maxLength: VIDEO_DESCRIPTION_MAX, description: 'Optional description' },
+        format: { type: 'string', enum: [...SUPPORTED_VIDEO_FORMATS], description: 'Optional declared format' },
+        sourceUrl: { type: 'string', format: 'uri', description: 'Optional http(s) source URL' },
       },
       required: ['file'],
     },
@@ -154,7 +160,7 @@ export class VideoUploadController {
   )
   async uploadVideo(
     @UploadedFile() file: any,
-    @Body('title') title: string | undefined,
+    @Body() metadata: VideoUploadMetadataDto,
     @Req() req: any,
   ): Promise<UploadVideoResponseDto> {
     if (!file) {
@@ -179,7 +185,7 @@ export class VideoUploadController {
         file.path,
         file.originalname,
         userId,
-        title,
+        metadata.title,
       );
       return {
         jobId: result.jobId,

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsStellarTransactionHash } from '../../common/validators/decorators';
 
 /** Supported tracked Soroban / Stellar transaction statuses (Issue #846). */
 export enum TransactionStatus {
@@ -14,8 +15,7 @@ export class TrackTransactionDto {
     description: 'Stellar / Soroban transaction hash to track',
     example: 'a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456',
   })
-  @IsString()
-  @IsNotEmpty()
+  @IsStellarTransactionHash()
   hash!: string;
 
   @ApiPropertyOptional({
