@@ -99,6 +99,17 @@ export class ClipsController {
       'Returns the BullMQ job ID immediately; processing happens asynchronously.',
   })
   @ApiResponse({
+    status: 201,
+    description:
+      'Clip generation job queued successfully. Processing is asynchronous; ' +
+      'the returned jobId identifies the BullMQ job and does not mean clips are ready.',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', example: 'clip-generation-123' },
+        status: { type: 'string', example: 'queued' },
+      },
+    },
     status: 202,
     description: 'Clip generation job accepted and queued for processing',
     schema: {
@@ -114,6 +125,28 @@ export class ClipsController {
   @ApiResponse({ status: 429, description: 'Too many active jobs (max 5)' })
   generate(@Body() dto: GenerateClipsDto) {
     return this.clipsService.enqueueClip(dto);
+  }
+
+  /**
+   * GET /clips/generate/:jobId/status
+   *
+   * Returns the current BullMQ state and progress for an asynchronous job.
+   */
+  @Get('generate/:jobId/status')
+  @ApiOperation({
+    summary: 'Get clip-generation job status',
+    description:
+      'Returns BullMQ state, retry count, progress, result, and failure details for a clip-generation job.',
+  })
+  @ApiParam({
+    name: 'jobId',
+    description: 'BullMQ job ID returned by POST /clips/generate',
+    type: String,
+  })
+  @ApiOkResponse({ description: 'Current asynchronous clip-generation job status' })
+  @ApiNotFoundResponse({ description: 'Clip-generation job not found' })
+  getGenerationStatus(@Param('jobId') jobId: string) {
+    return this.clipsService.getClipGenerationStatus(jobId);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

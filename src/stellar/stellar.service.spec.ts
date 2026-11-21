@@ -3,7 +3,20 @@ import { StellarService } from './stellar.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { CircuitBreakerService } from '../common/circuit-breaker/circuit-breaker.service';
 import { ServiceUnavailableException } from '../common/exceptions/service-unavailable.exception';
-import { Horizon } from '@stellar/stellar-sdk';
+import { Account, Horizon, TransactionBuilder } from '@stellar/stellar-sdk';
+import {
+  createMockAccount,
+  createMockHorizonError,
+  createMockHorizonTransactionResult,
+  mockHorizonServer,
+  mockTransaction,
+} from '../../test/mocks/stellar-sdk.mock';
+
+jest.mock('@stellar/stellar-sdk', () =>
+  jest.requireActual<typeof import('../../test/mocks/stellar-sdk.mock')>(
+    '../../test/mocks/stellar-sdk.mock',
+  ),
+);
 
 // Mock fetch for Horizon calls
 global.fetch = jest.fn();
@@ -29,6 +42,42 @@ describe('StellarService', () => {
 
     service = module.get<StellarService>(StellarService);
     circuitBreakerService = module.get<CircuitBreakerService>(CircuitBreakerService);
+  });
+
+  describe('shared Stellar SDK mock', () => {
+    it('builds and submits a transaction with a configurable Horizon result', async () => {
+      const transaction = new TransactionBuilder(new Account('GACCOUNT', '1'), {
+        fee: '100',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+      })
+        .addOperation({ type: 'payment' } as never)
+        .setTimeout(30)
+        .build();
+      const response = createMockHorizonTransactionResult({
+        hash: 'tx-success',
+      });
+      mockHorizonServer.submitTransaction.mockResolvedValueOnce(response);
+
+      const server = new Horizon.Server('https://horizon-testnet.stellar.org');
+
+      await expect(server.submitTransaction(transaction)).resolves.toBe(
+        response,
+      );
+      expect(transaction).toBe(mockTransaction);
+      expect(mockHorizonServer.submitTransaction).toHaveBeenCalledWith(
+        transaction,
+      );
+    });
+
+    it('supports failed transaction submissions', async () => {
+      const error = createMockHorizonError(400, 'Transaction rejected');
+      mockHorizonServer.submitTransaction.mockRejectedValueOnce(error);
+      const server = new Horizon.Server('https://horizon-testnet.stellar.org');
+
+      await expect(server.submitTransaction(mockTransaction)).rejects.toBe(
+        error,
+      );
+    });
   });
 
   afterEach(() => {
@@ -178,32 +227,23 @@ describe('StellarService', () => {
 
   describe('getWalletBalance', () => {
     const address = 'GC7OHFPWPSWXL4HMN6TXAG54MTZSMJIASWHO6KVRQNHNCXEAHWDSGGC3';
-    let loadAccountSpy: jest.SpyInstance;
-
-    afterEach(() => {
-      loadAccountSpy?.mockRestore();
-    });
 
     it('queries Horizon and warns when the native balance is below 2 XLM', async () => {
-      loadAccountSpy = jest
-        .spyOn(Horizon.Server.prototype, 'loadAccount')
-        .mockResolvedValue({
-          balances: [{ asset_type: 'native', balance: '1.9999999' }],
-        } as never);
+      mockHorizonServer.loadAccount.mockResolvedValueOnce(
+        createMockAccount(address, '1.9999999'),
+      );
 
       await expect(service.getWalletBalance(address)).resolves.toEqual({
         balance: 1.9999999,
         warning: true,
       });
-      expect(loadAccountSpy).toHaveBeenCalledWith(address);
+      expect(mockHorizonServer.loadAccount).toHaveBeenCalledWith(address);
     });
 
     it('does not warn when the native balance is exactly 2 XLM', async () => {
-      loadAccountSpy = jest
-        .spyOn(Horizon.Server.prototype, 'loadAccount')
-        .mockResolvedValue({
-          balances: [{ asset_type: 'native', balance: '2.0000000' }],
-        } as never);
+      mockHorizonServer.loadAccount.mockResolvedValueOnce(
+        createMockAccount(address, '2.0000000'),
+      );
 
       await expect(service.getWalletBalance(address)).resolves.toEqual({
         balance: 2,
@@ -211,13 +251,22 @@ describe('StellarService', () => {
       });
     });
 
-    it('rejects invalid addresses without querying Horizon', async () => {
-      loadAccountSpy = jest.spyOn(Horizon.Server.prototype, 'loadAccount');
+    it('surfaces Horizon failures without making a real network request', async () => {
+      mockHorizonServer.loadAccount.mockRejectedValueOnce(
+        createMockHorizonError(503, 'Horizon unavailable'),
+      );
 
+      await expect(service.getWalletBalance(address)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
+      expect(mockHorizonServer.loadAccount).toHaveBeenCalledWith(address);
+    });
+
+    it('rejects invalid addresses without querying Horizon', async () => {
       await expect(service.getWalletBalance('not-a-wallet')).rejects.toThrow(
         'Invalid Stellar address format',
       );
-      expect(loadAccountSpy).not.toHaveBeenCalled();
+      expect(mockHorizonServer.loadAccount).not.toHaveBeenCalled();
     });
   });
 

@@ -36,7 +36,9 @@ export function buildVideoList(
   overrides: Partial<Video> = {},
 ): Video[] {
   return Array.from({ length: count }, (_, i) => {
-    const createdAt = new Date(Date.now() - i * 60_000); // 60 seconds apart
+    const createdAt = new Date(
+      new Date('2026-01-15T10:00:00.000Z').getTime() - i * 60_000,
+    );
     return buildVideo({
       id: `video-fixture-${String(i + 1).padStart(3, '0')}`,
       userId: `user-fixture-${String((i % 3) + 1).padStart(3, '0')}`,
@@ -113,20 +115,24 @@ export function buildVideoRecordList(
     'Interview Session',
     'Tutorial',
   ];
+  const inputQuality = ['480p', '720p', '1080p', '4K'];
 
   return Array.from({ length: count }, (_, i) => {
-    const createdAt = new Date(Date.now() - i * 3_600_000); // 1 hour apart
+    const createdAt = new Date(
+      new Date('2026-01-15T10:00:00.000Z').getTime() - i * 3_600_000,
+    );
+    const duration = 1800 + i * 300;
     return buildVideoRecord({
       id: i + 1,
       userId: (i % 5) + 1, // Distribute across 5 users
       title: titles[i % titles.length],
-      duration: 1800 + i * 300, // Vary durations
+      duration,
       processingStats: {
-        momentsFound: 30 + Math.floor(Math.random() * 30),
-        inputQuality: ['480p', '720p', '1080p', '4K'][Math.floor(Math.random() * 4)],
-        durationSec: 1800 + i * 300,
-        clipsGenerated: 25 + Math.floor(Math.random() * 20),
-        timeTakenMs: 60_000 + Math.floor(Math.random() * 120_000),
+        momentsFound: 30 + (i % 30),
+        inputQuality: inputQuality[i % inputQuality.length],
+        durationSec: duration,
+        clipsGenerated: 25 + (i % 20),
+        timeTakenMs: 60_000 + (i % 12) * 10_000,
       },
       createdAt,
       updatedAt: new Date(createdAt.getTime() + 5 * 60_000),

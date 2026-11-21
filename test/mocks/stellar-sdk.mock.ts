@@ -17,8 +17,8 @@
  * Usage in a spec file (from test/ directory):
  *   jest.mock('@stellar/stellar-sdk', () => require('./mocks/stellar-sdk.mock'));
  *
- * Usage from src/ specs (rootDir = src):
- *   jest.mock('@stellar/stellar-sdk', () => require('../test/mocks/stellar-sdk.mock'));
+ * Usage from nested src/ specs (rootDir = src):
+ *   jest.mock('@stellar/stellar-sdk', () => require('../../test/mocks/stellar-sdk.mock'));
  *
  * Resetting mocks between tests:
  *   beforeEach(() => jest.clearAllMocks());
@@ -248,10 +248,68 @@ export function createMockAccount(publicKey = 'GMOCK_ACCOUNT', xlmBalance = '100
   };
 }
 
+/**
+ * Create a successful Horizon transaction response for transaction lookups.
+ */
+export function createMockHorizonTransactionResult(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    successful: true,
+    created_at: '2024-01-01T00:00:00Z',
+    hash: 'mock-horizon-tx-hash',
+    ledger: 1000,
+    envelope_xdr: 'mock-envelope-xdr',
+    result_xdr: 'mock-result-xdr',
+    result_meta_xdr: 'mock-result-meta-xdr',
+    ...overrides,
+  };
+}
+
+function isValidEd25519PublicKey(address: string): boolean {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  if (!/^G[A-Z2-7]{55}$/.test(address)) {
+    return false;
+  }
+
+  let accumulator = 0;
+  let bits = 0;
+  const decoded: number[] = [];
+  for (const character of address) {
+    const value = alphabet.indexOf(character);
+    if (value < 0) {
+      return false;
+    }
+
+    accumulator = (accumulator << 5) | value;
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      decoded.push((accumulator >> bits) & 0xff);
+    }
+  }
+
+  if (decoded.length !== 35 || decoded[0] !== 48) {
+    return false;
+  }
+
+  let checksum = 0;
+  for (const byte of decoded.slice(0, 33)) {
+    checksum ^= byte << 8;
+    for (let bit = 0; bit < 8; bit += 1) {
+      checksum = checksum & 0x8000 ? (checksum << 1) ^ 0x1021 : checksum << 1;
+      checksum &= 0xffff;
+    }
+  }
+
+  return decoded[33] === (checksum & 0xff) && decoded[34] === checksum >> 8;
+}
+
 // ── Main mock object (default export shape) ───────────────────────────────────
 
 const StellarSdkMock = {
   __esModule: true,
+  default: undefined as unknown,
 
   // Soroban RPC
   rpc: {
@@ -327,7 +385,7 @@ const StellarSdkMock = {
 
   // StrKey
   StrKey: {
-    isValidEd25519PublicKey: jest.fn((addr: string) => /^G[A-Z2-7]{55}$/.test(addr)),
+    isValidEd25519PublicKey: jest.fn(isValidEd25519PublicKey),
     isValidEd25519SecretSeed: jest.fn((seed: string) => /^S[A-Z2-7]{55}$/.test(seed)),
     encodeEd25519PublicKey: jest.fn().mockReturnValue('GMOCK_ENCODED_KEY'),
     decodeEd25519PublicKey: jest.fn().mockReturnValue(Buffer.from('mock-decoded-key')),
@@ -381,5 +439,26 @@ const StellarSdkMock = {
 
 // Asset.native needs to be a static method on the mock
 (StellarSdkMock.Asset as any).native = jest.fn().mockReturnValue({ code: 'XLM', issuer: null });
+
+Object.assign(StellarSdkMock, {
+  default: StellarSdkMock,
+  mockStellarSdk: StellarSdkMock,
+  mockTransaction,
+  mockTransactionBuilder,
+  mockRpcServer,
+  mockHorizonServer,
+  mockContract,
+  mockScVal,
+  mockAddress,
+  mockKeypair,
+  createMockHorizonError,
+  createMockStellarError,
+  createMockSimulateSuccess,
+  createMockSimulateFailure,
+  createMockAccount,
+  createMockHorizonTransactionResult,
+});
+
+export const mockStellarSdk = StellarSdkMock;
 
 module.exports = StellarSdkMock;

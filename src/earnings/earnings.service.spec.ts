@@ -82,6 +82,32 @@ describe('EarningsService', () => {
       expect(result.totalPaidOut).toBe(80);
       expect(result.availableBalance).toBe(120);
       expect(cache.setSummary).toHaveBeenCalled();
+      expect(prisma.earning.aggregate).toHaveBeenCalledWith({
+        where: { clip: { video: { userId: 1 } }, deletedAt: null },
+        _sum: { amountInBaseCurrency: true },
+      });
+      expect(prisma.payout.aggregate).toHaveBeenCalledWith({
+        where: { userId: 1, status: { in: ['completed', 'processing'] } },
+        _sum: { amount: true },
+      });
+    });
+
+    it('calculates totals and available balance for multiple clips and payouts', async () => {
+      prisma.earning.aggregate.mockResolvedValue({
+        _sum: { amountInBaseCurrency: 1842.75 },
+      });
+      prisma.payout.aggregate.mockResolvedValue({
+        _sum: { amount: 642.25 },
+      });
+
+      const result = await service.getUserTotalEarnings(27);
+
+      expect(result).toEqual({
+        totalEarned: 1842.75,
+        totalPaidOut: 642.25,
+        availableBalance: 1200.5,
+        currency: 'USD',
+      });
     });
   });
 
@@ -142,13 +168,6 @@ describe('EarningsService', () => {
         source: 'test',
       });
 
-      expect(redis.del).toHaveBeenCalledWith('earnings:total:5', 'earnings:user:5:total');
-      expect(eventEmitter.emit).toHaveBeenCalledWith('earnings.updated', {
-        userId: 5,
-        earningId: 10,
-        amount: 150,
-        currency: 'USD',
-      });
       expect(cache.invalidate).toHaveBeenCalledWith(42);
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'earnings.updated',

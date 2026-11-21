@@ -22,7 +22,11 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { buildPaginationArgs, clipListSelect } from '../prisma/query-helpers';
 import { CloudinaryService } from './cloudinary.service';
-import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
+import {
+  CLIP_GENERATION_JOB,
+  CLIP_GENERATION_JOB_OPTIONS,
+  CLIP_GENERATION_QUEUE,
+} from './clip-generation.queue';
 import {
   isClipPosted,
   POSTED_CLIP_MINT_ERROR,
@@ -728,8 +732,62 @@ export class ClipsService {
   }
 
   async enqueueClip(dto: any) {
-    // This would integrate with the BullMQ clip generation queue
-    throw new Error('Method not implemented');
+    if (!this.clipQueue) {
+      throw new Error('Clip generation queue is unavailable');
+    }
+
+    if (
+      !dto ||
+      typeof dto.videoId !== 'string' ||
+      !dto.videoId.trim() ||
+      typeof dto.inputPath !== 'string' ||
+      !dto.inputPath.trim() ||
+      typeof dto.outputPath !== 'string' ||
+      !dto.outputPath.trim()
+    ) {
+      throw new BadRequestException('videoId, inputPath, and outputPath are required');
+    }
+
+    if (
+      typeof dto.startTime !== 'number' ||
+      typeof dto.endTime !== 'number' ||
+      dto.startTime < 0 ||
+      dto.endTime <= dto.startTime
+    ) {
+      throw new BadRequestException('startTime and endTime must define a valid clip range');
+    }
+
+    const job = await this.clipQueue.add(
+      CLIP_GENERATION_JOB,
+      dto,
+      CLIP_GENERATION_JOB_OPTIONS,
+    );
+
+    this.logger.log(`Enqueued clip generation job ${job.id} for video ${dto.videoId}`);
+    return {
+      jobId: String(job.id),
+      status: 'queued',
+    };
+  }
+
+  async getClipGenerationStatus(jobId: string) {
+    if (!this.clipQueue) {
+      throw new Error('Clip generation queue is unavailable');
+    }
+
+    const job = await this.clipQueue.getJob(jobId);
+    if (!job) {
+      throw new NotFoundException(`Clip generation job ${jobId} not found`);
+    }
+
+    return {
+      jobId,
+      state: await job.getState(),
+      attemptsMade: job.attemptsMade,
+      failedReason: job.failedReason,
+      result: job.returnvalue,
+      progress: await job.getProgress(),
+    };
   }
 
   /**

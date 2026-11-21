@@ -44,6 +44,12 @@ import {
   LeaderboardResponseDto,
   LeaderboardVisibilityDto,
 } from './dto/leaderboard.dto';
+import {
+  EarningsDashboardDto,
+  EarningsPeriodResponseDto,
+  EarningsSummaryDto,
+} from './dto/earnings-response.dto';
+import { EarningsByPlatformResponseDto } from './dto/earnings-by-platform.dto';
 import { MonthlyEarningsResponseDto } from './dto/monthly-earnings-response.dto';
 import {
   MonthlyEarningsQueryDto,
@@ -86,12 +92,6 @@ export class EarningsController {
       'Also used as the REST companion for live dashboard totals; ' +
       'subscribe to WebSocket namespace `/earnings` for `earnings.updated` events ' +
       'with payload `{ event, userId, currency, amount, total }` (JWT via handshake.auth.token).',
-    summary: 'Get user earnings total',
-    description:
-      'Returns total earnings for the authenticated user. ' +
-      'Frequently requested totals may be served from a short-lived cache; ' +
-      'on cache miss or cache unavailability the value is loaded from PostgreSQL. ' +
-      'The response shape is identical regardless of data source.',
   })
   @ApiResponse({
     status: 200,
@@ -139,6 +139,7 @@ export class EarningsController {
   @ApiResponse({
     status: 200,
     description: 'Earnings dashboard data',
+    type: EarningsDashboardDto,
     schema: {
       type: 'object',
       properties: {
@@ -270,20 +271,7 @@ export class EarningsController {
   @ApiResponse({
     status: 200,
     description: 'User earnings summary',
-    schema: {
-      type: 'object',
-      properties: {
-        total: { type: 'number', example: 1250.5 },
-        currency: { type: 'string', example: 'USD' },
-        breakdown: {
-          type: 'object',
-          properties: {
-            royalties: { type: 'number', example: 800.0 },
-            subscriptions: { type: 'number', example: 450.5 },
-          },
-        },
-      },
-    },
+    type: EarningsSummaryDto,
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async getUserTotalEarnings(
@@ -325,36 +313,7 @@ export class EarningsController {
   @ApiResponse({
     status: 200,
     description: 'Earnings within the specified date range',
-    schema: {
-      type: 'object',
-      properties: {
-        startDate: { type: 'string', format: 'date-time' },
-        endDate: { type: 'string', format: 'date-time' },
-        total: { type: 'number', example: 450.5 },
-        currency: { type: 'string', example: 'USD' },
-        breakdown: {
-          type: 'object',
-          properties: {
-            royalties: { type: 'number', example: 300.0 },
-            subscriptions: { type: 'number', example: 150.5 },
-          },
-        },
-        items: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'number' },
-              amount: { type: 'number' },
-              currency: { type: 'string' },
-              source: { type: 'string', nullable: true },
-              date: { type: 'string', format: 'date-time' },
-              clipTitle: { type: 'string', nullable: true },
-            },
-          },
-        },
-      },
-    },
+    type: EarningsPeriodResponseDto,
   })
   @ApiBadRequestResponse({
     description: 'Invalid date range',
@@ -405,22 +364,11 @@ export class EarningsController {
   @ApiResponse({
     status: 200,
     description: 'Platform earnings breakdown',
-    schema: {
-      type: 'object',
-      properties: {
-        data: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              platform: { type: 'string', example: 'tiktok' },
-              amount: { type: 'number', example: 500.0 },
-              currency: { type: 'string', example: 'USD' },
-            },
-          },
-        },
-      },
-    },
+    type: EarningsByPlatformResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid date range or unsupported currency',
+    type: ValidationErrorResponseDto,
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async getEarningsByPlatform(
