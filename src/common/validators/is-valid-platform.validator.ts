@@ -32,6 +32,18 @@ export const SUPPORTED_PLATFORMS = [
 
 export type SupportedPlatform = (typeof SUPPORTED_PLATFORMS)[number];
 
+/** Issue #1362 — centralised platform enum, exposed in Swagger schemas. */
+export enum SocialPlatform {
+  TIKTOK = 'tiktok',
+  INSTAGRAM = 'instagram',
+  YOUTUBE = 'youtube',
+  FACEBOOK = 'facebook',
+  SNAPCHAT = 'snapchat',
+  PINTEREST = 'pinterest',
+  LINKEDIN = 'linkedin',
+  YOUTUBE_SHORTS = 'youtube-shorts',
+}
+
 function normalizePlatform(platform: string): string {
   return platform.toLowerCase();
 }

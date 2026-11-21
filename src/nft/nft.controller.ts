@@ -40,6 +40,7 @@ import {
   QueueRateLimitGuard,
   QueueRateLimit,
 } from '../common/guards/queue-rate-limit.guard';
+import { ParseStellarAddressPipe } from '../common/pipes';
 
 import { NftService, MintResult } from './nft.service';
 import { MintNftDto } from './dto/mint-nft.dto';
@@ -320,7 +321,7 @@ export class NftController {
   })
   @ApiParam({
     name: 'address',
-    description: 'Stellar wallet address',
+    description: '56-character Stellar G... wallet address',
     example: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
   })
   @ApiQuery({
@@ -341,16 +342,12 @@ export class NftController {
     type: PaginatedUserTokensResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Invalid wallet address or pagination parameters',
+    description: 'Invalid Stellar wallet address or pagination parameters',
   })
   async getWalletNfts(
-    @Param('address') address: string,
+    @Param('address', ParseStellarAddressPipe) address: string,
     @Query() query: GetUserTokensQueryDto,
   ): Promise<PaginatedUserTokensResponseDto> {
-    if (!address || address.length !== 56 || !address.startsWith('G')) {
-      throw new BadRequestException('Invalid Stellar wallet address');
-    }
-
     const limit = query.limit ?? 20;
     const cursor = query.cursor ?? 0;
 

@@ -1,3 +1,5 @@
+import { MintAuthorizationService } from './mint-authorization.service';
+import { NftMintAuthorizationController } from './nft-mint-authorization.controller';
 import { Module } from '@nestjs/common';
 import { IpfsUploadModule } from './ipfs-upload.module';
 import { NftOwnershipModule } from './nft-ownership.module';
@@ -40,6 +42,7 @@ import { NftStandardQueriesService } from './nft-standard-queries.service';
 import { NftStandardQueriesController } from './nft-standard-queries.controller';
 import { SorobanFeeEstimationService } from './soroban-fee-estimation.service';
 import { ClipsModule } from '../clips/clips.module';
+import { BlockchainModule } from '../blockchain/blockchain.module';
 
 @Module({
   imports: [
@@ -51,6 +54,7 @@ import { ClipsModule } from '../clips/clips.module';
     RedisModule,
     ClipsModule,
     ConfigModule,
+    BlockchainModule,
   ],
   providers: [
     NftConfig,
@@ -66,6 +70,7 @@ import { ClipsModule } from '../clips/clips.module';
     NftFreezeAdminGuard,
     RoyaltyConfigurationService,
     MintSignatureVerificationService,
+    MintAuthorizationService,
     AdminContractService,
     NftTransferService,
     NftTransferHistoryService,
@@ -80,6 +85,7 @@ import { ClipsModule } from '../clips/clips.module';
     SorobanFeeEstimationService,
   ],
   controllers: [
+    NftMintAuthorizationController,
     NftController,
     PlatformRevenueController,
     BatchRoyaltyController,

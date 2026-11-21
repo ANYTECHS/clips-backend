@@ -570,3 +570,39 @@ The backend already implements a strong baseline for security, and contributors 
 - document real security guarantees in Swagger and contributor guidance
 
 The commitment is simple: no endpoint should be considered safe unless authentication, authorization, validation, and rate limiting are all enforced by the server.
+
+---
+
+## Soroban Contract — Pre-Mainnet Security Review
+
+Scope: `contracts/src` (`ClipCashNFT`) and backend endpoints that interact with
+Soroban (`src/nft`, `src/stellar`).
+
+### Findings and resolutions
+
+| # | Area | Finding | Resolution |
+|---|------|---------|------------|
+| 1 | Access control | `initialize` did not require the owner's auth, allowing front-run initialization with an attacker-chosen owner. | `owner.require_auth()` added. |
+| 2 | Access control | `transfer_ownership` only required the current owner; a typo could permanently lock the contract. | New owner must also authorize. |
+| 3 | Arithmetic | Royalty sum `creator + platform` could theoretically overflow. | Each value is bounded to ≤ 10 000 before summing; sum capped at 10 000 (`RoyaltyExceedsCap`). Release builds use `overflow-checks = true`. |
+
+### Review checklist
+
+- **Access control**: owner auth required for `initialize`, `update_royalty_config` and `transfer_ownership`. ✔
+- **Arithmetic**: royalty BPS validated (0–10 000 each, combined ≤ 100 %). ✔
+- **Signature security / replay**: Soroban `require_auth` provides nonce-based replay protection and signature-expiration ledgers per authorization entry; no custom signature scheme. ✔
+- **Debug code**: no logging in contract sources; tests are `#[cfg(test)]` only. ✔
+- **Swagger**: NFT endpoints (`/nft/mint`, `/nft/prepare-mint`, `/nft/confirm-mint`, `/nft/verify-ownership`, `/nft/{clipId}/metadata`, `/nft/{mintAddress}/royalty`, `/nft/batch-royalty`) are documented.
+
+### Known limitations
+
+- No on-chain pause/emergency stop, timelock, freeze, burn or metadata-refresh functions exist yet; those checklist items are not applicable until implemented.
+- Persistent storage TTL is not explicitly extended.
+- Royalty payouts are enforced off-chain by the backend.
+
+### Deployment checklist
+
+1. `cargo test` and `cargo build --release --target wasm32-unknown-unknown` in `contracts/`.
+2. Deploy, then call `initialize` from the production owner account.
+3. Set `NFT_CONTRACT_ID`, `STELLAR_NETWORK=PUBLIC` and the mainnet RPC URL in backend config.
+4. Verify `contract_info` and royalty config on testnet before mainnet.
