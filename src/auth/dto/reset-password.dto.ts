@@ -1,5 +1,17 @@
-import { IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsStrongPassword,
+  MinLength,
+} from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+import {
+  IsValidPassword,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_REQUIREMENTS,
+} from '../validators/password-policy';
 
 export class ResetPasswordDto {
   @ApiProperty({
@@ -12,13 +24,6 @@ export class ResetPasswordDto {
   token: string;
 
   @ApiProperty({
-    description: 'New password meeting security requirements (min 8 characters)',
-    example: 'NewSecurePass123!',
-    minLength: 8,
-    required: true,
-  })
-  @IsString({ message: 'Password must be a string' })
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
     description:
       'New password meeting strength requirements:\n' +
       '- Minimum 10 characters long\n' +
@@ -27,12 +32,14 @@ export class ResetPasswordDto {
       '- Weak sequences and common phrases are rejected\n\n' +
       'Validation failure returns a structured JSON string in error message:\n' +
       '`{"score": 1, "feedback": ["This is a very common password"], "suggestions": "Add another word or two"}`',
+    description: `New password: ${PASSWORD_REQUIREMENTS}. Never returned in responses.`,
     example: 'NewStr0ngP@ssw0rd!2026',
-    minLength: 10,
+    minLength: PASSWORD_MIN_LENGTH,
+    maxLength: PASSWORD_MAX_LENGTH,
+    format: 'password',
+    writeOnly: true,
     required: true,
   })
-  @IsString({ message: 'Password must be a string' })
-  @MinLength(10, { message: 'Password must be at least 10 characters long' })
-  @IsStrongPassword()
+  @IsValidPassword()
   newPassword: string;
 }

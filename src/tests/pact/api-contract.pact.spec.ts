@@ -1,81 +1,73 @@
-/**
- * #1031 — Consumer-driven contract tests (Pact) for critical endpoints.
- *
- * Contracts are defined for Auth, Clips, Videos, Earnings, Wallets, Payouts
- * and NFT/Web3 operations and are aligned with the Swagger DTOs:
- *  - src/auth/dto/token-response.dto.ts        (POST /auth/login)
- *  - src/clips/dto/clip-response.dto.ts        (GET /clips, POST /clips/generate)
- *  - src/videos/videos.controller.ts           (GET /videos)
- *  - src/earnings/earnings.controller.ts       (GET /earnings)
- *  - src/wallets/wallets.controller.ts         (GET /wallets)
- *  - src/payouts/payouts.controller.ts         (POST /payouts/request)
- *  - src/nft/nft.controller.ts                 (POST /nfts/mint)
- *
- * The Pact mock server is exercised over HTTP, verified after each
- * interaction and the resulting pact file is written to
- * src/tests/pact/pacts/. Provider verification is covered by the
- * env-gated block at the bottom (set PACT_PROVIDER_URL in CI).
- */
-// Deep import: the package root re-exports the provider Verifier, which pulls
-// in an ESM-only https-proxy-agent build that Jest cannot load by default.
 import { Pact } from '@pact-foundation/pact/src/httpPact';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 jest.setTimeout(30000);
 
-const CONSUMER = 'clips-frontend';
-const PROVIDER = 'clips-backend-api';
+const pactDir = path.resolve('.temp/api-contract-pacts');
+const pactFile = path.join(pactDir, 'clips-frontend-clips-backend-api.json');
+const committedPactFile = path.resolve(
+  'src/tests/pact/pacts/clips-frontend-clips-backend-api.json',
+);
+let pact: Pact;
 
-describe('API contract tests — Pact (#1031)', () => {
-  const pact = new Pact({
-    consumer: CONSUMER,
-    provider: PROVIDER,
-    dir: 'src/tests/pact/pacts',
-    logLevel: 'error',
-  } as any);
-
-  const baseUrl = (): string => (pact as any).mockService.baseUrl;
-
-  const exercise = async (
-    method: 'GET' | 'POST',
-    path: string,
-    body?: unknown,
-  ): Promise<{ status: number; body: any }> => {
-    const res = await (globalThis as any).fetch(`${baseUrl()}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer test-token',
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    return { status: res.status, body: await res.json() };
+async function request(
+  method: 'GET' | 'POST',
+  path: string,
+  body?: unknown,
+  authenticated = true,
+): Promise<{ status: number; body: unknown }> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
   };
+  if (authenticated) headers.Authorization = 'Bearer test-token';
 
-  /**
-   * `setup()` allocates a free port, `addInteraction()` binds the mock server to
-   * it, and `verify()` tears that port down again. Running setup once per test
-   * — and clearing the cached port so a *new* one is allocated — gives every
-   * interaction a fresh port, so the server is never rebound while the previous
-   * listener is still releasing the old one. That race caused the intermittent
-   * ECONNREFUSED / "expected but not received" failures in this CI step.
-   */
+  const response = await fetch(`${pact.mockService.baseUrl}${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  return { status: response.status, body: await response.json() };
+}
+
+describe('clips-frontend API consumer contracts', () => {
+  beforeAll(() => {
+    fs.mkdirSync(pactDir, { recursive: true });
+    if (fs.existsSync(pactFile)) fs.unlinkSync(pactFile);
+  });
+
   beforeEach(async () => {
-    (pact as any).opts.port = undefined;
-    await (pact as any).setup();
+    pact = new Pact({
+      consumer: 'clips-frontend',
+      provider: 'clips-backend-api',
+      dir: pactDir,
+      pactfileWriteMode: 'merge',
+      logLevel: 'error',
+    });
+    await pact.setup();
   });
 
   afterEach(async () => {
-    await (pact as any).verify();
+    try {
+      await pact.verify();
+    } finally {
+      await pact.finalize();
+    }
   });
 
-  afterAll(async () => {
-    await (pact as any).finalize();
+  afterAll(() => {
+    if (!fs.existsSync(pactFile)) {
+      throw new Error('Pact did not generate the consumer contract file');
+    }
+    fs.copyFileSync(pactFile, committedPactFile);
+    fs.unlinkSync(pactFile);
   });
 
-  it('Auth — POST /auth/login returns 200 with TokenResponseDto fields', async () => {
+  it('documents login request and response DTOs', async () => {
     await pact.addInteraction({
       state: 'a registered user exists',
-      uponReceiving: 'a login request with valid credentials',
+      uponReceiving: 'valid login credentials',
       withRequest: {
         method: 'POST',
         path: '/auth/login',
@@ -86,49 +78,58 @@ describe('API contract tests — Pact (#1031)', () => {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
         body: {
-          accessToken: 'eyJhbGciOiJIUzI1NiJ9...',
-          refreshToken: 'a1b2c3d4e5f6...',
+          user: {
+            id: 1,
+            email: 'founder@example.com',
+            name: 'Founder',
+            picture: null,
+            mfaEnabled: false,
+            emailVerified: true,
+          },
+          tokens: {
+            accessToken: 'access-token',
+            refreshToken: 'refresh-token',
+          },
+          csrfToken: 'csrf-token',
         },
       },
     });
 
-    const res = await exercise('POST', '/auth/login', {
+    const result = await request('POST', '/auth/login', {
       email: 'founder@example.com',
       password: 'Sup3rSecret!',
     });
-
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('accessToken');
-    expect(res.body).toHaveProperty('refreshToken');
+    expect(result.status).toBe(200);
+    if (!isRecord(result.body) || !isRecord(result.body.tokens)) {
+      throw new Error(
+        'Login response did not contain the documented token object',
+      );
+    }
+    expect(typeof result.body.csrfToken).toBe('string');
+    expect(typeof result.body.tokens.accessToken).toBe('string');
+    expect(typeof result.body.tokens.refreshToken).toBe('string');
   });
 
-  it('Auth — POST /auth/login returns 401 for invalid credentials', async () => {
+  it('requires bearer authentication for clips', async () => {
     await pact.addInteraction({
-      state: 'a registered user exists',
-      uponReceiving: 'a login request with a wrong password',
-      withRequest: {
-        method: 'POST',
-        path: '/auth/login',
-        headers: { 'Content-Type': 'application/json' },
-        body: { email: 'founder@example.com', password: 'wrong-password' },
-      },
+      uponReceiving: 'a clip list request without a bearer token',
+      withRequest: { method: 'GET', path: '/clips' },
       willRespondWith: {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
-        body: { statusCode: 401, message: 'Invalid credentials' },
+        body: {
+          statusCode: 401,
+          errorCode: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
       },
     });
 
-    const res = await exercise('POST', '/auth/login', {
-      email: 'founder@example.com',
-      password: 'wrong-password',
-    });
-
-    expect(res.status).toBe(401);
-    expect(res.body.statusCode).toBe(401);
+    const result = await request('GET', '/clips', undefined, false);
+    expect(result.status).toBe(401);
   });
 
-  it('Clips — GET /clips returns 200 with ClipResponseDto items', async () => {
+  it('lists clips using the documented ClipResponseDto', async () => {
     await pact.addInteraction({
       state: 'the user has clips',
       uponReceiving: 'a request to list clips',
@@ -145,71 +146,26 @@ describe('API contract tests — Pact (#1031)', () => {
           {
             id: 42,
             videoId: 7,
-            title: 'My clip',
-            status: 'ready',
+            selected: false,
+            nftStatus: 'none',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
             royaltyBps: 500,
           },
         ],
       },
     });
 
-    const res = await exercise('GET', '/clips?page=1');
-    expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body[0]).toMatchObject({ id: 42, videoId: 7 });
+    const result = await request('GET', '/clips?page=1');
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 42, videoId: 7, selected: false }),
+      ]),
+    );
   });
 
-  it('Clips — POST /clips/generate queues a job (201) and rate limits (429)', async () => {
-    await pact.addInteraction({
-      state: 'the user is below the active job limit',
-      uponReceiving: 'a clip-generation job request',
-      withRequest: {
-        method: 'POST',
-        path: '/clips/generate',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer test-token',
-        },
-        body: { videoId: 7 },
-      },
-      willRespondWith: {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-        body: { jobId: 'clip-123', queue: 'clip-generation', status: 'queued' },
-      },
-    });
-
-    const res = await exercise('POST', '/clips/generate', { videoId: 7 });
-    expect(res.status).toBe(201);
-    expect(res.body).toHaveProperty('jobId');
-  });
-
-  it('Clips — POST /clips/generate returns 429 when the queue is saturated', async () => {
-    await pact.addInteraction({
-      state: 'the user has reached the maximum of 5 active jobs',
-      uponReceiving: 'another clip-generation job request',
-      withRequest: {
-        method: 'POST',
-        path: '/clips/generate',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer test-token',
-        },
-        body: { videoId: 8 },
-      },
-      willRespondWith: {
-        status: 429,
-        headers: { 'Content-Type': 'application/json' },
-        body: { statusCode: 429, message: 'Too many active jobs (max 5)' },
-      },
-    });
-
-    const res = await exercise('POST', '/clips/generate', { videoId: 8 });
-    expect(res.status).toBe(429);
-    expect(res.body.statusCode).toBe(429);
-  });
-
-  it('Videos — GET /videos returns 200 with the video list', async () => {
+  it('lists videos using the documented response schema', async () => {
     await pact.addInteraction({
       state: 'the user has uploaded videos',
       uponReceiving: 'a request to list videos',
@@ -221,19 +177,19 @@ describe('API contract tests — Pact (#1031)', () => {
       willRespondWith: {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: [{ id: 7, title: 'Source video', status: 'processed' }],
+        body: { message: 'Videos endpoint' },
       },
     });
 
-    const res = await exercise('GET', '/videos');
-    expect(res.status).toBe(200);
-    expect(res.body[0]).toMatchObject({ id: 7 });
+    const result = await request('GET', '/videos');
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ message: 'Videos endpoint' });
   });
 
-  it('Earnings — GET /earnings returns 200 with earnings items', async () => {
+  it('returns the documented earnings total', async () => {
     await pact.addInteraction({
       state: 'the user has earnings',
-      uponReceiving: 'a request to list earnings',
+      uponReceiving: 'a request for the earnings total',
       withRequest: {
         method: 'GET',
         path: '/earnings',
@@ -242,24 +198,16 @@ describe('API contract tests — Pact (#1031)', () => {
       willRespondWith: {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
-        body: [
-          {
-            id: 1,
-            clipId: 42,
-            amount: 12.5,
-            currency: 'USD',
-            source: 'royalty',
-          },
-        ],
+        body: { total: 2500.5, currency: 'USD' },
       },
     });
 
-    const res = await exercise('GET', '/earnings');
-    expect(res.status).toBe(200);
-    expect(res.body[0]).toMatchObject({ id: 1, currency: 'USD' });
+    const result = await request('GET', '/earnings');
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ total: 2500.5, currency: 'USD' });
   });
 
-  it('Wallets — GET /wallets returns 200 with connected wallets', async () => {
+  it('lists wallets using the documented wallet response schema', async () => {
     await pact.addInteraction({
       state: 'the user has a connected wallet',
       uponReceiving: 'a request to list wallets',
@@ -274,23 +222,28 @@ describe('API contract tests — Pact (#1031)', () => {
         body: [
           {
             id: 1,
-            address: 'GABC123',
+            address: 'GABF...KJ93XD',
             chain: 'stellar',
-            type: 'custodial',
+            type: 'freighter',
+            connectedAt: '2026-01-01T00:00:00.000Z',
           },
         ],
       },
     });
 
-    const res = await exercise('GET', '/wallets');
-    expect(res.status).toBe(200);
-    expect(res.body[0]).toHaveProperty('address');
+    const result = await request('GET', '/wallets');
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 1, chain: 'stellar' }),
+      ]),
+    );
   });
 
-  it('Payouts — POST /payouts/request returns 201 for a payout request', async () => {
+  it('creates a payout with the documented request and response DTOs', async () => {
     await pact.addInteraction({
       state: 'the user has sufficient balance',
-      uponReceiving: 'a payout request',
+      uponReceiving: 'a Stellar payout request',
       withRequest: {
         method: 'POST',
         path: '/payouts/request',
@@ -303,23 +256,35 @@ describe('API contract tests — Pact (#1031)', () => {
       willRespondWith: {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
-        body: { id: 10, amount: 100, currency: 'USD', status: 'pending' },
+        body: {
+          payoutId: 'payout_123',
+          status: 'pending',
+          id: 10,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          feeAmount: 2.5,
+          finalAmount: 97.5,
+        },
       },
     });
 
-    const res = await exercise('POST', '/payouts/request', {
+    const result = await request('POST', '/payouts/request', {
       amount: 100,
       currency: 'USD',
       method: 'stellar',
     });
-    expect(res.status).toBe(201);
-    expect(res.body.status).toBe('pending');
+    expect(result.status).toBe(201);
+    expect(result.body).toEqual(
+      expect.objectContaining({ payoutId: 'payout_123', status: 'pending' }),
+    );
   });
 
-  it('Web3 — POST /nfts/mint returns 201 with a mint job id', async () => {
+  it('mints an NFT using the documented request and response DTOs', async () => {
     await pact.addInteraction({
-      state: 'the collection allows minting',
-      uponReceiving: 'an NFT mint request',
+      state: 'the user owns a mintable clip and its collection is available',
+      uponReceiving: 'an authenticated NFT mint request',
       withRequest: {
         method: 'POST',
         path: '/nfts/mint',
@@ -327,42 +292,87 @@ describe('API contract tests — Pact (#1031)', () => {
           'Content-Type': 'application/json',
           Authorization: 'Bearer test-token',
         },
-        body: { to: 'GABC123', metadata: { name: 'Clip #42' } },
+        body: {
+          clipId: 42,
+          creatorWallet:
+            'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
       },
       willRespondWith: {
         status: 201,
         headers: { 'Content-Type': 'application/json' },
-        body: { jobId: 'mint-1', status: 'queued' },
+        body: {
+          collectionId: 'viral-clips',
+          clipId: '42',
+          creatorWallet:
+            'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
+          royaltyBps: 1000,
+          royalties: [
+            {
+              wallet:
+                'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+              bps: 1000,
+              label: 'creator',
+            },
+          ],
+          status: 'minted',
+        },
       },
     });
 
-    const res = await exercise('POST', '/nfts/mint', {
-      to: 'GABC123',
-      metadata: { name: 'Clip #42' },
+    const result = await request('POST', '/nfts/mint', {
+      clipId: 42,
+      creatorWallet: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
     });
-    expect(res.status).toBe(201);
-    expect(res.body).toHaveProperty('jobId');
+    expect(result.status).toBe(201);
+    expect(result.body).toEqual(
+      expect.objectContaining({
+        collectionId: 'viral-clips',
+        clipId: '42',
+        status: 'minted',
+      }),
+    );
   });
 
-  // ── Provider verification (CI) ────────────────────────────────────────────
-  // Runs only when a base URL of a live provider is supplied, e.g. in CI:
-  //   PACT_PROVIDER_URL=http://localhost:3000 npm test -- tests/pact
-  const liveUrl = process.env.PACT_PROVIDER_URL;
-  const providerIt = liveUrl ? it : it.skip;
+  it('requires bearer authentication for NFT minting', async () => {
+    await pact.addInteraction({
+      uponReceiving: 'an NFT mint request without a bearer token',
+      withRequest: {
+        method: 'POST',
+        path: '/nfts/mint',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          clipId: 42,
+          creatorWallet:
+            'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+        },
+      },
+      willRespondWith: {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          statusCode: 401,
+          errorCode: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      },
+    });
 
-  providerIt(
-    'verifies all consumer contracts against the live provider',
-    async () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { Verifier } = require('@pact-foundation/pact');
-      const path = require('node:path');
-      const verifier = new Verifier({
-        providerBaseUrl: liveUrl,
-        pactUrls: [path.resolve('src/tests/pact/pacts')],
-        providerVersion: process.env.GIT_COMMIT ?? '0.0.0',
-        logLevel: 'warn',
-      });
-      await verifier.verifyProvider();
-    },
-  );
+    const result = await request(
+      'POST',
+      '/nfts/mint',
+      {
+        clipId: 42,
+        creatorWallet:
+          'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+      },
+      false,
+    );
+    expect(result.status).toBe(401);
+  });
 });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

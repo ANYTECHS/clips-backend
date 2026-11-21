@@ -1,0 +1,16 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testRegex": "test/prisma-bullmq\\.integration\\.test\\.ts$",
+  "transform": {
+    "^.+\\.(t|j)s$": "ts-jest"
+  },
+  "moduleNameMapper": {
+    "^@clipcash/shared$": "<rootDir>/src/shared/index.ts",
+    "^@clipcash/shared/(.*)$": "<rootDir>/src/shared/$1",
+    "^(\\.{1,2}/.*)\\.js$": "$1"
+  },
+  "modulePathIgnorePatterns": ["<rootDir>/test/__mocks__/cockatiel.js"],
+  "setupFilesAfterEnv": ["<rootDir>/src/test-setup.ts"]
+}

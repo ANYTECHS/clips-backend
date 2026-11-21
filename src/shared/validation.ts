@@ -1,3 +1,5 @@
+import { isValidStellarPublicAddress } from '../common/validators/is-stellar-address.validator';
+
 export const STELLAR_PUBLIC_KEY_REGEX = /^G[A-Z2-7]{55}$/;
 export const SOLANA_ADDRESS_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 export const EVM_ADDRESS_REGEX = /^0x[0-9a-fA-F]{40}$/;
@@ -10,7 +12,7 @@ export function validateAddressForChain(
 ): boolean {
   switch (chain) {
     case 'stellar':
-      return STELLAR_PUBLIC_KEY_REGEX.test(address);
+      return isValidStellarPublicAddress(address);
     case 'solana':
       return SOLANA_ADDRESS_REGEX.test(address);
     case 'base':

@@ -1,0 +1,2 @@
+ALTER TABLE "Payout"
+ADD COLUMN IF NOT EXISTS "reviewedBy" INTEGER;

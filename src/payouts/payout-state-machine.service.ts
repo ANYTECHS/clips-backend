@@ -98,6 +98,8 @@ export class PayoutStateMachineService {
       rejectionReason?: string;
       failureReason?: string;
       approvedAt?: Date;
+      approvedBy?: number;
+      reviewedBy?: number;
       nextRetryAt?: Date;
       retryCount?: number;
       lastAttemptAt?: Date;
@@ -131,6 +133,14 @@ export class PayoutStateMachineService {
       updateData.approvedAt = new Date();
     } else if (additionalData?.approvedAt) {
       updateData.approvedAt = additionalData.approvedAt;
+    }
+
+    if (additionalData?.approvedBy !== undefined) {
+      updateData.approvedBy = additionalData.approvedBy;
+      updateData.reviewedBy = additionalData.approvedBy;
+    }
+    if (additionalData?.reviewedBy !== undefined) {
+      updateData.reviewedBy = additionalData.reviewedBy;
     }
 
     if (newStatus === 'rejected' && additionalData?.rejectionReason) {

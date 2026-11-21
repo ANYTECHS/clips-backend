@@ -27,16 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Soroban Contract: Tokens, Supply and Royalty Claims (#1330, #1337, #1331):** `contracts/` (now `0.2.0`) gains `mint`, `transfer`, `burn`, `owner_of`, `token_uri`, `total_supply() -> u32`, a paginated `get_user_tokens(owner, limit, cursor)` backed by a dense per-owner list (O(limit) per page), and `deposit_royalty`, `get_claimable_royalties` and `claim_royalties(token_id: u32)`. A claim needs the token's royalty recipient to sign, resets the balance before transferring so it cannot be repeated, and emits `RoyaltyClaimed`.
+- **`GET /nfts/wallet/:address` (#1330):** alias of `GET /nfts/wallets/:address/nfts` with the same `limit` and `cursor` parameters and Swagger docs.
+- **Soroban Upgrades (#1336):** contract `version()`, `schema_version()`, owner-only `upgrade(new_wasm_hash)` and idempotent `migrate()`; `scripts/soroban-upgrade-inplace.sh` (`upgrade` and `rollback`) and a rewritten runbook in `docs/soroban-upgrades.md`.
 - **Soroban Fee Estimation Helper:** Implemented `estimate_mint_fee()` and `estimate_transfer_fee()` to simulate contract calls and return approximate transaction costs in stroops and XLM before signing.
 - **Fee Estimation Endpoints:** Added `GET /soroban/fees/mint` and `GET /soroban/fees/transfer` with query filters and comprehensive Swagger documentation.
 - **Versioning & Changelog Architecture:** Added standardized `CHANGELOG.md` and comprehensive versioning guidelines in `docs/versioning.md`.
 
 ### Changed
 
+- **Royalty claim contract calls (#1331):** the backend now calls `claim_royalties(token_id: u32)` and `get_claimable_royalties(token_id: u32, recipient)` with a `u32` token ID and no asset argument, matching the contract in `contracts/`. A contract deployed with the earlier `u64` token ID / optional asset signature must be upgraded before these endpoints work against it.
 - Standardized release and versioning documentation to define explicit SemVer guidelines, breaking change deprecation schedules, and OpenAPI synchronization workflows.
 
 ### Fixed
 
+- `soroban-contract.controller.ts` imported `SorobanPauseInfoDto` twice and used `ApiOkResponse` without importing it.
 - Fixed unhandled edge cases in background queue processors and circuit breaker resilience policies.
 
 ---

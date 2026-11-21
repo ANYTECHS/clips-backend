@@ -64,17 +64,18 @@ export class ClaimRoyaltyService {
     const server = new StellarSdk.rpc.Server(this.stellarService.rpcUrl);
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
 
-    const callArgs = [
-      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
-      StellarSdk.Address.fromString(recipient).toScVal(),
-    ];
-
+    // On-chain signature: get_claimable_royalties(token_id: u32, recipient).
+    // The royalty asset is configured on the contract (`set_royalty_asset`),
+    // so it is not a call argument.
     const resolvedAsset = this.resolveAssetContractId(assetContractId);
-    if (resolvedAsset) {
-      callArgs.push(StellarSdk.Address.fromString(resolvedAsset).toScVal());
-    }
-
-    const op = contract.call('get_claimable_royalties', ...callArgs);
+    this.logger.debug(
+      `Querying claimable royalties — token: ${tokenId}, asset: ${resolvedAsset ?? 'contract default'}`,
+    );
+    const op = contract.call(
+      'get_claimable_royalties',
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+      StellarSdk.Address.fromString(recipient).toScVal(),
+    );
 
     const dummyAccount = new StellarSdk.Account(
       'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN',
@@ -144,7 +145,7 @@ export class ClaimRoyaltyService {
   }
 
   /**
-   * Prepare an unsigned `claim_royalties(token_id [, asset])` XDR.
+   * Prepare an unsigned `claim_royalties(token_id: u32)` XDR.
    * Rejects when claimable balance is zero to prevent useless double-claim txs.
    */
   async prepareClaimRoyaltiesTx(
@@ -183,14 +184,13 @@ export class ClaimRoyaltyService {
     );
 
     const contract = new StellarSdk.Contract(this.CONTRACT_ID);
-    const callArgs = [
-      StellarSdk.nativeToScVal(BigInt(tokenId), { type: 'u64' }),
-    ];
-    if (resolvedAsset) {
-      callArgs.push(StellarSdk.Address.fromString(resolvedAsset).toScVal());
-    }
-
-    const op = contract.call('claim_royalties', ...callArgs);
+    // On-chain signature: claim_royalties(token_id: u32). The contract pays the
+    // token's stored royalty recipient in its configured royalty asset, so the
+    // asset is not a call argument.
+    const op = contract.call(
+      'claim_royalties',
+      StellarSdk.nativeToScVal(tokenId, { type: 'u32' }),
+    );
 
     const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: '10000',

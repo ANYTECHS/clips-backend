@@ -44,3 +44,4 @@ All real measurements should first be taken on Testnet and labeled **testnet**. 
 | Date | Change | Network | Result |
 |---|---|---|---|
 | 2026-09-29 | Initial document; audited existing backend metrics and recorded their provenance | None; no chain run | Two synthetic application seeds recorded above; verified on-chain benchmark count: zero |
+| 2026-11-19 | Added `burn` (with royalty refund), `pause`/`unpause`/`pause_reason`, and SEP-0050 functions to `contracts/src/token.rs`; operations to benchmark: `burn(.., false)`, `burn(.., true)`, `pause`, `unpause`, `balance_of`, `transfer_from` | None; no chain run | No measurements yet |

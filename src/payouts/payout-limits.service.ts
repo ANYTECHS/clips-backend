@@ -48,7 +48,9 @@ export class PayoutLimitsService {
     }
 
     if (availableBalance > max) {
-      return max;
+      throw new BadRequestException(
+        `Maximum payout for ${currency} is ${max}. Requested amount: ${availableBalance}.`,
+      );
     }
 
     return availableBalance;
@@ -60,9 +62,35 @@ export class PayoutLimitsService {
     }
 
     const limits = this.parseEnvPrefixLimits();
-    this.applyUsdDefaults(limits);
+    this.applyDefaultLimits(limits);
     this.assertValidLimits(limits);
     return limits;
+  }
+
+  private applyDefaultLimits(limits: Map<string, PayoutLimits>): void {
+    const genericMin = parseFloat(
+      process.env.MIN_PAYOUT ?? process.env.MIN_PAYOUT_USD ?? '5',
+    );
+    const genericMax = parseFloat(
+      process.env.MAX_PAYOUT ?? process.env.MAX_PAYOUT_USD ?? '10000',
+    );
+
+    for (const currency of ['USD', 'EUR', 'GBP', 'XLM', 'USDC']) {
+      if (!limits.has(currency)) {
+        limits.set(currency, { min: genericMin, max: genericMax });
+        continue;
+      }
+
+      const configured = limits.get(currency)!;
+      limits.set(currency, {
+        min: Number.isFinite(configured.min) && configured.min >= 0
+          ? configured.min
+          : genericMin,
+        max: Number.isFinite(configured.max) && configured.max > 0
+          ? configured.max
+          : genericMax,
+      });
+    }
   }
 
   private parseJsonLimits(raw: string): Map<string, PayoutLimits> {
@@ -83,12 +111,19 @@ export class PayoutLimitsService {
       });
     }
 
+    this.applyDefaultLimits(limits);
     this.assertValidLimits(limits);
     return limits;
   }
 
   private parseEnvPrefixLimits(): Map<string, PayoutLimits> {
     const limits = new Map<string, PayoutLimits>();
+    const genericMin = parseFloat(
+      process.env.MIN_PAYOUT ?? process.env.MIN_PAYOUT_USD ?? '5',
+    );
+    const genericMax = parseFloat(
+      process.env.MAX_PAYOUT ?? process.env.MAX_PAYOUT_USD ?? '10000',
+    );
 
     for (const [key, value] of Object.entries(process.env)) {
       if (!value) {
@@ -98,7 +133,10 @@ export class PayoutLimitsService {
       const minMatch = /^MIN_PAYOUT_(.+)$/.exec(key);
       if (minMatch) {
         const currency = minMatch[1].toUpperCase();
-        const existing = limits.get(currency) ?? { min: 0, max: Number.POSITIVE_INFINITY };
+        const existing = limits.get(currency) ?? {
+          min: genericMin,
+          max: genericMax,
+        };
         limits.set(currency, {
           ...existing,
           min: parseFloat(value),
@@ -118,34 +156,6 @@ export class PayoutLimitsService {
     }
 
     return limits;
-  }
-
-  private applyUsdDefaults(limits: Map<string, PayoutLimits>): void {
-    const defaults = this.defaultUsdLimits();
-
-    if (!limits.has('USD')) {
-      limits.set('USD', defaults);
-      return;
-    }
-
-    const usd = limits.get('USD')!;
-    limits.set('USD', {
-      min: usd.min > 0 ? usd.min : defaults.min,
-      max: Number.isFinite(usd.max) ? usd.max : defaults.max,
-    });
-  }
-
-  private defaultUsdLimits(): PayoutLimits {
-    return {
-      min: parseFloat(
-        process.env.MIN_PAYOUT_USD ??
-          process.env.MIN_STELLAR_PAYOUT ??
-          '5',
-      ),
-      max: parseFloat(
-        process.env.MAX_PAYOUT_USD ?? process.env.MAX_PAYOUT ?? '10000',
-      ),
-    };
   }
 
   private assertValidLimits(limits: Map<string, PayoutLimits>): void {

@@ -29,6 +29,7 @@ type JwtUser = {
   id: number;
   email: string | null;
   emailVerified?: Date | null;
+  role?: string;
 };
 
 const REFRESH_TOKEN_EXPIRES_DAYS =
@@ -132,6 +133,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       emailVerified: !!user.emailVerified,
+      role: user.role ?? 'user',
     };
     const accessToken = this.jwtService.sign(payload);
     return { accessToken };
@@ -237,6 +239,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       emailVerified: user.emailVerified,
+      role: user.role,
     });
   }
 
@@ -434,6 +437,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       emailVerified: user.emailVerified,
+      role: user.role,
     });
     return {
       user: {
@@ -545,6 +549,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       emailVerified: user.emailVerified,
+      role: user.role,
     });
 
     return {

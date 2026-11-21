@@ -97,6 +97,82 @@ pub fn contract_info(env: Env) -> ContractInfo
 basis points. The name and symbol are `ClipCash NFT` and `CLIP`; the version is
 the Cargo package version.
 
+### Tokens and supply
+
+```rust
+// Mint a token to `to` (owner only). IDs start at 1 and are never reused.
+pub fn mint(env: Env, to: Address, creator: Address, uri: String) -> Result<u32, ContractError>
+
+// Transfer (`from` must own the token and sign) and burn (owner signs)
+pub fn transfer(env: Env, from: Address, to: Address, token_id: u32) -> Result<(), ContractError>
+pub fn burn(env: Env, owner: Address, token_id: u32) -> Result<(), ContractError>
+
+pub fn owner_of(env: Env, token_id: u32) -> Result<Address, ContractError>
+pub fn token_uri(env: Env, token_id: u32) -> Result<String, ContractError>
+
+// Minted minus burned. Transfers never change it.
+pub fn total_supply(env: Env) -> u32
+
+// One page of an owner's tokens. `limit` is clamped to 1..=100; `cursor` is a
+// 0-based offset (0 for the first page, then each page's `next_cursor`).
+pub fn get_user_tokens(env: Env, owner: Address, limit: u32, cursor: u32) -> UserTokensPage
+```
+
+`UserTokensPage` is `{ tokens: Vec<u32>, next_cursor: Option<u32>, total: u32 }`.
+An owner with no tokens, or a cursor at or past the end, gets an empty page with
+`next_cursor: None`.
+
+Ownership is stored as a dense per-owner list (`OwnedCount`, `OwnedAt`,
+`OwnedIndex`), so adding a token is three writes, removing one is a swap-remove,
+and a page reads at most `limit` entries however large the holding is. Because
+removal moves the last entry into the freed slot, the order changes when a token
+is transferred away or burned; a cursor is only reliable while the owner's
+holdings stay the same between calls.
+
+The backend serves this at `GET /nfts/wallet/:address` (and
+`GET /nfts/wallets/:address/nfts`) with `limit` and `cursor` query parameters,
+and `total_supply` at `GET /nfts/supply`.
+
+### Royalties
+
+```rust
+// Asset (token contract) royalties are paid and claimed in (owner only)
+pub fn set_royalty_asset(env: Env, asset: Address) -> Result<(), ContractError>
+pub fn get_royalty_asset(env: Env) -> Option<Address>
+
+// Change who may claim a token's royalties (current recipient signs)
+pub fn set_royalty_recipient(env: Env, token_id: u32, new_recipient: Address) -> Result<(), ContractError>
+
+// Credit `amount` to a token's balance; the asset moves from `payer` into the contract
+pub fn deposit_royalty(env: Env, payer: Address, token_id: u32, amount: i128) -> Result<(), ContractError>
+
+// Read-only: what `recipient` could claim now (0 if not the token's recipient)
+pub fn get_claimable_royalties(env: Env, token_id: u32, recipient: Address) -> i128
+
+// Pay the token's accrued royalties to its stored recipient; returns the amount
+pub fn claim_royalties(env: Env, token_id: u32) -> Result<i128, ContractError>
+```
+
+`claim_royalties` requires the signature of the token's stored royalty
+recipient (the creator unless changed), so no one else can trigger or redirect
+the payout. It resets the balance to zero before transferring, so a second call
+returns `NoRoyaltiesToClaim` and pays nothing. A burned token's royalties stay
+claimable. It emits `RoyaltyClaimed`.
+
+### Versioning and upgrades
+
+```rust
+pub fn version(env: Env) -> String        // Cargo package version
+pub fn schema_version(env: Env) -> u32    // 1 = skeleton, 2 = tokens and royalties
+pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), ContractError>  // owner only
+pub fn migrate(env: Env) -> Result<u32, ContractError>                            // owner only
+```
+
+`upgrade` swaps the WASM at the same address, so all storage is kept. `migrate`
+brings stored data to the current schema; it is idempotent (a second call
+returns `AlreadyMigrated`) and changes no existing entry. Use
+`scripts/soroban-upgrade-inplace.sh` and follow `docs/soroban-upgrades.md`.
+
 ### Admin Operations
 
 ```rust
@@ -124,6 +200,19 @@ The contract uses Soroban's persistent storage to store:
 | `CROYALTY` | `u32` | Creator royalty in basis points (0-10000) |
 | `PROYALTY` | `u32` | Platform royalty in basis points (0-10000) |
 
+Schema 2 adds these. Counters, the royalty asset and the schema version live in
+instance storage; per-token and per-owner entries are persistent.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `SchemaVersion` | `u32` | Layout version (instance) |
+| `NextTokenId` | `u32` | Next ID to assign, starts at 1 (instance) |
+| `TotalSupply` | `u32` | Minted minus burned (instance) |
+| `RoyaltyAsset` | `Address` | Royalty payment asset (instance) |
+| `TokenOwner(id)`, `TokenCreator(id)`, `TokenUri(id)` | `Address` / `Address` / `String` | Per-token data; owner and URI are removed on burn |
+| `RoyaltyRecipient(id)`, `RoyaltyBalance(id)` | `Address` / `i128` | Who may claim and what is owed; kept after burn |
+| `OwnedCount(owner)`, `OwnedAt(owner, i)`, `OwnedIndex(id)` | `u32` | The owner's dense token list |
+
 All state is encrypted on-chain and scoped to the contract instance.
 
 ## Events
@@ -135,6 +224,13 @@ The contract emits the following events:
 | `initialized` | owner, creator_royalty_bps, platform_royalty_bps | Contract is initialized |
 | `royalty_config_updated` | creator_royalty_bps, platform_royalty_bps | Royalty configuration changes |
 | `ownership_transferred` | old_owner, new_owner | Ownership is transferred |
+| `Mint` | topics `token_id`, `to`; value `uri` | A token is minted |
+| `Transfer` | topics `token_id`, `from`, `to` | A token changes owner |
+| `Burn` | topics `token_id`, `owner` | A token is burned |
+| `RoyaltyPaid` | topics `token_id`, `payer`, `recipient`; value `(amount, asset)` | `deposit_royalty` credits a token |
+| `RoyaltyClaimed` | topics `token_id`, `recipient`; value `(amount, asset)` | `claim_royalties` pays out |
+| `RoyaltyUpdated` | topic `token_id`; value `(old_recipient, new_recipient)` | `set_royalty_recipient` |
+| `ConfigurationUpdated` | topics `key`, `owner`; value the new value (`(from, to)` for `schema_version`) | `set_royalty_asset`, `upgrade` (`wasm_hash`), `migrate` (`schema_version`) |
 
 Events are published to the Soroban event stream for indexing and monitoring.
 
@@ -188,6 +284,11 @@ The contract returns the following errors:
 | `NotFound` | 6 | Requested entity not found |
 | `AlreadyExists` | 7 | Entity already exists |
 | `InsufficientBalance` | 8 | Insufficient balance for operation |
+| `NoRoyaltiesToClaim` | 9 | Nothing is owed for the token (also a repeated claim) |
+| `RoyaltyAssetNotSet` | 10 | `set_royalty_asset` has not been called |
+| `InvalidAmount` | 11 | Amount is zero or negative |
+| `AlreadyMigrated` | 12 | `migrate` called on storage that is already current |
+| `Overflow` | 13 | A counter or balance overflowed |
 
 ## Testing
 
