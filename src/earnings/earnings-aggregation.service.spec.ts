@@ -10,10 +10,12 @@ import { Currency } from './earnings.types';
 describe('EarningsAggregationService', () => {
   let service: EarningsAggregationService;
   const findMany = jest.fn();
+  const monthlyFindMany = jest.fn();
   const transaction = jest.fn((fn) => fn({ earning: { findMany } }));
 
   beforeEach(async () => {
     findMany.mockReset();
+    monthlyFindMany.mockReset();
     transaction.mockClear();
 
     const module: TestingModule = await Test.createTestingModule({
@@ -24,6 +26,7 @@ describe('EarningsAggregationService', () => {
           useValue: {
             $transaction: transaction,
             earning: { findMany },
+            monthlyEarning: { findMany: monthlyFindMany },
             payout: { findMany: jest.fn().mockResolvedValue([]) },
           },
         },
@@ -90,6 +93,75 @@ describe('EarningsAggregationService', () => {
       expect(result.total).toBe(10);
       expect(result.items).toHaveLength(1);
       expect(result.items[0].clipTitle).toBe('Clip A');
+    });
+
+    describe('getMonthlySummary', () => {
+      it('computes fallback totals and platform breakdowns separately per currency', async () => {
+        monthlyFindMany.mockResolvedValue([]);
+        findMany.mockResolvedValue([
+          { amount: 10, currency: 'USD', clip: { platform: 'tiktok' } },
+          { amount: 5, currency: 'USD', clip: { platform: 'tiktok' } },
+          { amount: 8, currency: 'EUR', clip: { platform: 'youtube' } },
+        ]);
+
+        const result = await service.getMonthlySummary(7, 2026, 2);
+
+        expect(findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: expect.objectContaining({
+              date: {
+                gte: new Date('2026-02-01T00:00:00.000Z'),
+                lt: new Date('2026-03-01T00:00:00.000Z'),
+              },
+              deletedAt: null,
+            }),
+          }),
+        );
+        expect(result).toEqual({
+          userId: 7,
+          year: 2026,
+          month: 2,
+          items: [
+            {
+              totalAmount: 8,
+              currency: 'EUR',
+              platformBreakdown: { youtube: 8 },
+            },
+            {
+              totalAmount: 15,
+              currency: 'USD',
+              platformBreakdown: { tiktok: 15 },
+            },
+          ],
+          generated: false,
+        });
+      });
+
+      it('returns persisted summaries with an optional currency filter', async () => {
+        monthlyFindMany.mockResolvedValue([
+          {
+            totalAmount: 12,
+            currency: 'EUR',
+            platformBreakdown: { youtube: 12 },
+          },
+        ]);
+
+        const result = await service.getMonthlySummary(7, 2026, 2, 'eur');
+
+        expect(monthlyFindMany).toHaveBeenCalledWith({
+          where: { userId: 7, year: 2026, month: 2, currency: 'EUR' },
+          orderBy: { currency: 'asc' },
+        });
+        expect(result.items).toEqual([
+          {
+            totalAmount: 12,
+            currency: 'EUR',
+            platformBreakdown: { youtube: 12 },
+          },
+        ]);
+        expect(result.generated).toBe(true);
+        expect(findMany).not.toHaveBeenCalled();
+      });
     });
 
     it('rejects invalid date ranges', async () => {
