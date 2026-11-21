@@ -118,11 +118,29 @@ export class WalletManagementService {
     // Signature verification is only supported for Stellar wallets today;
     // Solana and Base/EVM wallets will need their own verification flow.
     if (chain === 'stellar') {
+      if (dto.publicKey !== dto.address) {
+        throw new BadRequestException(
+          'Stellar publicKey must match the wallet address',
+        );
+      }
+
       this.walletValidationService.verifySignatureOwnership(
         dto.publicKey,
         dto.signature,
         dto.signedMessage,
       );
+    }
+
+    const existingWallet = await this.prisma.wallet.findUnique({
+      where: {
+        address_chain: {
+          address: dto.address,
+          chain,
+        },
+      },
+    });
+    if (existingWallet && existingWallet.userId !== userId) {
+      throw new ConflictException('Wallet is already connected to another user');
     }
 
     const wallet = await this.prisma.wallet.upsert({
