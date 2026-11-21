@@ -8,6 +8,10 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsSupportedCurrency,
+  CURRENCY_API_PROPERTY_OPTIONAL,
+} from '../../common/validators/decorators';
 
 export class WebhookEarningDataDto {
   @ApiProperty({
@@ -22,12 +26,13 @@ export class WebhookEarningDataDto {
   amount: number;
 
   @ApiPropertyOptional({
-    description: 'Currency code',
+    ...CURRENCY_API_PROPERTY_OPTIONAL,
+    description: 'Currency code. Supported: USD, EUR, GBP, XLM, USDC.',
     default: 'USD',
-    example: 'USD',
   })
   @IsString()
   @IsOptional()
+  @IsSupportedCurrency()
   currency?: string;
 
   @ApiProperty({

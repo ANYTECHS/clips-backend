@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  IsArray,
   IsBoolean,
   IsInt,
   IsNotEmpty,
@@ -9,8 +8,8 @@ import {
   IsString,
   Max,
   Min,
-  ValidateNested,
 } from 'class-validator';
+import { IsNestedArray } from '../../common/validators/array-validators';
 
 export class BatchMintClipItemDto {
   @ApiProperty({
@@ -48,20 +47,12 @@ export class BatchMintDto {
   @IsString()
   creatorWallet!: string;
 
-  @ApiProperty({
-    description: 'Array of clips to mint in batch (max 50 clips per call)',
-    type: [BatchMintClipItemDto],
-    example: [
-      {
-        clipId: '101',
-        metadataUri: 'ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG',
-        isSoulbound: false,
-      },
-    ],
+  @IsNestedArray(BatchMintClipItemDto, {
+    min: 1,
+    max: 50,
+    description: 'Clips to mint in batch. Maximum 50 per call.',
+    allowDuplicates: false,
   })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => BatchMintClipItemDto)
   clips!: BatchMintClipItemDto[];
 
   @ApiPropertyOptional({

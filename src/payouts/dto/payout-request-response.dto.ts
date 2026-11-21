@@ -30,6 +30,19 @@ export class PayoutRequestResponseDto {
 
   @ApiPropertyOptional({ example: 'stellar' })
   method?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    example: '2026-01-01T12:00:00.000Z',
+  })
+  createdAt?: Date;
+
+  @ApiPropertyOptional({ example: 2.5 })
+  feeAmount?: number;
+
+  @ApiPropertyOptional({ example: 97.5 })
+  finalAmount?: number;
 }
 
 /**

@@ -11,6 +11,61 @@ export interface EarningsBreakdownResult {
   subscriptions: number;
 }
 
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function roundBreakdown(
+  breakdown: Record<string, number>,
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(breakdown).map(([platform, amount]) => [
+      platform,
+      round2(amount),
+    ]),
+  );
+}
+
+interface MonthlySummaryRecord {
+  totalAmount: number;
+  currency: string;
+  platformBreakdown: Record<string, number> | null;
+}
+
+interface MonthlySummaryReader {
+  findMany(args: {
+    where: {
+      userId: number;
+      year: number;
+      month: number;
+      currency?: string;
+    };
+    orderBy: { currency: 'asc' };
+  }): Promise<MonthlySummaryRecord[]>;
+}
+
+interface MonthlyEarningRecord {
+  amount: number;
+  currency: string | null;
+  clip: { platform: string | null } | null;
+}
+
+interface MonthlyEarningReader {
+  findMany(args: {
+    where: {
+      clip: { video: { userId: number } };
+      deletedAt: null;
+      date: { gte: Date; lt: Date };
+      currency?: string;
+    };
+    select: {
+      amount: true;
+      currency: true;
+      clip: { select: { platform: true } };
+    };
+  }): Promise<MonthlyEarningRecord[]>;
+}
+
 @Injectable()
 export class EarningsAggregationService {
   private readonly logger = new Logger(EarningsAggregationService.name);
@@ -59,7 +114,11 @@ export class EarningsAggregationService {
   }
 
   public aggregateEarnings(
-    earnings: Array<{ amount: number; currency: string; source: string | null }>,
+    earnings: Array<{
+      amount: number;
+      currency: string;
+      source: string | null;
+    }>,
     targetCurrency: Currency = Currency.USD,
   ): { total: number; breakdown: EarningsBreakdown } {
     let total = 0;
@@ -94,14 +153,18 @@ export class EarningsAggregationService {
     try {
       const cached = await this.redisService.get(cacheKey);
       if (cached) {
-        this.logger.log(`Cache hit for user ${userId} earnings total in ${targetCurrency}`);
+        this.logger.log(
+          `Cache hit for user ${userId} earnings total in ${targetCurrency}`,
+        );
         return JSON.parse(cached);
       }
     } catch (err) {
       this.logger.error(`Redis error reading cache: ${err.message}`);
     }
 
-    this.logger.log(`Cache miss for user ${userId} earnings total in ${targetCurrency}`);
+    this.logger.log(
+      `Cache miss for user ${userId} earnings total in ${targetCurrency}`,
+    );
     const earnings = await this.prisma.$transaction((tx) =>
       tx.earning.findMany({
         where: this.userEarningsWhere(userId),
@@ -116,7 +179,11 @@ export class EarningsAggregationService {
     };
 
     try {
-      await this.redisService.setex(cacheKey, this.config.earningsCacheTtlSeconds ?? 3600, JSON.stringify(result));
+      await this.redisService.setex(
+        cacheKey,
+        this.config.earningsCacheTtlSeconds ?? 3600,
+        JSON.stringify(result),
+      );
     } catch (err) {
       this.logger.error(`Redis error writing cache: ${err.message}`);
     }
@@ -200,19 +267,29 @@ export class EarningsAggregationService {
 
     const paidOut = payouts
       .filter((p) => p.status === 'completed')
-      .reduce((sum, p) => sum + this.currencyConversion.convert(
-        p.amount,
-        (p.currency as Currency) || Currency.USD,
-        targetCurrency,
-      ), 0);
+      .reduce(
+        (sum, p) =>
+          sum +
+          this.currencyConversion.convert(
+            p.amount,
+            (p.currency as Currency) || Currency.USD,
+            targetCurrency,
+          ),
+        0,
+      );
 
     const pendingPayout = payouts
       .filter((p) => p.status === 'pending' || p.status === 'processing')
-      .reduce((sum, p) => sum + this.currencyConversion.convert(
-        p.amount,
-        (p.currency as Currency) || Currency.USD,
-        targetCurrency,
-      ), 0);
+      .reduce(
+        (sum, p) =>
+          sum +
+          this.currencyConversion.convert(
+            p.amount,
+            (p.currency as Currency) || Currency.USD,
+            targetCurrency,
+          ),
+        0,
+      );
 
     const historyItems: any[] = [
       ...earnings.map((e) => ({
@@ -297,7 +374,7 @@ export class EarningsAggregationService {
     to?: string,
     currency?: string,
   ) {
-    const targetCurrency = ((currency?.toUpperCase() || 'USD') as Currency);
+    const targetCurrency = (currency?.toUpperCase() || 'USD') as Currency;
     if (!Object.values(Currency).includes(targetCurrency)) {
       throw new Error(
         `Unsupported currency: ${currency}. Supported: ${Object.values(Currency).join(', ')}`,
@@ -363,53 +440,110 @@ export class EarningsAggregationService {
     };
   }
 
-  async getMonthlySummary(userId: number, year: number, month: number) {
+  async getMonthlySummary(
+    userId: number,
+    year: number,
+    month: number,
+    currency?: string,
+  ) {
     if (!Number.isInteger(year) || year < 2000 || year > 2100) {
-      throw new Error('Invalid year. Use YYYY between 2000-2100.');
+      throw new BadRequestException(
+        'Invalid year. Use YYYY between 2000-2100.',
+      );
     }
     if (!Number.isInteger(month) || month < 1 || month > 12) {
-      throw new Error('Invalid month. Use 1-12.');
+      throw new BadRequestException('Invalid month. Use 1-12.');
     }
-    const summary = await this.prisma.monthlyEarning.findUnique({
-      where: { userId_year_month: { userId, year, month } },
+    const normalizedCurrency = currency?.toUpperCase();
+    const currencyFilter = normalizedCurrency
+      ? { currency: normalizedCurrency }
+      : {};
+    const monthlyEarning = this.prisma.monthlyEarning as MonthlySummaryReader;
+    const summaries = await monthlyEarning.findMany({
+      where: { userId, year, month, ...currencyFilter },
+      orderBy: { currency: 'asc' },
     });
-    if (!summary) {
-      // Fallback: compute live from period (UTC) when cron has not run yet
+
+    if (summaries.length === 0) {
       const from = new Date(Date.UTC(year, month - 1, 1));
-      const to = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-      const period = await this.getEarningsByPeriod(
-        userId,
-        from,
-        to,
-        Currency.USD,
-      );
+      const to = new Date(Date.UTC(year, month, 1));
+      const earning = this.prisma.earning as MonthlyEarningReader;
+      const earnings = await earning.findMany({
+        where: {
+          ...this.userEarningsWhere(userId),
+          date: { gte: from, lt: to },
+          ...currencyFilter,
+        },
+        select: {
+          amount: true,
+          currency: true,
+          clip: { select: { platform: true } },
+        },
+      });
+      const buckets = new Map<
+        string,
+        { totalAmount: number; platformBreakdown: Record<string, number> }
+      >();
+
+      for (const earning of earnings) {
+        const earningCurrency = (earning.currency || 'USD').toUpperCase();
+        if (normalizedCurrency && earningCurrency !== normalizedCurrency) {
+          continue;
+        }
+        const bucket = buckets.get(earningCurrency) ?? {
+          totalAmount: 0,
+          platformBreakdown: {},
+        };
+        const platform = earning.clip?.platform || 'unknown';
+        bucket.totalAmount += earning.amount;
+        bucket.platformBreakdown[platform] =
+          (bucket.platformBreakdown[platform] || 0) + earning.amount;
+        buckets.set(earningCurrency, bucket);
+      }
+
       return {
         userId,
         year,
         month,
-        totalAmount: period.total,
-        currency: period.currency,
-        platformBreakdown: period.items.reduce(
-          (acc: Record<string, number>, i: any) => {
-            acc[i.source || 'unknown'] = (acc[i.source || 'unknown'] || 0) + i.amount;
-            return acc;
-          },
-          {},
-        ),
+        items: [...buckets.entries()]
+          .sort(([currencyA], [currencyB]) =>
+            currencyA.localeCompare(currencyB),
+          )
+          .map(([earningCurrency, bucket]) => ({
+            totalAmount: round2(bucket.totalAmount),
+            currency: earningCurrency,
+            platformBreakdown: roundBreakdown(bucket.platformBreakdown),
+          })),
         generated: false,
       };
     }
-    return { ...summary, generated: true };
+
+    return {
+      userId,
+      year,
+      month,
+      items: summaries.map((summary) => ({
+        totalAmount: summary.totalAmount,
+        currency: summary.currency,
+        platformBreakdown: roundBreakdown(summary.platformBreakdown ?? {}),
+      })),
+      generated: true,
+    };
   }
 
-  async softDelete(earningId: number, userId: number) {    const earning = await this.prisma.earning.findUnique({
+  async softDelete(earningId: number, userId: number) {
+    const earning = await this.prisma.earning.findUnique({
       where: { id: earningId },
       include: {
         clip: { include: { video: { select: { userId: true } } } },
       },
     });
 
-    if (!earning || earning.clip.video.userId !== userId || earning.deletedAt !== null) {
+    if (
+      !earning ||
+      earning.clip.video.userId !== userId ||
+      earning.deletedAt !== null
+    ) {
       throw new NotFoundException(`Earning ${earningId} not found`);
     }
 
@@ -443,9 +577,7 @@ export class EarningsAggregationService {
     }
 
     if (earning.deletedAt === null) {
-      throw new NotFoundException(
-        `Earning ${earningId} is not soft-deleted`,
-      );
+      throw new NotFoundException(`Earning ${earningId} is not soft-deleted`);
     }
 
     const restored = await this.prisma.earning.update({

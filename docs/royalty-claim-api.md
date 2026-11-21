@@ -19,8 +19,8 @@ The Royalty Claim API allows creators and authorized royalty recipients to query
 
 ### On-Chain Contract Methods
 
-- `claim_royalties(token_id, asset?)` - Claims accumulated royalties for a token
-- `get_claimable_royalties(token_id, recipient, asset?)` - Queries claimable balance without claiming
+- `claim_royalties(token_id: u32)` - Pays the token's accrued royalties to its stored royalty recipient, in the contract's configured royalty asset. The recipient must sign. Resets the balance to zero first, so a second claim fails with `NoRoyaltiesToClaim` (error 9).
+- `get_claimable_royalties(token_id: u32, recipient)` - Queries claimable balance without claiming (0 when `recipient` is not the token's royalty recipient)
 - `get_royalties(token_id)` - Retrieves current royalty split configuration
 
 ## API Endpoints
@@ -318,10 +318,19 @@ await claimRoyalties(tokenId, platformWallet);
    - Transfers the full accrued amount to the recipient
    - Resets the accrued balance to zero (preventing double claims)
    - Emits `RoyaltyClaimed` event with:
-     - `token_id`: NFT token ID
-     - `recipient`: Claiming wallet address
-     - `amount`: Claimed amount (in stroops)
-     - `asset`: Asset claimed (native or SAC contract)
+     - topics: `token_id`, `to_address` (the recipient)
+     - value: `(amount, asset)`: the amount claimed and the asset contract it was paid in
+
+### Endpoint mapping (Issue #1331)
+
+| Operation | Endpoint |
+|-----------|----------|
+| Read royalty splits | `GET /nfts/:id/royalties` |
+| Set royalty recipient and basis points | `POST /nfts/:id/royalties` |
+| Read claimable balance | `GET /nfts/:id/claim-royalties` |
+| Build the unsigned claim transaction | `POST /nfts/:id/claim-royalties` |
+
+All four are documented in Swagger under the `NFTs` tag. The token ID is a `u32` on-chain, and the backend encodes it that way for both `claim_royalties` and `get_claimable_royalties`. The royalty asset is configured on the contract (`set_royalty_asset`), so the contract calls take no asset argument; `assetContractId` is still accepted by the API and only labels the response.
 
 ### Circuit Breaker Protection
 

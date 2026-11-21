@@ -1,15 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
-  IsArray,
   IsInt,
   IsNotEmpty,
   IsString,
   Max,
   Min,
-  ValidateNested,
 } from 'class-validator';
+import { IsNestedArray } from '../../common/validators/array-validators';
 
 /** A single royalty recipient share, in basis points. */
 export class RoyaltyShareDto {
@@ -73,25 +71,12 @@ export class UpdateRoyaltySplitsDto {
   @IsNotEmpty()
   walletAddress: string;
 
-  @ApiProperty({
+  @IsNestedArray(RoyaltyShareDto, {
+    min: 1,
     description:
       'Royalty recipients and their basis-point shares. Combined total must not exceed 10000 (100%).',
-    type: [RoyaltyShareDto],
-    example: [
-      {
-        recipient: 'GC6X2Y3ZQZFXBABKHOKSAVHOJ7NDGQBZC7XT2M6RCFPEHVGT7JXOTUZF',
-        bps: 9000,
-      },
-      {
-        recipient: 'GDPLATFORM7XT2M6RCFPEHVGT7JXOTUZFAAAAAAAAAAAAAAAAAAAAAA',
-        bps: 1000,
-      },
-    ],
+    allowDuplicates: false,
   })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ValidateNested({ each: true })
-  @Type(() => RoyaltyShareDto)
   shares: RoyaltyShareDto[];
 }
 

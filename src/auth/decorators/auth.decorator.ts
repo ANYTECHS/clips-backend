@@ -25,6 +25,16 @@ export const Auth = (...roles: string[]) =>
         ApiBearerAuth('access-token'),
         ApiUnauthorizedResponse({
           description: 'Unauthorized — JWT token required',
+          schema: {
+            type: 'object',
+            required: ['statusCode', 'errorCode', 'message'],
+            properties: {
+              statusCode: { type: 'number', example: 401 },
+              errorCode: { type: 'string', example: 'UNAUTHORIZED' },
+              message: { type: 'string', example: 'Authentication required' },
+              reason: { type: 'string' },
+            },
+          },
         }),
         ApiForbiddenResponse({
           description: `Forbidden — required role(s): ${roles.join(', ')}`,
@@ -35,5 +45,15 @@ export const Auth = (...roles: string[]) =>
         ApiBearerAuth('access-token'),
         ApiUnauthorizedResponse({
           description: 'Unauthorized — JWT token required',
+          schema: {
+            type: 'object',
+            required: ['statusCode', 'errorCode', 'message'],
+            properties: {
+              statusCode: { type: 'number', example: 401 },
+              errorCode: { type: 'string', example: 'UNAUTHORIZED' },
+              message: { type: 'string', example: 'Authentication required' },
+              reason: { type: 'string' },
+            },
+          },
         }),
       );

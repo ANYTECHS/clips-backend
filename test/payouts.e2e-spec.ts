@@ -492,3 +492,283 @@ describe('Payouts E2E', () => {
       });
   });
 });
+
+  // ── GET /payouts/export (comprehensive) ──────────────────────────────────
+
+  describe('GET /payouts/export', () => {
+    it('returns CSV file with correct content type and headers', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([
+        {
+          id: 1,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'completed',
+          transactionId: 'tx_001',
+          feeAmount: 2,
+          finalAmount: 98,
+          createdAt: new Date('2026-01-15T12:00:00.000Z'),
+          paidAt: new Date('2026-01-15T13:00:00.000Z'),
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      expect(response.type).toContain('text/csv');
+      expect(response.body.toString()).toContain('id');
+      expect(response.body.toString()).toContain('status');
+      expect(response.body.toString()).toContain('completed');
+      expect(response.body.toString()).toContain('stellar');
+    });
+
+    it('returns PDF file with correct content-type', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([
+        {
+          id: 1,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'completed',
+          transactionId: 'tx_abc',
+          feeAmount: 2,
+          finalAmount: 98,
+          createdAt: new Date('2026-01-15T12:00:00.000Z'),
+          paidAt: new Date('2026-01-15T13:00:00.000Z'),
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'pdf' })
+        .expect(200);
+
+      expect(response.type).toBe('application/pdf');
+      expect(response.body.length).toBeGreaterThan(0);
+    });
+
+    it('filters by startDate and endDate', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([]);
+
+      await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({
+          format: 'csv',
+          startDate: '2026-01-01',
+          endDate: '2026-01-31',
+        })
+        .expect(200);
+
+      const call = mockPrisma.payout.findMany.mock.calls[0][0];
+      expect(call.where.createdAt).toBeDefined();
+      expect(call.where.createdAt.gte).toBeDefined();
+      expect(call.where.createdAt.lte).toBeDefined();
+    });
+
+    it('rejects invalid format', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'xlsx' })
+        .expect(400);
+
+      expect(response.body.message).toContain('Invalid export format');
+    });
+
+    it('requires format query parameter', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .expect(400);
+
+      expect(response.body.message).toBeDefined();
+    });
+
+    it('includes feeAmount and finalAmount in CSV export', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([
+        {
+          id: 1,
+          amount: 500,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'completed',
+          transactionId: 'tx_001',
+          feeAmount: 10,
+          finalAmount: 490,
+          createdAt: new Date('2026-01-15T12:00:00.000Z'),
+          paidAt: new Date('2026-01-15T13:00:00.000Z'),
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      const csv = response.body.toString('utf-8');
+      expect(csv).toContain('10'); // feeAmount
+      expect(csv).toContain('490'); // finalAmount
+      expect(csv).toContain('500'); // amount
+    });
+
+    it('handles empty payout list gracefully', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      expect(response.type).toContain('text/csv');
+      // Should contain headers
+      expect(response.body.toString()).toContain('status');
+    });
+
+    it('sets correct Content-Disposition header for download', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      expect(response.headers['content-disposition']).toBeDefined();
+      expect(response.headers['content-disposition']).toContain('attachment');
+      expect(response.headers['content-disposition']).toMatch(/payouts-\d{4}-\d{2}-\d{2}\.csv/);
+    });
+
+    it('only exports payouts for the authenticated user', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([]);
+
+      await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      const call = mockPrisma.payout.findMany.mock.calls[0][0];
+      expect(call.where.userId).toBe(USER_ID);
+    });
+
+    it('excludes soft-deleted payouts (deletedAt is null)', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([]);
+
+      await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      const call = mockPrisma.payout.findMany.mock.calls[0][0];
+      expect(call.where.deletedAt).toBe(null);
+    });
+
+    it('handles multiple payouts with different statuses in single export', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([
+        {
+          id: 1,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'completed',
+          transactionId: 'tx_001',
+          feeAmount: 2,
+          finalAmount: 98,
+          createdAt: new Date('2026-01-15T12:00:00.000Z'),
+          paidAt: new Date('2026-01-15T13:00:00.000Z'),
+        },
+        {
+          id: 2,
+          amount: 150,
+          currency: 'USD',
+          method: 'bank_transfer',
+          status: 'pending',
+          transactionId: null,
+          feeAmount: 3,
+          finalAmount: 147,
+          createdAt: new Date('2026-01-20T10:00:00.000Z'),
+          paidAt: null,
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/export')
+        .query({ format: 'csv' })
+        .expect(200);
+
+      const csv = response.body.toString('utf-8');
+      expect(csv).toContain('completed');
+      expect(csv).toContain('pending');
+      expect(csv).toContain('100');
+      expect(csv).toContain('150');
+    });
+  });
+
+  // ── Fee calculations integrated with payout responses ────────────────────
+
+  describe('Fee calculations and payout responses', () => {
+    it('calculates and includes feeAmount and finalAmount in payout list', async () => {
+      mockPrisma.payout.findMany.mockResolvedValue([
+        {
+          id: 7,
+          userId: USER_ID,
+          amount: 100,
+          currency: 'USD',
+          method: 'stellar',
+          status: 'completed',
+          feeAmount: 2,
+          finalAmount: 98,
+          transactionId: 'tx_001',
+          createdAt: new Date(),
+          paidAt: new Date(),
+        },
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts')
+        .expect(200);
+
+      expect(response.body[0]).toHaveProperty('feeAmount', 2);
+      expect(response.body[0]).toHaveProperty('finalAmount', 98);
+      expect(response.body[0].amount).toBe(100);
+    });
+
+    it('fee preview shows gross/net breakdown for user confirmation', async () => {
+      mockFeeService.previewFee.mockResolvedValue({
+        amount: 100,
+        grossAmount: 100,
+        fee: 2,
+        feeAmount: 2,
+        feePercentage: 2,
+        netAmount: 98,
+        finalAmount: 98,
+        currency: 'USD',
+      });
+
+      const response = await request(app.getHttpServer())
+        .get('/payouts/fees/preview')
+        .query({ amount: 100, method: 'stellar' })
+        .expect(200);
+
+      expect(response.body.amount).toBe(100);
+      expect(response.body.fee).toBe(2);
+      expect(response.body.netAmount).toBe(98);
+    });
+
+    it('prevents payouts when fee would result in zero or negative net amount', async () => {
+      mockFeeService.calculateFee.mockRejectedValueOnce(
+        new BadRequestException(
+          'Fee ($20) would leave a non-positive net payout for amount $10',
+        ),
+      );
+
+      const response = await request(app.getHttpServer())
+        .post('/payouts/request')
+        .send({
+          amount: 10,
+          walletId: 1,
+          reason: 'test',
+        })
+        .expect(400);
+
+      expect(response.body.message).toContain('non-positive');
+    });
+  });

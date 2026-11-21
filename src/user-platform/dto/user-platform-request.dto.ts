@@ -1,14 +1,24 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { SUPPORTED_PLATFORMS } from '../../common/validators/is-valid-platform.validator';
+import {
+  IsStellarAddress,
+  IsValidPlatform,
+} from '../../common/validators/decorators';
+import {
+  STELLAR_ADDRESS_DESCRIPTION,
+  STELLAR_ADDRESS_EXAMPLE,
+} from '../../common/validators/is-stellar-address.validator';
 
 export class CreateUserPlatformDto {
   @ApiProperty({
     description: 'Social platform identifier',
     example: 'youtube',
-    minLength: 1,
+    enum: SUPPORTED_PLATFORMS,
   })
   @IsString()
   @IsNotEmpty()
+  @IsValidPlatform()
   platform: string;
 
   @ApiPropertyOptional({
@@ -40,12 +50,12 @@ export class CreateUserPlatformDto {
   refreshToken?: string;
 
   @ApiPropertyOptional({
-    description: 'Stellar public address for this platform connection',
-    example: 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF',
+    description: STELLAR_ADDRESS_DESCRIPTION,
+    example: STELLAR_ADDRESS_EXAMPLE,
   })
   @IsOptional()
   @IsString()
-  @IsNotEmpty()
+  @IsStellarAddress()
   stellarAddress?: string;
 }
 
@@ -53,11 +63,12 @@ export class UpdateUserPlatformDto {
   @ApiPropertyOptional({
     description: 'Social platform identifier',
     example: 'youtube',
-    minLength: 1,
+    enum: SUPPORTED_PLATFORMS,
   })
   @IsOptional()
   @IsString()
   @IsNotEmpty()
+  @IsValidPlatform()
   platform?: string;
 
   @ApiPropertyOptional({
