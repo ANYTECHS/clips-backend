@@ -126,13 +126,17 @@ export class ConfigService {
    * Minimum platform payout in USD (general payout pipeline).
    * Env var: MIN_PAYOUT_USD.
    */
-  readonly minPayoutUsd = parseFloat(process.env.MIN_PAYOUT_USD ?? '5');
+  readonly minPayoutUsd = parseFloat(
+    process.env.MIN_PAYOUT_USD ?? process.env.MIN_PAYOUT ?? '5',
+  );
 
   /**
    * Maximum platform payout in USD per request.
    * Env var: MAX_PAYOUT_USD.
    */
-  readonly maxPayoutUsd = parseFloat(process.env.MAX_PAYOUT_USD ?? '10000');
+  readonly maxPayoutUsd = parseFloat(
+    process.env.MAX_PAYOUT_USD ?? process.env.MAX_PAYOUT ?? '10000',
+  );
 
   /** Whether the public earnings leaderboard is enabled. */
   readonly leaderboardEnabled = process.env.LEADERBOARD_ENABLED === 'true';

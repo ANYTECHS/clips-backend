@@ -1,6 +1,7 @@
 import {
   Injectable,
   NotFoundException,
+  ForbiddenException,
   BadRequestException,
   Logger,
 } from '@nestjs/common';
@@ -216,6 +217,14 @@ export class PayoutsService {
       const rows = [];
 
       for (const split of splits) {
+        await this.payoutValidationService.assertMinimumPayout(
+          split.amount,
+          normalizedCurrency,
+        );
+        this.payoutValidationService.assertPayoutLimits(
+          split.amount,
+          normalizedCurrency,
+        );
         const { walletId, payoutMethodId } = await this.resolveDestinationIds(
           userId,
           split.method,
@@ -362,34 +371,6 @@ export class PayoutsService {
       page,
       limit,
     );
-    const payouts = await this.prisma.payout.findMany({
-      where: {
-        userId,
-        ...(filterStatus ? { status: filterStatus } : {}),
-      },
-      select: {
-        id: true,
-        amount: true,
-        currency: true,
-        method: true,
-        status: true,
-        transactionId: true,
-        onChainTxHash: true,
-        confirmedAt: true,
-        lastConfirmationCheckAt: true,
-        confirmationPollCount: true,
-        retryCount: true,
-        stellarXdr: true,
-        feeAmount: true,
-        feePercentage: true,
-        finalAmount: true,
-        paidAt: true,
-        approvedAt: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
 
     const items = result.items.map((p) => ({
       ...p,
@@ -398,49 +379,6 @@ export class PayoutsService {
     }));
 
     return new PaginatedResponseDto(items, result.total, result.page, result.limit);
-    const select = {
-      id: true,
-      amount: true,
-      currency: true,
-      method: true,
-      status: true,
-      transactionId: true,
-      onChainTxHash: true,
-      confirmedAt: true,
-      lastConfirmationCheckAt: true,
-      confirmationPollCount: true,
-      retryCount: true,
-      stellarXdr: true,
-      feeAmount: true,
-      feePercentage: true,
-      finalAmount: true,
-      paidAt: true,
-      approvedAt: true,
-      approvedBy: true,
-      rejectedAt: true,
-      rejectionReason: true,
-      createdAt: true,
-      updatedAt: true,
-    };
-
-    const [items, total] = await Promise.all([
-      this.prisma.payout.findMany({
-        where,
-        select,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take,
-      }),
-      this.prisma.payout.count({ where }),
-    ]);
-
-    const mapped = items.map((p) => ({
-      ...p,
-      fee: p.feeAmount,
-      netAmount: p.finalAmount,
-    }));
-
-    return new PaginatedResponseDto(mapped, total, normalizedPage, normalizedLimit);
   }
 
   async getPayoutById(userId: number, payoutId: number): Promise<any> {
@@ -639,6 +577,7 @@ export class PayoutsService {
     if (!adminUserId) {
       throw new BadRequestException('Admin identity is required to approve payouts');
     }
+    await this.assertAdmin(adminUserId);
 
     const payout = await this.prisma.payout.findUnique({
       where: { id: payoutId },
@@ -654,6 +593,7 @@ export class PayoutsService {
         status: PAYOUT_STATUSES.APPROVED,
         approvedAt: now,
         approvedBy: adminUserId,
+        reviewedBy: adminUserId,
         reviewedAt: now,
       },
     });
@@ -692,6 +632,7 @@ export class PayoutsService {
     if (!adminUserId) {
       throw new BadRequestException('Admin identity is required to reject payouts');
     }
+    await this.assertAdmin(adminUserId);
 
     const payout = await this.prisma.payout.findUnique({
       where: { id: payoutId },
@@ -707,8 +648,8 @@ export class PayoutsService {
         status: PAYOUT_STATUSES.REJECTED,
         rejectedAt: now,
         reviewedAt: now,
+        reviewedBy: adminUserId,
         rejectionReason: reason.trim(),
-        approvedBy: adminUserId,
       },
     });
 
@@ -735,6 +676,16 @@ export class PayoutsService {
       rejectedAt: updated.rejectedAt!,
       rejectionReason: updated.rejectionReason,
     };
+  }
+
+  private async assertAdmin(adminUserId: number): Promise<void> {
+    const admin = await this.prisma.user.findUnique({
+      where: { id: adminUserId },
+      select: { role: true },
+    });
+    if (!admin || admin.role !== 'admin') {
+      throw new ForbiddenException('Admin access required');
+    }
   }
 
   private async notifyPayoutUser(

@@ -162,8 +162,6 @@ export class NftMintService {
       },
     });
     const cid = metadataUri.replace(/^ipfs:\/\//, '');
-
-    const cid = metadataUri.replace(/^ipfs:\/\//, '');
     this.logger.log(
       `Clip ${clipId} metadata uploaded to IPFS — CID: ${cid} | provider: ${process.env.IPFS_PROVIDER ?? 'pinata'}`,
     );
@@ -238,7 +236,6 @@ export class NftMintService {
       );
     }
 
-    const royaltyBps = clip.collection.royaltyBps ?? clip.royaltyBps ?? 1000;
     const contractId = process.env.SOROBAN_NFT_CONTRACT_ID ?? '';
     if (!contractId) {
       throw new BadRequestException(
@@ -366,11 +363,6 @@ export class NftMintService {
     );
     return { clipId, mintAddress, mintedAt, nftStatus: 'minted' };
   }
-
-  async prepareBurnTx(clipId: number, walletAddress: string) {
-    if (!this.stellarService.validateAddress(walletAddress).valid) {
-      throw new BadRequestException(`Invalid wallet: ${walletAddress}`);
-    }
 
   async prepareBurnTx(
     clipId: number,
@@ -501,7 +493,6 @@ export class NftMintService {
   }
 
   private async buildMintXdr(params: {
-  private buildMintXdr(params: {
     clipId: number;
     collectionId: string;
     walletAddress: string;
@@ -563,35 +554,5 @@ export class NftMintService {
       .build();
 
     return tx.toXDR();
-  }): string {
-    return Buffer.from(
-      JSON.stringify({
-        contract: params.contractId,
-        function: 'mint',
-        args: {
-          to: params.walletAddress,
-          token_id: String(params.clipId),
-          collection_id: params.collectionId,
-          metadata: params.metadataUri,
-          royalty_bps: params.royaltyBps,
-        },
-        royalty_extension: {
-          recipients: [
-            {
-              wallet: params.walletAddress,
-              bps: params.creatorRoyaltyBps,
-              label: 'creator',
-            },
-            {
-              wallet: params.platformWallet,
-              bps: params.platformRoyaltyBps,
-              label: 'platform',
-            },
-          ],
-        },
-        network: params.network,
-        built_at: new Date().toISOString(),
-      }),
-    ).toString('base64');
   }
 }

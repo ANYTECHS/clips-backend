@@ -1,5 +1,9 @@
 import { applyDecorators, UseGuards } from '@nestjs/common';
-import { ApiBearerAuth, ApiUnauthorizedResponse, ApiForbiddenResponse } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiUnauthorizedResponse,
+  ApiForbiddenResponse,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { RolesGuard } from '../guards/roles.guard';
 import { Roles } from './roles.decorator';
@@ -19,11 +23,37 @@ export const Auth = (...roles: string[]) =>
         UseGuards(JwtAuthGuard, RolesGuard),
         Roles(...roles),
         ApiBearerAuth('access-token'),
-        ApiUnauthorizedResponse({ description: 'Unauthorized — JWT token required' }),
-        ApiForbiddenResponse({ description: `Forbidden — required role(s): ${roles.join(', ')}` }),
+        ApiUnauthorizedResponse({
+          description: 'Unauthorized — JWT token required',
+          schema: {
+            type: 'object',
+            required: ['statusCode', 'errorCode', 'message'],
+            properties: {
+              statusCode: { type: 'number', example: 401 },
+              errorCode: { type: 'string', example: 'UNAUTHORIZED' },
+              message: { type: 'string', example: 'Authentication required' },
+              reason: { type: 'string' },
+            },
+          },
+        }),
+        ApiForbiddenResponse({
+          description: `Forbidden — required role(s): ${roles.join(', ')}`,
+        }),
       )
     : applyDecorators(
         UseGuards(JwtAuthGuard),
         ApiBearerAuth('access-token'),
-        ApiUnauthorizedResponse({ description: 'Unauthorized — JWT token required' }),
+        ApiUnauthorizedResponse({
+          description: 'Unauthorized — JWT token required',
+          schema: {
+            type: 'object',
+            required: ['statusCode', 'errorCode', 'message'],
+            properties: {
+              statusCode: { type: 'number', example: 401 },
+              errorCode: { type: 'string', example: 'UNAUTHORIZED' },
+              message: { type: 'string', example: 'Authentication required' },
+              reason: { type: 'string' },
+            },
+          },
+        }),
       );

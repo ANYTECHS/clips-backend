@@ -131,6 +131,7 @@ export const payoutListSelect = {
 export const payoutDetailSelect = {
   ...payoutListSelect,
   approvedBy: true,
+  reviewedBy: true,
   rejectedAt: true,
   rejectionReason: true,
 } as const;

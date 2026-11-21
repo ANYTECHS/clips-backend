@@ -145,7 +145,8 @@ export class AdminPayoutsController {
   @ApiOperation({
     summary: 'Approve a payout under review',
     description:
-      'Transitions: under_review → approved. Records the approving admin and notifies the user.',
+      'Transitions: under_review/pending_review/pending_approval → approved. ' +
+      'Records `approvedBy` and `reviewedBy`, creates an audit entry, and notifies the user.',
   })
   @ApiParam({ name: 'id', description: 'Positive integer payout ID', type: Number, example: 1 })
   @ApiBody({ type: ApprovePayoutDto })
@@ -188,7 +189,8 @@ export class AdminPayoutsController {
   @ApiOperation({
     summary: 'Reject a payout under review',
     description:
-      'Transitions: under_review → rejected. Requires a rejection reason, records the admin, and notifies the user.',
+      'Transitions: under_review/pending_review/pending_approval → rejected. ' +
+      'Requires a rejection reason, records `reviewedBy` and `rejectionReason`, creates an audit entry, and notifies the user.',
   })
   @ApiParam({ name: 'id', description: 'Positive integer payout ID', type: Number, example: 1 })
   @ApiBody({

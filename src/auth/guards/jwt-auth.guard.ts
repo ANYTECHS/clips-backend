@@ -16,11 +16,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       context.getClass(),
     ]);
 
-    if (isPublic) {
-      return true;
-    }
-
-    return super.canActivate(context);
+    return isPublic ? true : super.canActivate(context);
   }
 
   handleRequest<TUser>(err: unknown, user: TUser): TUser {
@@ -31,6 +27,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         reason: err instanceof Error ? err.message : undefined,
       });
     }
+
     return user;
   }
 }

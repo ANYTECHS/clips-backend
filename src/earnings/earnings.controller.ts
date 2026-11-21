@@ -50,6 +50,11 @@ import {
   EarningsSummaryDto,
 } from './dto/earnings-response.dto';
 import { EarningsByPlatformResponseDto } from './dto/earnings-by-platform.dto';
+import { MonthlyEarningsResponseDto } from './dto/monthly-earnings-response.dto';
+import {
+  MonthlyEarningsQueryDto,
+  MonthlyEarningsResponseDto,
+} from './dto/monthly-earnings.dto';
 
 interface AuthRequest extends Request {
   user: { userId: number };
@@ -111,13 +116,61 @@ export class EarningsController {
       'Returns total earned, pending payout, paid-out, breakdown by source, and ' +
       'paginated history. All amounts are converted to the requested target currency.',
   })
-  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number (default: 1)', example: 1 })
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Items per page (default: 20)', example: 20 })
-  @ApiQuery({ name: 'currency', required: false, enum: Currency, description: 'Target currency (default: USD)' })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    type: Number,
+    description: 'Page number (default: 1)',
+    example: 1,
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Items per page (default: 20)',
+    example: 20,
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    enum: Currency,
+    description: 'Target currency (default: USD)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Earnings dashboard data',
     type: EarningsDashboardDto,
+    schema: {
+      type: 'object',
+      properties: {
+        totalEarned: { type: 'number', example: 1250.5 },
+        currency: { type: 'string', example: 'USD' },
+        pendingPayout: { type: 'number', example: 50.0 },
+        paidOut: { type: 'number', example: 200.0 },
+        breakdown: {
+          type: 'object',
+          properties: {
+            royalties: { type: 'number', example: 800.0 },
+            subscriptions: { type: 'number', example: 450.5 },
+          },
+        },
+        history: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              date: { type: 'string', format: 'date-time' },
+              amount: { type: 'number' },
+              currency: { type: 'string' },
+              type: {
+                type: 'string',
+                enum: ['royalty', 'subscription', 'payout'],
+              },
+            },
+          },
+        },
+      },
+    },
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async getEarningsDashboard(
@@ -193,19 +246,28 @@ export class EarningsController {
     @Req() req: AuthRequest,
     @Query() query: DailyEarningsQueryDto,
   ): Promise<DailyEarningsResponseDto> {
-    return this.dailyEarningsAggregationService.getDailyEarnings(req.user.userId, {
-      from: query.from ? new Date(query.from) : undefined,
-      to: query.to ? new Date(query.to) : undefined,
-      currency: query.currency,
-    });
+    return this.dailyEarningsAggregationService.getDailyEarnings(
+      req.user.userId,
+      {
+        from: query.from ? new Date(query.from) : undefined,
+        to: query.to ? new Date(query.to) : undefined,
+        currency: query.currency,
+      },
+    );
   }
 
   @Get('total')
   @ApiOperation({
     summary: 'Get user total earnings',
-    description: 'Returns total earned, total paid out, and available balance for the authenticated user.',
+    description:
+      'Returns total earned, total paid out, and available balance for the authenticated user.',
   })
-  @ApiQuery({ name: 'currency', required: false, enum: Currency, description: 'Target currency (default: USD)' })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    enum: Currency,
+    description: 'Target currency (default: USD)',
+  })
   @ApiResponse({
     status: 200,
     description: 'User earnings summary',
@@ -225,11 +287,29 @@ export class EarningsController {
   @Get('by-period')
   @ApiOperation({
     summary: 'Get earnings by date range',
-    description: 'Returns aggregated earnings and individual records within a date range.',
+    description:
+      'Returns aggregated earnings and individual records within a date range.',
   })
-  @ApiQuery({ name: 'startDate', required: true, type: String, description: 'ISO 8601 date (e.g. 2025-01-01)', example: '2025-01-01' })
-  @ApiQuery({ name: 'endDate', required: true, type: String, description: 'ISO 8601 date (e.g. 2025-12-31)', example: '2025-12-31' })
-  @ApiQuery({ name: 'currency', required: false, enum: Currency, description: 'Target currency (default: USD)' })
+  @ApiQuery({
+    name: 'startDate',
+    required: true,
+    type: String,
+    description: 'ISO 8601 date (e.g. 2025-01-01)',
+    example: '2025-01-01',
+  })
+  @ApiQuery({
+    name: 'endDate',
+    required: true,
+    type: String,
+    description: 'ISO 8601 date (e.g. 2025-12-31)',
+    example: '2025-12-31',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    enum: Currency,
+    description: 'Target currency (default: USD)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Earnings within the specified date range',
@@ -260,11 +340,27 @@ export class EarningsController {
   @Get('by-platform')
   @ApiOperation({
     summary: 'Get earnings broken down by platform',
-    description: 'Returns earnings grouped by source platform (tiktok, instagram, etc.).',
+    description:
+      'Returns earnings grouped by source platform (tiktok, instagram, etc.).',
   })
-  @ApiQuery({ name: 'from', required: false, type: String, description: 'ISO 8601 start date (e.g. 2026-01-01)' })
-  @ApiQuery({ name: 'to', required: false, type: String, description: 'ISO 8601 end date (e.g. 2026-08-24)' })
-  @ApiQuery({ name: 'currency', required: false, enum: Currency, description: 'Target currency (default: USD)' })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    type: String,
+    description: 'ISO 8601 start date (e.g. 2026-01-01)',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    type: String,
+    description: 'ISO 8601 end date (e.g. 2026-08-24)',
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    enum: Currency,
+    description: 'Target currency (default: USD)',
+  })
   @ApiResponse({
     status: 200,
     description: 'Platform earnings breakdown',
@@ -299,27 +395,42 @@ export class EarningsController {
   @ApiOperation({
     summary: 'Get monthly earnings summary',
     description:
-      'Returns the MonthlyEarning summary for year/month (UTC). ' +
-      'Generated automatically on the 1st of each month; falls back to live computation if not yet generated. ' +
-      'Includes total, platform breakdown grouped by currency, and currency info.',
+      'Returns the authenticated user’s monthly earnings for the requested UTC year and month. ' +
+      'Each item is a separate native-currency summary with its own platform breakdown. ' +
+      'Generated automatically on the 1st of each month; falls back to live computation if not yet generated.',
+  })
+  @ApiQuery({
+    name: 'year',
+    required: true,
+    type: Number,
+    description: 'Calendar year in UTC (2000-2100)',
+    example: 2026,
+  })
+  @ApiQuery({
+    name: 'month',
+    required: true,
+    type: Number,
+    description: 'Calendar month in UTC (1-12)',
+    example: 9,
+  })
+  @ApiQuery({
+    name: 'currency',
+    required: false,
+    enum: Currency,
+    description:
+      'Optional native-currency filter; no currency conversion is performed',
   })
   @ApiQuery({ name: 'year', required: true, type: Number, description: 'Full year, e.g. 2026', example: 2026 })
   @ApiQuery({ name: 'month', required: true, type: Number, description: 'Month 1-12', example: 9 })
+  @ApiQuery({ name: 'currency', required: false, type: String, description: 'Optional ISO 4217 currency filter', example: 'USD' })
   @ApiResponse({
     status: 200,
-    description: 'Monthly summary with total, platformBreakdown, currency',
-    schema: {
-      type: 'object',
-      properties: {
-        userId: { type: 'number', example: 1 },
-        year: { type: 'number', example: 2026 },
-        month: { type: 'number', example: 9 },
-        totalAmount: { type: 'number', example: 1250.5 },
-        currency: { type: 'string', example: 'USD' },
-        platformBreakdown: { type: 'object', example: { royalty: 800, subscription: 450.5 } },
-        generated: { type: 'boolean', example: true },
-      },
-    },
+    description: 'Monthly summaries, one row per currency',
+  @ApiResponse({
+    status: 200,
+    description:
+      'Monthly earnings summaries, with a separate item for each currency',
+    type: MonthlyEarningsResponseDto,
   })
   @ApiBadRequestResponse({ description: 'Invalid year/month' })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
@@ -327,16 +438,17 @@ export class EarningsController {
     @Req() req: AuthRequest,
     @Query('year') yearStr: string,
     @Query('month') monthStr: string,
+    @Query('currency') currency?: string,
+    @Query() query: MonthlyEarningsQueryDto,
   ) {
-    const year = parseInt(yearStr, 10);
-    const month = parseInt(monthStr, 10);
-    if (!Number.isInteger(year) || !Number.isInteger(month)) {
-      throw new BadRequestException('year and month query params are required (e.g. ?year=2026&month=9)');
-    }
     return this.earningsAggregationService.getMonthlySummary(
       req.user.userId,
       year,
       month,
+      currency,
+      query.year,
+      query.month,
+      query.currency,
     );
   }
 
@@ -346,7 +458,7 @@ export class EarningsController {
   @ApiOperation({
     summary: 'Export earnings as CSV for tax reporting',
     description:
-      'Downloads a CSV file of the authenticated user\'s earnings for an optional date range. ' +
+      "Downloads a CSV file of the authenticated user's earnings for an optional date range. " +
       'Supported format: csv. Empty results still return a header-only CSV file. ' +
       'Columns: date, clipTitle, amount, currency, source, transactionId.',
   })
@@ -377,11 +489,16 @@ export class EarningsController {
       'CSV file attachment (Content-Type: text/csv). Header-only when no earnings match.',
     content: {
       'text/csv': {
-        schema: { type: 'string', example: 'date,clipTitle,amount,currency,source,transactionId\n' },
+        schema: {
+          type: 'string',
+          example: 'date,clipTitle,amount,currency,source,transactionId\n',
+        },
       },
     },
   })
-  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT (Bearer access-token)' })
+  @ApiUnauthorizedResponse({
+    description: 'Missing or invalid JWT (Bearer access-token)',
+  })
   @ApiBadRequestResponse({
     description: 'Invalid date range or unsupported export format',
     schema: {
@@ -390,7 +507,8 @@ export class EarningsController {
           summary: 'startDate after endDate',
           value: {
             statusCode: 400,
-            message: 'Invalid date range: startDate must be on or before endDate.',
+            message:
+              'Invalid date range: startDate must be on or before endDate.',
             error: 'Bad Request',
           },
         },
@@ -398,7 +516,8 @@ export class EarningsController {
           summary: 'Unsupported format',
           value: {
             statusCode: 400,
-            message: 'Unsupported export format "pdf". Only "csv" is supported.',
+            message:
+              'Unsupported export format "pdf". Only "csv" is supported.',
             error: 'Bad Request',
           },
         },
@@ -418,10 +537,11 @@ export class EarningsController {
       );
     }
 
-    const { filename, content } = await this.earningsExportService.exportEarningsCsv(
-      req.user.userId,
-      { startDate, endDate },
-    );
+    const { filename, content } =
+      await this.earningsExportService.exportEarningsCsv(req.user.userId, {
+        startDate,
+        endDate,
+      });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -527,16 +647,27 @@ export class EarningsController {
       'Already-deleted or non-owned records return 404. ' +
       'Admins can restore via POST /admin/earnings/:earningId/restore.',
   })
-  @ApiParam({ name: 'earningId', type: Number, description: 'Earning record ID' })
-  @ApiResponse({ status: 200, description: 'Earning soft-deleted successfully' })
+  @ApiParam({
+    name: 'earningId',
+    type: Number,
+    description: 'Earning record ID',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Earning soft-deleted successfully',
+  })
   @ApiNotFoundResponse({
-    description: 'Earning not found, already soft-deleted, or does not belong to user',
+    description:
+      'Earning not found, already soft-deleted, or does not belong to user',
   })
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async deleteEarning(
     @Req() req: AuthRequest,
     @Param('earningId', ParseIntPipe) earningId: number,
   ) {
-    return this.earningsAggregationService.softDelete(earningId, req.user.userId);
+    return this.earningsAggregationService.softDelete(
+      earningId,
+      req.user.userId,
+    );
   }
 }

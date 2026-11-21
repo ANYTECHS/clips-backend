@@ -17,6 +17,9 @@ import { IsSupportedCurrencyConstraint } from './is-supported-currency.validator
 import { IsValidPlanConstraint } from './is-valid-plan.validator';
 
 export { CLIP_ROYALTY_BPS_MAX, STELLAR_TX_HASH_REGEX };
+export { CLIP_ROYALTY_BPS_MAX };
+export { IsStellarAddress } from './is-stellar-address.validator';
+export { IsValidSchedule } from './is-valid-schedule.validator';
 export type { RoyaltyBpsValidationOptions, XlmAmountOptions, PasswordOptions };
 export {
   IsIdArray,
