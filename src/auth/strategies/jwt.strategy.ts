@@ -6,6 +6,7 @@ export type JwtPayload = {
   sub: number;
   email: string | null;
   emailVerified?: boolean;
+  role?: string;
 };
 
 @Injectable()
@@ -30,6 +31,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       userId: payload.sub,
       email: payload.email,
       emailVerified: payload.emailVerified,
+      role: payload.role ?? 'user',
     };
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';

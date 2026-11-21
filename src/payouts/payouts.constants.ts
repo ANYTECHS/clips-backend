@@ -89,8 +89,9 @@ export const PAID_OUT_PAYOUT_STATUSES = ['completed', 'processing'] as const;
 
 /** Statuses surfaced in the admin approval queue. */
 export const ADMIN_PENDING_PAYOUT_STATUSES = [
+  'under_review',
+  'pending_review',
   'pending_approval',
-  'approved',
 ] as const;
 
 /** Stellar payouts in these statuses are polled until Horizon confirms them. */

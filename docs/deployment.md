@@ -77,7 +77,9 @@ cp .env.example .env
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated CORS whitelist |
 | `BULLMQ_CLIP_GENERATION_CONCURRENCY` | `2` | Parallel clip-generation jobs per worker |
 | `BULLMQ_EMAIL_DELIVERY_CONCURRENCY` | `5` | Parallel email delivery jobs |
-| `MIN_PAYOUT_USD` / `MAX_PAYOUT_USD` | `5` / `10000` | Payout limits in USD |
+| `MIN_PAYOUT` / `MAX_PAYOUT` | `5` / `10000` | Generic payout limits across supported currencies |
+| `MIN_PAYOUT_USD` / `MAX_PAYOUT_USD` | `5` / `10000` | USD payout limits (currency-specific override) |
+| `MIN_PAYOUT_<CCY>` / `MAX_PAYOUT_<CCY>` | — | Optional limits for EUR, GBP, XLM, USDC, or configured JSON currencies |
 | `LEADERBOARD_ENABLED` | `false` | Enable public earnings leaderboard |
 | `ENABLE_SWAGGER_UI` | `false` in production | Override Swagger visibility |
 

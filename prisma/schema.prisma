@@ -10,12 +10,15 @@ datasource db {
 model User {
   id                     Int            @id @default(autoincrement())
   email                  String         @unique
+  username               String?        @unique
   password               String?
   mfaEnabled             Boolean        @default(false)
   mfaSecret              String?
   provider               String?
   providerId             String?
   name                   String?
+  username               String?        @unique
+  bio                    String?
   picture                String?
   emailVerified          DateTime?
   stellarPublicKey       String?
@@ -38,6 +41,7 @@ model User {
   emailVerificationTokens EmailVerificationToken[]
   earningsAuditLogs       EarningsAuditLog[]
   dailyEarnings           DailyEarning[]
+  monthlyEarnings         MonthlyEarning[]
   earningsSummary         UserEarningsSummary?
 
   @@unique([provider, providerId])
@@ -259,6 +263,7 @@ model Payout {
   paidAt           DateTime?
   approvedAt       DateTime?
   approvedBy       Int?
+  reviewedBy       Int?
   reviewedAt       DateTime?
   rejectedAt       DateTime?
   rejectionReason  String?
@@ -479,10 +484,12 @@ model MonthlyEarning {
   platformBreakdown Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, year, month])
+  @@unique([userId, year, month, currency])
   @@index([userId])
   @@index([year, month])
+  @@index([userId, year, month, currency])
 }
 
 model EarningsAuditLog {

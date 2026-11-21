@@ -3,7 +3,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreatePayoutRequestDto {
   @ApiProperty({
-    description: 'Amount to withdraw in USD',
+    description:
+      'Amount to withdraw in USD. Must be at least MIN_PAYOUT (default 5) ' +
+      'and no more than MAX_PAYOUT (default 10000).',
     example: 200,
     type: 'number',
   })

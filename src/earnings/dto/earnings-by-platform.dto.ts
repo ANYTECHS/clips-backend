@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { CURRENCY_ENUM } from '../../common/validators/is-supported-currency.validator';
 
 export class PlatformEarningDto {
   @ApiProperty({ example: 'tiktok', description: 'Source platform (earning.source, fallback unknown)' })
@@ -7,7 +8,7 @@ export class PlatformEarningDto {
   @ApiProperty({ example: 125.5, description: 'Total converted amount for the platform in the target currency. Currencies are never mixed: each earning is converted explicitly before summing.' })
   amount: number;
 
-  @ApiProperty({ example: 'USD', enum: ['USD', 'EUR', 'GBP', 'XLM', 'USDC'], description: 'Target currency. Supported: USD, EUR, GBP, XLM, USDC.' })
+  @ApiProperty({ example: 'USD', enum: CURRENCY_ENUM, description: 'Target currency. Supported: USD, EUR, GBP, XLM, USDC.' })
   currency: string;
 
   @ApiProperty({ example: 125.5, description: 'Alias of amount for backwards compatibility' })
@@ -36,7 +37,7 @@ export class EarningsByPlatformResponseDto {
   @ApiProperty({ example: 250.75, description: 'Sum across platforms in the target currency' })
   totalEarnings: number;
 
-  @ApiProperty({ example: 'USD', enum: ['USD', 'EUR', 'GBP', 'XLM', 'USDC'] })
+  @ApiProperty({ example: 'USD', enum: CURRENCY_ENUM })
   currency: string;
 }
 

@@ -9,10 +9,11 @@ This document is the authoritative reference for the ClipCash REST API. It cover
 ## Table of Contents
 
 1. [Base URL & Versioning](#base-url--versioning)
-2. [Authentication](#authentication)
-3. [Common Headers](#common-headers)
-4. [Common Error Responses](#common-error-responses)
-5. [Endpoints](#endpoints)
+2. [Contract testing](#contract-testing)
+3. [Authentication](#authentication)
+4. [Common Headers](#common-headers)
+5. [Common Error Responses](#common-error-responses)
+6. [Endpoints](#endpoints)
    - [Auth](#auth)
    - [Users](#users)
    - [Videos](#videos)
@@ -23,11 +24,11 @@ This document is the authoritative reference for the ClipCash REST API. It cover
    - [NFT / Mint](#nft--mint)
    - [Subscriptions](#subscriptions)
    - [Health & Metrics](#health--metrics)
-6. [Workflows](#workflows)
+7. [Workflows](#workflows)
    - [Clip Curation](#clip-curation-workflow)
    - [NFT Minting](#nft-minting-workflow)
-7. [Pagination](#pagination)
-8. [API Versioning](#api-versioning)
+8. [Pagination](#pagination)
+9. [API Versioning](#api-versioning)
 
 ---
 
@@ -39,6 +40,33 @@ This document is the authoritative reference for the ClipCash REST API. It cover
 | Production | `https://api.clipcash.app` (example) |
 
 The API does **not** currently use URL versioning (e.g. `/v1/`). All endpoints are served from the root path.
+
+## Contract testing
+
+Swagger is the API reference; Pact checks the HTTP behavior consumed by the
+frontend. The consumer examples are in
+[`src/tests/pact/api-contract.pact.spec.ts`](../src/tests/pact/api-contract.pact.spec.ts)
+and cover authentication, clips, videos, earnings, wallets, payouts, and NFT
+mint enqueue. Pact writes the consumer contract to
+`src/tests/pact/pacts/clips-frontend-clips-backend-api.json`.
+
+The provider suite starts the real Nest controllers with isolated service
+fixtures, verifies the generated Pact file, checks Swagger request/response
+DTO and bearer-auth metadata, and exercises invalid request bodies. No external
+database, Redis, or Pact Broker is required.
+
+Run both sides locally with:
+
+```sh
+npm run test:contract
+```
+
+The consumer suite must run before provider verification because it generates
+the Pact file. For an intentional API change, update the DTO and its Swagger
+decorators first, then update the consumer interaction and regenerate the Pact
+file with the command above. Review the generated contract with the code change.
+The GitHub Actions contract workflow runs these same steps for pushes and pull
+requests; a provider mismatch fails the check.
 
 ---
 
@@ -155,8 +183,19 @@ Register a new user with email and password.
 
 ```json
 {
-  "accessToken": "eyJhbGci...",
-  "refreshToken": "eyJhbGci..."
+  "user": {
+    "id": 1,
+    "email": "user@example.com",
+    "name": "Jane Doe",
+    "picture": null,
+    "mfaEnabled": false,
+    "emailVerified": true
+  },
+  "tokens": {
+    "accessToken": "eyJhbGci...",
+    "refreshToken": "eyJhbGci..."
+  },
+  "csrfToken": "..."
 }
 ```
 
@@ -651,7 +690,7 @@ Get available balance for payout. Formula: `totalEarned - totalPaidOut - totalPe
 
 #### `POST /payouts/request`
 
-Request a payout.
+Create a payout request for the authenticated user. The amount must meet the configured minimum/maximum and not exceed the user's available earnings balance. `method` must be `stellar` or `fiat`; a Stellar request requires an active Stellar wallet, while a fiat request requires a default payout method. The response includes the created payout's initial status (`approved` for amounts below the manual-review threshold, otherwise `under_review`).
 
 **Request body:**
 
@@ -659,14 +698,59 @@ Request a payout.
 {
   "amount": 100.00,
   "currency": "USD",
-  "method": "stellar",
-  "walletId": 1
+  "method": "stellar"
 }
 ```
 
-**Response `201`:** Created payout object.
+**Response `201`:**
 
-**Response `400`:** Amount below minimum (`MIN_PAYOUT_USD`) or exceeds available balance.
+```json
+{
+  "payoutId": "payout_123",
+  "id": 123,
+  "amount": 100.00,
+  "currency": "USD",
+  "method": "stellar",
+  "status": "approved",
+  "feeAmount": 1.00,
+  "finalAmount": 99.00,
+  "createdAt": "2026-11-20T03:00:00.000Z"
+}
+```
+
+`destinations` may be supplied instead of `method` to split the payout between fiat and Stellar destinations. Each destination uses either `percentage` or `amount`; the percentages must sum to 100, or the amounts must sum to the request amount.
+
+**Response `400`:** Invalid request fields or payout method, amount below the configured minimum, amount above the configured maximum, insufficient available balance, or missing payout destination.
+
+**Response `401`:** Missing or invalid bearer token.
+
+**Response `409`:** The user already has an open payout request.
+
+---
+
+#### `GET /payouts`
+
+List the authenticated user's payout records. Supports optional `status`, `page` (default `1`), and `limit` (default `20`, maximum `100`) query parameters.
+
+**Response `200`:** Paginated payout objects with status and transaction/confirmation details.
+
+**Response `400`:** Invalid status or pagination query parameter.
+
+**Response `401`:** Missing or invalid bearer token.
+
+---
+
+#### `GET /payouts/:id`
+
+Get one payout by its integer ID. Only payouts owned by the authenticated user are returned.
+
+**Response `200`:** Payout details including current status, fee/net amount, and transaction/confirmation details when available.
+
+**Response `400`:** The ID is not a valid integer.
+
+**Response `401`:** Missing or invalid bearer token.
+
+**Response `404`:** Payout does not exist or is not owned by the authenticated user.
 
 ---
 

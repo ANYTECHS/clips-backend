@@ -1,5 +1,9 @@
 import { IsString, IsOptional, IsBoolean, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsSupportedCurrency,
+  CURRENCY_API_PROPERTY_OPTIONAL,
+} from '../../common/validators/decorators';
 
 export class CreatePayoutMethodDto {
   @ApiProperty({
@@ -68,12 +72,13 @@ export class CreatePayoutMethodDto {
   country?: string;
 
   @ApiPropertyOptional({
-    description: 'Currency code (ISO 4217)',
-    example: 'USD',
+    ...CURRENCY_API_PROPERTY_OPTIONAL,
+    description: 'ISO 4217 currency code. Supported: USD, EUR, GBP, XLM, USDC.',
     default: 'USD',
   })
   @IsOptional()
   @IsString()
+  @IsSupportedCurrency()
   currency?: string;
 
   @ApiPropertyOptional({

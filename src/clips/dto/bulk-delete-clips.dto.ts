@@ -1,18 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, IsInt, ArrayMinSize, ArrayMaxSize } from 'class-validator';
+import { IsIdArray } from '../../common/validators/array-validators';
+
 export class BulkDeleteClipsDto {
-  @ApiProperty({ description: 'Array of clip IDs to delete', example: [1,2,3], type: [Number], minItems: 1, maxItems: 200 })
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @IsInt({ each: true }) clipIds!: number[];
-  @ApiProperty({
-    description: 'Array of clip IDs to delete',
+  @IsIdArray({
+    min: 1,
+    max: 200,
+    description: 'IDs of the clips to delete — must all belong to the requesting user',
     example: [1, 2, 3],
-    type: [Number],
-    minItems: 1,
-    maxItems: 200,
   })
-  @IsArray()
-  @ArrayMinSize(1)
-  @ArrayMaxSize(200)
-  @IsInt({ each: true })
   clipIds!: number[];
 }

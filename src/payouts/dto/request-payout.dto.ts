@@ -13,6 +13,10 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TrimString } from '../../common/decorators/trim-string.decorator';
+import {
+  IsSupportedCurrency,
+  CURRENCY_API_PROPERTY,
+} from '../../common/validators/decorators';
 
 /** @deprecated Use CreatePayoutDto */
 export type RequestPayoutDto = CreatePayoutDto;
@@ -81,14 +85,22 @@ export class CreatePayoutDto {
   amount: number;
 
   @ApiProperty({
+    ...CURRENCY_API_PROPERTY,
     description:
       'ISO 4217 currency code. Supported currencies with default limits: USD ' +
-      '(and any currency configured via MIN_PAYOUT_*/MAX_PAYOUT_* or PAYOUT_LIMITS).',
+      'EUR, GBP, XLM, USDC. Currency-specific overrides use ' +
+      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON.',
+      'ISO 4217 currency code. Supported: USD, EUR, GBP, XLM, USDC. ' +
+      'Payout limits apply per-currency (defaults: MIN_PAYOUT_USD=5, ' +
+      'MAX_PAYOUT_USD=10000; override via MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> ' +
+      'or PAYOUT_LIMITS JSON). Amounts outside the range are rejected with a ' +
+      '400 validation error.',
     example: 'USD',
   })
   @TrimString()
   @IsString({ message: 'currency must be a string' })
   @IsNotEmpty({ message: 'currency is required' })
+  @IsSupportedCurrency()
   currency: string;
 
   @ApiPropertyOptional({

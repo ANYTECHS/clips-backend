@@ -18,6 +18,7 @@ import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
 import { PayoutValidationService } from './payout-validation.service';
 import { MAX_BULK_PAYOUT_BATCH_SIZE } from './payouts.constants';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { EarningsService } from '../earnings/earnings.service';
 
 import {
   PAYOUT_STATUSES,
@@ -41,6 +42,7 @@ export class PayoutProcessingService {
     private readonly payoutValidationService: PayoutValidationService,
     private readonly retryStrategy: PayoutRetryStrategyService,
     private readonly stellarPayoutVerification: StellarPayoutVerificationService,
+    private readonly earningsService: EarningsService,
     @InjectQueue(PAYOUT_RETRY_QUEUE) private readonly payoutRetryQueue: Queue,
   ) {}
 
@@ -234,6 +236,9 @@ export class PayoutProcessingService {
       });
 
       this.logger.log(`Payout ${payoutId} completed. Transaction hash: ${txHash}`);
+
+      // Invalidate earnings cache since availableBalance changed
+      await this.earningsService.invalidateUserEarningsCache(payout.userId);
 
       void this.payoutReceiptService.generateAndSendReceipt({
         payoutId: completePayoutData.id,
@@ -506,6 +511,9 @@ export class PayoutProcessingService {
 
           this.logger.log(`Payout ${payoutId} completed in batch. Transaction hash: ${txHash}`);
 
+          // Invalidate earnings cache since availableBalance changed
+          await this.earningsService.invalidateUserEarningsCache(payout.userId);
+
           void this.payoutReceiptService.generateAndSendReceipt({
             payoutId: payout.id,
             amount: payout.amount,
@@ -688,6 +696,10 @@ export class PayoutProcessingService {
 
         if (updated.count > 0) {
           this.logger.log(`Payout ${payoutId} confirmed on-chain (tx: ${txHash})`);
+
+          // Invalidate earnings cache since availableBalance changed
+          await this.earningsService.invalidateUserEarningsCache(userId);
+
           await this.prisma.earningsAuditLog.create({
             data: {
               userId,
