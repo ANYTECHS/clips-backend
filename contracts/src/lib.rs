@@ -6,12 +6,27 @@ use soroban_sdk::{contract, contractimpl, Symbol, Env, Address, String};
 mod types;
 mod storage;
 mod error;
+#[cfg(test)]
+pub mod test_helpers;
 mod token;
 mod nft;
 
 use types::*;
 use storage::*;
 use error::ContractError;
+
+/// ClipCashNFT - NFT minting and royalty management contract
+/// 
+/// Handles:
+/// - NFT minting with creator and platform royalty support
+/// - Ownership tracking
+/// - Royalty distribution and claims
+/// - Contract administration and upgrades
+/// Approximate fee estimates in stroops (1 XLM = 10_000_000 stroops).
+/// These are static baselines; actual fees depend on network congestion and
+/// resource usage at submission time and may change before the user signs.
+pub const EST_MINT_FEE_STROOPS: i64 = 120_000;
+pub const EST_TRANSFER_FEE_STROOPS: i64 = 60_000;
 
 /// 24-hour timelock in seconds.
 const TIMELOCK_SECS: u64 = 24 * 60 * 60;
@@ -392,6 +407,62 @@ impl ClipCashNFT {
         Ok(())
     }
 
+    /// Approximate mint cost in stroops. Estimates can change before submission.
+    pub fn estimate_mint_fee(_env: Env) -> i64 {
+        EST_MINT_FEE_STROOPS
+    }
+
+    /// Approximate transfer cost in stroops. Estimates can change before submission.
+    pub fn estimate_transfer_fee(_env: Env) -> i64 {
+        EST_TRANSFER_FEE_STROOPS
+    }
+
+    /// Freeze an individual NFT so it cannot be transferred (owner/admin only).
+    pub fn freeze(env: Env, token_id: u32) -> Result<(), ContractError> {
+        let owner = get_owner(&env).ok_or(ContractError::NotInitialized)?;
+        owner.require_auth();
+        if is_frozen(&env, token_id) {
+            return Err(ContractError::AlreadyFrozen);
+        }
+        set_frozen(&env, token_id, true);
+        env.events()
+            .publish(("ClipCashNFT", Symbol::new(&env, "frozen")), token_id);
+        Ok(())
+    }
+
+    /// Unfreeze a previously frozen NFT (owner/admin only).
+    pub fn unfreeze(env: Env, token_id: u32) -> Result<(), ContractError> {
+        let owner = get_owner(&env).ok_or(ContractError::NotInitialized)?;
+        owner.require_auth();
+        if !is_frozen(&env, token_id) {
+            return Err(ContractError::NotFrozen);
+        }
+        set_frozen(&env, token_id, false);
+        env.events()
+            .publish(("ClipCashNFT", Symbol::new(&env, "unfrozen")), token_id);
+        Ok(())
+    }
+
+    /// Whether an NFT is currently frozen.
+    pub fn is_frozen(env: Env, token_id: u32) -> bool {
+        is_frozen(&env, token_id)
+    }
+
+    /// Guard for transfer paths: returns `TokenFrozen` while the NFT is frozen.
+    /// Administrative operations (freeze/unfreeze, royalty config, ownership)
+    /// remain permitted regardless of freeze state.
+    pub fn ensure_transferable(env: Env, token_id: u32) -> Result<(), ContractError> {
+        if is_frozen(&env, token_id) {
+            return Err(ContractError::TokenFrozen);
+        }
+        Ok(())
+    }
+
+    /// Transfer ownership to a new owner (owner only)
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `new_owner` - The new owner's address
     // -----------------------------------------------------------------------
     // Ownership transfer
     // -----------------------------------------------------------------------
@@ -1709,5 +1780,55 @@ mod tests {
         let result =
             client.try_schedule_pause(&soroban_sdk::String::from_str(&env, "hack"));
         assert!(result.is_err());
+    }
+
+    use crate::test_helpers::*;
+
+    #[test]
+    fn test_fee_estimates() {
+        let (_env, _owner, client) = setup_initialized(250, 500);
+        assert_eq!(client.estimate_mint_fee(), EST_MINT_FEE_STROOPS);
+        assert_eq!(client.estimate_transfer_fee(), EST_TRANSFER_FEE_STROOPS);
+    }
+
+    #[test]
+    fn test_freeze_blocks_transfer_and_unfreeze_allows() {
+        let (env, _owner, client) = setup_initialized(250, 500);
+        let clip = mint_test_clip(&env, TestClipOpts::default());
+
+        client.freeze(&clip.token_id);
+        assert!(client.is_frozen(&clip.token_id));
+        assert_eq!(
+            client.try_ensure_transferable(&clip.token_id),
+            Err(Ok(ContractError::TokenFrozen))
+        );
+        assert_eq!(client.try_freeze(&clip.token_id), Err(Ok(ContractError::AlreadyFrozen)));
+
+        // Administrative operations remain permitted while frozen.
+        set_test_royalty(&client, 300, 700);
+
+        client.unfreeze(&clip.token_id);
+        assert!(!client.is_frozen(&clip.token_id));
+        assert_eq!(client.try_unfreeze(&clip.token_id), Err(Ok(ContractError::NotFrozen)));
+        simulate_test_sale(&client, &clip, 1_000_000);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_freeze_unauthorized() {
+        let (env, _owner, client) = setup_initialized(250, 500);
+        env.set_auths(&[]);
+        client.freeze(&1);
+    }
+
+    #[test]
+    fn test_sale_helper_splits_royalties() {
+        let (env, _owner, client) = setup_initialized(250, 500);
+        set_test_royalty(&client, 300, 700);
+        let clip = mint_test_clip(&env, TestClipOpts { token_id: 7, ..Default::default() });
+        let sale = simulate_test_sale(&client, &clip, 1_000_000);
+        assert_eq!(sale.creator_amount, 30_000);
+        assert_eq!(sale.platform_amount, 70_000);
+        assert_eq!(sale.seller_amount, 900_000);
     }
 }

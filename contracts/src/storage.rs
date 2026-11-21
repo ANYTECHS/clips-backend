@@ -57,6 +57,22 @@ pub fn get_platform_royalty_bps(env: &Env) -> Option<u32> {
         .get(&PLATFORM_ROYALTY_BPS)
 }
 
+/// Mark a token as frozen / unfrozen
+pub fn set_frozen(env: &Env, token_id: u32, frozen: bool) {
+    let key = (symbol_short!("FROZEN"), token_id);
+    if frozen {
+        env.storage().persistent().set(&key, &true);
+    } else {
+        env.storage().persistent().remove(&key);
+    }
+}
+
+/// Whether a token is currently frozen
+pub fn is_frozen(env: &Env, token_id: u32) -> bool {
+    env.storage()
+        .persistent()
+        .get(&(symbol_short!("FROZEN"), token_id))
+        .unwrap_or(false)
 // ---------------------------------------------------------------------------
 // Schema 2: tokens, supply, ownership index and royalties
 // ---------------------------------------------------------------------------

@@ -24,6 +24,9 @@ pub enum ContractError {
     AlreadyExists = 7,
     /// Wallet does not hold enough for the operation. → 400
     InsufficientBalance = 8,
+    TokenFrozen = 9,
+    AlreadyFrozen = 10,
+    NotFrozen = 11,
     /// `claim_royalties` found nothing owed for the token (also what a second
     /// claim in a row returns, because the first one reset the balance).
     NoRoyaltiesToClaim = 9,
@@ -74,6 +77,9 @@ impl core::fmt::Display for ContractError {
             ContractError::NotFound => write!(f, "Not found"),
             ContractError::AlreadyExists => write!(f, "Already exists"),
             ContractError::InsufficientBalance => write!(f, "Insufficient balance"),
+            ContractError::TokenFrozen => write!(f, "Token is frozen"),
+            ContractError::AlreadyFrozen => write!(f, "Token already frozen"),
+            ContractError::NotFrozen => write!(f, "Token is not frozen"),
             ContractError::NoRoyaltiesToClaim => write!(f, "No royalties to claim"),
             ContractError::RoyaltyAssetNotSet => write!(f, "Royalty asset not set"),
             ContractError::InvalidAmount => write!(f, "Invalid amount"),
