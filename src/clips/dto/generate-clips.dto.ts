@@ -12,7 +12,9 @@ import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
   Validate,
+  IsEnum,
 } from 'class-validator';
+import { JobPriorityLevel } from '../../queue/job-priority';
 
 /** Issue #1360 — clip generation settings. */
 export const CLIP_STYLES = ['viral', 'educational', 'funny', 'highlight', 'storytelling'] as const;
@@ -83,4 +85,18 @@ export class GenerateClipsDto {
   @ValidateNested()
   @Type(() => ClipGenerationSettingsDto)
   settings: ClipGenerationSettingsDto = new ClipGenerationSettingsDto();
+
+  @ApiPropertyOptional({
+    description:
+      'Optional priority level for clip generation jobs. ' +
+      'Supported values: critical, high, normal, low. ' +
+      'Note: critical priority requires administrator privileges.',
+    enum: JobPriorityLevel,
+    example: JobPriorityLevel.HIGH,
+  })
+  @IsOptional()
+  @IsEnum(JobPriorityLevel, {
+    message: 'priority must be one of: critical, high, normal, low',
+  })
+  priority?: JobPriorityLevel;
 }

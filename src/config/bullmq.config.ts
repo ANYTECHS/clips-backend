@@ -320,3 +320,14 @@ export function validateRateLimitConfig(
     );
   }
 }
+
+export {
+  JobPriorityLevel,
+  JobPriorityNumeric,
+  JOB_PRIORITY_NUMERIC,
+  QUEUE_PRIORITY_BEHAVIOR,
+  toBullMQPriority,
+  assertAuthorizedJobPriority,
+  getQueueDefaultPriority,
+} from '../queue/job-priority';
+

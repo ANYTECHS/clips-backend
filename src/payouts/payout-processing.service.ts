@@ -19,6 +19,11 @@ import { PayoutValidationService } from './payout-validation.service';
 import { MAX_BULK_PAYOUT_BATCH_SIZE } from './payouts.constants';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 import { EarningsService } from '../earnings/earnings.service';
+import {
+  JobPriorityLevel,
+  JobPriorityNumeric,
+  toBullMQPriority,
+} from '../queue/job-priority';
 
 import {
   PAYOUT_STATUSES,
@@ -327,6 +332,7 @@ export class PayoutProcessingService {
             delay: delayMs,
             attempts: this.retryStrategy.getMaxRetries(),
             backoff: { type: 'exponential', delay: 60000 },
+            priority: JobPriorityNumeric.CRITICAL,
           },
         );
       } else {
@@ -343,7 +349,11 @@ export class PayoutProcessingService {
    * Manual retry for failed crypto transfers.
    * Allows POST /payouts/:id/retry for failed/pending_retry payouts.
    */
-  async retryPayout(payoutId: number, userId?: number) {
+  async retryPayout(
+    payoutId: number,
+    userId?: number,
+    priority?: JobPriorityLevel | number,
+  ) {
     const payout = await this.prisma.payout.findFirst({
       where: userId ? { id: payoutId, userId } : { id: payoutId },
       select: { id: true, status: true, retryCount: true },
@@ -368,18 +378,23 @@ export class PayoutProcessingService {
       where: { id: payoutId },
       data: { status: 'pending_retry', nextRetryAt, failureReason: null },
     });
+    const jobPriority = toBullMQPriority(priority, JobPriorityNumeric.CRITICAL);
     await this.payoutRetryQueue.add(
       'retry-payout',
       { payoutId },
       {
         delay: Math.max(0, nextRetryAt.getTime() - Date.now()),
         attempts: this.retryStrategy.getMaxRetries(),
+        priority: jobPriority,
       },
     );
     return { id: payoutId, status: 'pending_retry', nextRetryAt };
   }
 
-  async batchProcessPayouts(payoutIds: number[]): Promise<{
+  async batchProcessPayouts(
+    payoutIds: number[],
+    priority?: JobPriorityLevel | number,
+  ): Promise<{
     processed: number; failed: number; results: Array<{ id: number; status: string; error?: string }>;
   }> {
     if (!Array.isArray(payoutIds) || payoutIds.length === 0) {
