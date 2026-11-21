@@ -1,5 +1,6 @@
+import { IsStellarAddress } from '../../common/validators/decorators';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, IsOptional, Matches } from 'class-validator';
+import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
 
 export class UpdateRoyaltyRecipientDto {
   @ApiProperty({
@@ -8,7 +9,7 @@ export class UpdateRoyaltyRecipientDto {
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^G[A-Z0-9]{55}$/, { message: 'Must be a valid Stellar public key (G...)' })
+  @IsStellarAddress()
   newRecipient!: string;
 
   @ApiPropertyOptional({
