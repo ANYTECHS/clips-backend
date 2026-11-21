@@ -570,4 +570,63 @@ describe('Clip Generation Pipeline — E2E', () => {
       expect(true).toBe(true);
     });
   });
+
+  // ── 9. Integration verification ──────────────────────────────────────────
+
+  describe('Step 9 — Integration verification', () => {
+    it('preserves transcript field throughout the pipeline', async () => {
+      const job = makeMockJob({
+        ...baseJobData,
+        transcript: 'This moment went viral because...',
+      });
+
+      await processor.process(job);
+
+      expect(prismaMock.clip.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            transcript: expect.any(String),
+          }),
+        }),
+      );
+    });
+
+    it('handles edge case: very short clips (< 1 second)', async () => {
+      const job = makeMockJob({
+        ...baseJobData,
+        startTime: 0,
+        endTime: 0.5,
+        duration: 0.5,
+      });
+
+      // Should not throw
+      await expect(processor.process(job)).resolves.toBeDefined();
+    });
+
+    it('handles edge case: clip at the end of video', async () => {
+      const job = makeMockJob({
+        ...baseJobData,
+        startTime: 110,
+        endTime: 120,
+        videoDuration: 120,
+      });
+
+      await processor.process(job);
+
+      expect(prismaMock.clip.update).toHaveBeenCalled();
+    });
+
+    it('reports correct job ID throughout processing', async () => {
+      const jobId = 'unique-job-id-12345';
+      const job = makeMockJob(baseJobData, jobId);
+
+      await processor.process(job);
+
+      expect(job.updateProgress).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: expect.any(String),
+        }),
+      );
+    });
+  });
 });

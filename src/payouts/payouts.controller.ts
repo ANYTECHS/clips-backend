@@ -15,7 +15,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
-  ApiForbiddenResponse,
+  ApiExtraModels,
   ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOperation,
@@ -24,6 +24,7 @@ import {
   ApiResponse,
   ApiTags,
   ApiUnauthorizedResponse,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { ApiStandardErrors } from '../common/decorators/api-standard-errors.decorator';
 import { Request, Response } from 'express';
@@ -31,6 +32,8 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
+import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
+import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import {
   FeePreviewResponseDto,
   PayoutOnChainStatusResponseDto,
@@ -42,6 +45,7 @@ import {
   PayoutRequestResponseDto,
   SplitPayoutRequestResponseDto,
 } from './dto/payout-request-response.dto';
+import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 
 import { PayoutsService } from './payouts.service';
 import { BalanceService } from './balance.service';
@@ -50,6 +54,7 @@ import { PayoutExportService } from './payout-export.service';
 import { PaginatedResponseDto } from '../common/dtos/api-response.dto';
 
 import { API_ERROR_SCHEMA } from '../common/dtos';
+import { ValidationErrorResponseDto } from '../common/dtos/validation-error-response.dto';
 import {
   PAYOUT_STATUS_SWAGGER_DESCRIPTION,
   PAYOUT_STATUS_VALUES,
@@ -65,7 +70,8 @@ const payoutError = (statusCode: number, error: string, message: string) => ({
   value: { statusCode, message, error },
 });
 
-@ApiTags('Payouts')
+@ApiTags('payout')
+@ApiExtraModels(ValidationErrorResponseDto)
 @ApiBearerAuth('access-token')
 @ApiStandardErrors()
 @ApiUnauthorizedResponse({ description: 'Unauthorized', schema: API_ERROR_SCHEMA })
@@ -377,14 +383,25 @@ export class PayoutsController {
       'insufficient balance, invalid split destinations, or no Stellar wallet / default payout method configured.',
     content: {
       'application/json': {
-        schema: validationErrorSchema,
+        schema: {
+          oneOf: [
+            { $ref: getSchemaPath(ValidationErrorResponseDto) },
+            validationErrorSchema,
+          ],
+        },
         examples: {
           dtoValidation: {
             summary: 'Malformed body',
             value: {
               statusCode: 400,
-              message: ['amount must be a valid number', 'method must be one of: fiat, stellar'],
+              message: 'Validation failed',
               error: 'Bad Request',
+              details: [
+                {
+                  field: 'amount',
+                  errors: ['amount must be a valid number'],
+                },
+              ],
             },
           },
           belowMinimum: {
@@ -701,6 +718,21 @@ export class PayoutsController {
     description: 'Payout not found (missing or not owned by caller)',
     schema: API_ERROR_SCHEMA,
   })
+  @ApiBadRequestResponse({
+    description: 'Payout ID must be an integer',
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'number', example: 400 },
+        message: {
+          type: 'string',
+          example: 'Validation failed (numeric string is expected)',
+        },
+        error: { type: 'string', example: 'Bad Request' },
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Payout not found' })
   async getPayout(
     @Req() req: RequestWithUser,
     @Param('id', ParseIntPipe) id: number,

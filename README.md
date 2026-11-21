@@ -240,8 +240,24 @@ Swagger (development): <http://localhost:3000/api/docs>
 | `npm run start:dev` | Start API with hot reload |
 | `npm test` | Unit tests |
 | `npm run test:e2e` | End-to-end tests |
+| `npm run test:integration:prisma-bullmq` | Opt-in Prisma + BullMQ integration tests |
 | `npm run lint` | ESLint |
 | `npx prisma studio` | Browse database |
+
+The Prisma + BullMQ integration suite requires dedicated test services. Set
+`PRISMA_BULLMQ_TEST_DATABASE_URL` to a PostgreSQL database whose name contains
+`test` on a local or test host, and `PRISMA_BULLMQ_TEST_REDIS_URL` to a local
+Redis database other than 0 (for example, `redis://localhost:6379/1`) or a
+Redis host named for testing.
+The suite skips when both variables are unset and refuses targets that do not
+meet these isolation checks. Apply migrations to the test database before
+running it:
+
+```bash
+DATABASE_URL="$PRISMA_BULLMQ_TEST_DATABASE_URL" npx prisma generate
+DATABASE_URL="$PRISMA_BULLMQ_TEST_DATABASE_URL" npx prisma migrate deploy
+npm run test:integration:prisma-bullmq
+```
 
 ### Troubleshooting
 
@@ -486,6 +502,11 @@ Run the subscription integration flow and existing e2e suites with:
 ```bash
 npm run test:e2e
 ```
+
+The API validation integration tests run through the same command and exercise
+HTTP request bodies, query parameters, route parameters, unexpected properties,
+and the documented validation error schema. The focused suite also runs in the
+`API validation integration` GitHub Actions workflow on pushes and pull requests.
 
 The subscription integration scenarios live in `test/subscription-flow.e2e-spec.ts` and cover:
 

@@ -27,6 +27,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { PayoutsService } from './payouts.service';
 import { ApprovePayoutDto, RejectPayoutDto } from './dto/payout-review.dto';
 import { PayoutResponseDto } from './dto/payout-responses.dto';
+import { ParsePositiveIntPipe } from '../common/pipes';
 import {
   BulkProcessPayoutsDto,
   BulkProcessPayoutsResponseDto,
@@ -147,7 +148,7 @@ export class AdminPayoutsController {
       'Transitions: under_review/pending_review/pending_approval → approved. ' +
       'Records `approvedBy` and `reviewedBy`, creates an audit entry, and notifies the user.',
   })
-  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiParam({ name: 'id', description: 'Positive integer payout ID', type: Number, example: 1 })
   @ApiBody({ type: ApprovePayoutDto })
   @ApiResponse({
     status: 200,
@@ -169,15 +170,15 @@ export class AdminPayoutsController {
       },
     },
   })
-  @ApiBadRequestResponse({ description: 'Payout not in approvable status' })
+  @ApiBadRequestResponse({ description: 'Invalid payout ID or payout not in approvable status' })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   approve(
-    @Param('id') id: string,
+    @Param('id', ParsePositiveIntPipe) id: number,
     @Body() dto: ApprovePayoutDto,
     @Req() req: RequestWithAdmin,
   ) {
     return this.payoutsService.approvePayout(
-      parseInt(id, 10),
+      id,
       req.user.userId,
       dto.note,
     );
@@ -191,7 +192,7 @@ export class AdminPayoutsController {
       'Transitions: under_review/pending_review/pending_approval → rejected. ' +
       'Requires a rejection reason, records `reviewedBy` and `rejectionReason`, creates an audit entry, and notifies the user.',
   })
-  @ApiParam({ name: 'id', description: 'Payout ID', example: 1 })
+  @ApiParam({ name: 'id', description: 'Positive integer payout ID', type: Number, example: 1 })
   @ApiBody({
     type: RejectPayoutDto,
     examples: {
@@ -207,16 +208,16 @@ export class AdminPayoutsController {
     type: PayoutResponseDto,
   })
   @ApiBadRequestResponse({
-    description: 'Payout cannot be rejected in current status, or reason missing',
+    description: 'Invalid payout ID, payout cannot be rejected in current status, or reason missing',
   })
   @ApiNotFoundResponse({ description: 'Payout not found' })
   reject(
-    @Param('id') id: string,
+    @Param('id', ParsePositiveIntPipe) id: number,
     @Body() dto: RejectPayoutDto,
     @Req() req: RequestWithAdmin,
   ) {
     return this.payoutsService.rejectPayout(
-      parseInt(id, 10),
+      id,
       dto.reason,
       req.user.userId,
     );

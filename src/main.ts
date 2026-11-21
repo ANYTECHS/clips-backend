@@ -14,7 +14,7 @@ import { PayoutsService } from './payouts/payouts.service';
 import { StellarWebhookService } from './subscriptions/stellar-webhook.service';
 import { MetricsInterceptor } from './metrics/metrics.interceptor';
 import { AppLoggerService } from './logger/logger.service';
-import { createGlobalValidationPipe } from './common/pipes/global-validation.pipe';
+import { createApiValidationPipe } from './common/pipes/api-validation.pipe';
 import {
   getBullMQWorkerConfig,
   validateWorkerConfig,
@@ -520,7 +520,7 @@ async function bootstrap() {
     next();
   });
 
-  app.useGlobalPipes(createGlobalValidationPipe());
+  app.useGlobalPipes(createApiValidationPipe());
 
   app.useGlobalInterceptors(app.get(MetricsInterceptor));
   // Enable Nest's shutdown hooks so providers can clean up on signals

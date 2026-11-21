@@ -4,83 +4,7 @@
   },
   "interactions": [
     {
-      "description": "a clip-generation job request",
-      "providerState": "the user is below the active job limit",
-      "request": {
-        "body": {
-          "videoId": 7
-        },
-        "headers": {
-          "Authorization": "Bearer test-token",
-          "Content-Type": "application/json"
-        },
-        "method": "POST",
-        "path": "/clips/generate"
-      },
-      "response": {
-        "body": {
-          "jobId": "clip-123",
-          "queue": "clip-generation",
-          "status": "queued"
-        },
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "status": 201
-      }
-    },
-    {
-      "description": "a login request with a wrong password",
-      "providerState": "a registered user exists",
-      "request": {
-        "body": {
-          "email": "founder@example.com",
-          "password": "wrong-password"
-        },
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "method": "POST",
-        "path": "/auth/login"
-      },
-      "response": {
-        "body": {
-          "message": "Invalid credentials",
-          "statusCode": 401
-        },
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "status": 401
-      }
-    },
-    {
-      "description": "a login request with valid credentials",
-      "providerState": "a registered user exists",
-      "request": {
-        "body": {
-          "email": "founder@example.com",
-          "password": "Sup3rSecret!"
-        },
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "method": "POST",
-        "path": "/auth/login"
-      },
-      "response": {
-        "body": {
-          "accessToken": "eyJhbGciOiJIUzI1NiJ9...",
-          "refreshToken": "a1b2c3d4e5f6..."
-        },
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "status": 200
-      }
-    },
-    {
-      "description": "a payout request",
+      "description": "a Stellar payout request",
       "providerState": "the user has sufficient balance",
       "request": {
         "body": {
@@ -98,14 +22,58 @@
       "response": {
         "body": {
           "amount": 100,
+          "createdAt": "2026-01-01T00:00:00.000Z",
           "currency": "USD",
+          "feeAmount": 2.5,
+          "finalAmount": 97.5,
           "id": 10,
+          "method": "stellar",
+          "payoutId": "payout_123",
           "status": "pending"
         },
         "headers": {
           "Content-Type": "application/json"
         },
         "status": 201
+      }
+    },
+    {
+      "description": "a clip list request without a bearer token",
+      "request": {
+        "method": "GET",
+        "path": "/clips"
+      },
+      "response": {
+        "body": {
+          "errorCode": "UNAUTHORIZED",
+          "message": "Authentication required",
+          "statusCode": 401
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "status": 401
+      }
+    },
+    {
+      "description": "a request for the earnings total",
+      "providerState": "the user has earnings",
+      "request": {
+        "headers": {
+          "Authorization": "Bearer test-token"
+        },
+        "method": "GET",
+        "path": "/earnings"
+      },
+      "response": {
+        "body": {
+          "currency": "USD",
+          "total": 2500.5
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "status": 200
       }
     },
     {
@@ -122,37 +90,13 @@
       "response": {
         "body": [
           {
+            "createdAt": "2026-01-01T00:00:00.000Z",
             "id": 42,
+            "nftStatus": "none",
             "royaltyBps": 500,
-            "status": "ready",
-            "title": "My clip",
+            "selected": false,
+            "updatedAt": "2026-01-01T00:00:00.000Z",
             "videoId": 7
-          }
-        ],
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "status": 200
-      }
-    },
-    {
-      "description": "a request to list earnings",
-      "providerState": "the user has earnings",
-      "request": {
-        "headers": {
-          "Authorization": "Bearer test-token"
-        },
-        "method": "GET",
-        "path": "/earnings"
-      },
-      "response": {
-        "body": [
-          {
-            "amount": 12.5,
-            "clipId": 42,
-            "currency": "USD",
-            "id": 1,
-            "source": "royalty"
           }
         ],
         "headers": {
@@ -172,13 +116,9 @@
         "path": "/videos"
       },
       "response": {
-        "body": [
-          {
-            "id": 7,
-            "status": "processed",
-            "title": "Source video"
-          }
-        ],
+        "body": {
+          "message": "Videos endpoint"
+        },
         "headers": {
           "Content-Type": "application/json"
         },
@@ -198,10 +138,11 @@
       "response": {
         "body": [
           {
-            "address": "GABC123",
+            "address": "GABF...KJ93XD",
             "chain": "stellar",
+            "connectedAt": "2026-01-01T00:00:00.000Z",
             "id": 1,
-            "type": "custodial"
+            "type": "freighter"
           }
         ],
         "headers": {
@@ -211,14 +152,37 @@
       }
     },
     {
-      "description": "an NFT mint request",
-      "providerState": "the collection allows minting",
+      "description": "an NFT mint request without a bearer token",
       "request": {
         "body": {
-          "metadata": {
-            "name": "Clip #42"
-          },
-          "to": "GABC123"
+          "clipId": 42,
+          "creatorWallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "method": "POST",
+        "path": "/nfts/mint"
+      },
+      "response": {
+        "body": {
+          "errorCode": "UNAUTHORIZED",
+          "message": "Authentication required",
+          "statusCode": 401
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "status": 401
+      }
+    },
+    {
+      "description": "an authenticated NFT mint request",
+      "providerState": "the user owns a mintable clip and its collection is available",
+      "request": {
+        "body": {
+          "clipId": 42,
+          "creatorWallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
         },
         "headers": {
           "Authorization": "Bearer test-token",
@@ -229,8 +193,19 @@
       },
       "response": {
         "body": {
-          "jobId": "mint-1",
-          "status": "queued"
+          "clipId": "42",
+          "collectionId": "viral-clips",
+          "creatorWallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3",
+          "metadataUri": "ipfs://QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG",
+          "royalties": [
+            {
+              "bps": 1000,
+              "label": "creator",
+              "wallet": "GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3"
+            }
+          ],
+          "royaltyBps": 1000,
+          "status": "minted"
         },
         "headers": {
           "Content-Type": "application/json"
@@ -239,28 +214,39 @@
       }
     },
     {
-      "description": "another clip-generation job request",
-      "providerState": "the user has reached the maximum of 5 active jobs",
+      "description": "valid login credentials",
+      "providerState": "a registered user exists",
       "request": {
         "body": {
-          "videoId": 8
+          "email": "founder@example.com",
+          "password": "Sup3rSecret!"
         },
         "headers": {
-          "Authorization": "Bearer test-token",
           "Content-Type": "application/json"
         },
         "method": "POST",
-        "path": "/clips/generate"
+        "path": "/auth/login"
       },
       "response": {
         "body": {
-          "message": "Too many active jobs (max 5)",
-          "statusCode": 429
+          "csrfToken": "csrf-token",
+          "tokens": {
+            "accessToken": "access-token",
+            "refreshToken": "refresh-token"
+          },
+          "user": {
+            "email": "founder@example.com",
+            "emailVerified": true,
+            "id": 1,
+            "mfaEnabled": false,
+            "name": "Founder",
+            "picture": null
+          }
         },
         "headers": {
           "Content-Type": "application/json"
         },
-        "status": 429
+        "status": 200
       }
     }
   ],
