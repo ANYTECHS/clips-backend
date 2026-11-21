@@ -97,7 +97,16 @@ export class ClipsController {
   })
   @ApiResponse({
     status: 201,
-    description: 'Clip generation job queued successfully',
+    description:
+      'Clip generation job queued successfully. Processing is asynchronous; ' +
+      'the returned jobId identifies the BullMQ job and does not mean clips are ready.',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', example: 'clip-generation-123' },
+        status: { type: 'string', example: 'queued' },
+      },
+    },
   })
   @ApiResponse({ status: 400, description: 'Invalid request data' })
   @ApiResponse({ status: 429, description: 'Too many active jobs (max 5)' })
