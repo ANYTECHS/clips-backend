@@ -206,8 +206,11 @@ describe('PayoutExportService', () => {
     });
 
     const call = prisma.payout.findMany.mock.calls[0][0];
-    expect(call.where.createdAt.gte).toEqual(new Date('2026-03-01T00:00:00'));
-    expect(call.where.createdAt.lte).toEqual(new Date('2026-03-31T23:59:59.999'));
+    const expectedStart = new Date('2026-03-01');
+    const expectedEnd = new Date('2026-03-31');
+    expectedEnd.setHours(23, 59, 59, 999);
+    expect(call.where.createdAt.gte).toEqual(expectedStart);
+    expect(call.where.createdAt.lte).toEqual(expectedEnd);
   });
 
   it('rejects invalid startDate format', async () => {

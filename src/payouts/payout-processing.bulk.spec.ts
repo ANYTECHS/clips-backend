@@ -10,6 +10,7 @@ import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { MAX_BULK_PAYOUT_BATCH_SIZE } from './payouts.constants';
 import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { EarningsService } from '../earnings/earnings.service';
 
 describe('PayoutProcessingService.batchProcessPayouts', () => {
   let service: PayoutProcessingService;
@@ -55,6 +56,7 @@ describe('PayoutProcessingService.batchProcessPayouts', () => {
           provide: StellarPayoutVerificationService,
           useValue: { verifyPayoutTransaction: jest.fn() },
         },
+        { provide: EarningsService, useValue: {} },
         {
           provide: getQueueToken(PAYOUT_RETRY_QUEUE),
           useValue: { add: jest.fn() },

@@ -77,9 +77,6 @@ interface MonthlyEarningWriter {
 export class MonthlyEarningsCronService {
   private readonly logger = new Logger(MonthlyEarningsCronService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-  ) {}
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -120,12 +117,6 @@ export class MonthlyEarningsCronService {
   async generateMonthlySummaries(year: number, month: number): Promise<void> {
     const from = new Date(Date.UTC(year, month - 1, 1));
     const to = new Date(Date.UTC(year, month, 1));
-    // Distinct users with earnings in UTC month
-    const rows = await this.prisma.earning.findMany({
-      where: { date: { gte: from, lte: to }, deletedAt: null },
-      select: { clip: { select: { video: { select: { userId: true } } } } },
-    });
-    const userIds = [...new Set(rows.map((r) => r.clip.video.userId))];
     const buckets = new Map<string, MonthlyEarningBucket>();
     const earningReader = this.prisma.earning as MonthlyEarningReader;
     const monthlyEarningWriter = this.prisma
@@ -160,56 +151,6 @@ export class MonthlyEarningsCronService {
           continue;
         }
 
-    for (const userId of userIds) {
-      try {
-        // Group directly by source currency and platform. Never convert currencies
-        // together: a monthly row has one authoritative currency.
-        const rows = await this.prisma.earning.findMany({
-          where: {
-            clip: { video: { userId } },
-            date: { gte: from, lt: new Date(Date.UTC(year, month, 1)) },
-            deletedAt: null,
-          },
-          select: {
-            amount: true,
-            currency: true,
-            source: true,
-            clip: { select: { platform: true } },
-          },
-        });
-
-        const currencies = new Map<string, { total: number; platforms: Record<string, number> }>();
-        for (const row of rows) {
-          const currency = String(row.currency || 'USD').toUpperCase();
-          const bucket = currencies.get(currency) ?? { total: 0, platforms: {} };
-          const platform = row.source || row.clip?.platform || 'unknown';
-          bucket.total += row.amount;
-          bucket.platforms[platform] = (bucket.platforms[platform] || 0) + row.amount;
-          currencies.set(currency, bucket);
-        }
-
-        for (const [currency, bucket] of currencies) {
-          await this.prisma.monthlyEarning.upsert({
-            where: {
-              userId_year_month_currency: { userId, year, month, currency },
-            },
-            create: {
-              userId,
-              year,
-              month,
-              totalAmount: bucket.total,
-              currency,
-              platformBreakdown: bucket.platforms,
-            },
-            update: {
-              totalAmount: bucket.total,
-              platformBreakdown: bucket.platforms,
-              updatedAt: new Date(),
-            },
-          });
-          created++;
-        }
-      } catch (userError) {
         const currency = (earning.currency || 'USD').toUpperCase();
         const key = `${userId}:${currency}`;
         const bucket = buckets.get(key) ?? {
@@ -218,7 +159,7 @@ export class MonthlyEarningsCronService {
           totalAmount: 0,
           platformBreakdown: {},
         };
-        const platform = earning.clip.platform || 'unknown';
+        const platform = earning.clip?.platform || 'unknown';
         bucket.totalAmount += earning.amount;
         bucket.platformBreakdown[platform] =
           (bucket.platformBreakdown[platform] || 0) + earning.amount;

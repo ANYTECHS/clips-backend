@@ -60,7 +60,7 @@ export class AnomalyDetectionService {
         }
       } catch (error) {
         this.logger.error(
-          Anomaly check failed for earning : ,
+          `Anomaly check failed for earning ${earning.id}: ${error?.message ?? error}`,
         );
       }
     }
@@ -115,8 +115,8 @@ export class AnomalyDetectionService {
     baseline: BaselineResult,
   ): Promise<void> {
     const reason =
-      Earning amount  exceeds baseline (avg: ,  +
-      stdDev: , samples: );
+      `Earning amount ${amount} exceeds baseline (avg: ${baseline.avgAmount}, ` +
+      `stdDev: ${baseline.stdDev}, samples: ${baseline.sampleCount})`;
 
     await this.prisma.earning.update({
       where: { id: earningId },
@@ -135,7 +135,7 @@ export class AnomalyDetectionService {
     });
 
     this.logger.warn(
-      Anomaly detected: earning , user , severity , amount ,
+      `Anomaly detected: earning ${earningId}, user ${userId}, severity ${severity}, amount ${amount}`,
     );
   }
 
@@ -145,7 +145,7 @@ export class AnomalyDetectionService {
     });
 
     if (!alert) {
-      throw new Error(Anomaly alert  not found);
+      throw new Error(`Anomaly alert ${alertId} not found`);
     }
 
     await this.prisma.anomalyAlert.update({
@@ -162,7 +162,7 @@ export class AnomalyDetectionService {
     });
 
     this.logger.log(
-      Anomaly alert  marked as false positive for earning ,
+      `Anomaly alert ${alertId} marked as false positive for earning ${alert.earningId}`,
     );
   }
 

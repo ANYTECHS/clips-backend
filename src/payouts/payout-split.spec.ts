@@ -14,6 +14,9 @@ import { CurrencyService } from '../common/services/currency.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { MailService } from '../auth/mail.service';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 
 /**
  * Focused coverage for Issues #980 / #981 — payout request + fiat/crypto split.
@@ -53,6 +56,28 @@ describe('PayoutsService split & request (Issues #980 / #981)', () => {
   const mockValidation = {
     assertMinimumPayout: jest.fn().mockResolvedValue(undefined),
     assertPayoutLimits: jest.fn(),
+    assertSufficientBalance: jest.fn((amount: number, balance: number, currency: string) => {
+      if (amount > balance) {
+        throw new BadRequestException(`Insufficient balance. Available: ${balance} ${currency}`);
+      }
+    }),
+    ensureNoOpenPayout: jest.fn(async (userId: number) => {
+      const existingPending = await mockPrisma.payout.findFirst({
+        where: { userId },
+      });
+      if (existingPending) {
+        throw new ConflictException('A payout request is already pending for this user');
+      }
+    }),
+    assertValidDestination: jest.fn(),
+    resolvePayoutDestinations: jest.fn((totalAmount, method, destinations) => {
+      return PayoutValidationService.prototype.resolvePayoutDestinations.call(
+        null,
+        totalAmount,
+        method,
+        destinations,
+      );
+    }),
   };
 
   beforeEach(async () => {
@@ -102,6 +127,21 @@ describe('PayoutsService split & request (Issues #980 / #981)', () => {
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: { add: jest.fn() } },
         { provide: PayoutValidationService, useValue: mockValidation },
         { provide: PayoutProcessingService, useValue: {} },
+        {
+          provide: StellarPayoutVerificationService,
+          useValue: { verifyPayoutTransaction: jest.fn() },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendPayoutNotification: jest.fn(),
+            sendPayoutReceipt: jest.fn(),
+          },
+        },
+        {
+          provide: PayoutRetryStrategyService,
+          useValue: { shouldRetry: jest.fn() },
+        },
       ],
     }).compile();
 

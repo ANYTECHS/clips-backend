@@ -50,7 +50,6 @@ import {
   EarningsSummaryDto,
 } from './dto/earnings-response.dto';
 import { EarningsByPlatformResponseDto } from './dto/earnings-by-platform.dto';
-import { MonthlyEarningsResponseDto } from './dto/monthly-earnings-response.dto';
 import {
   MonthlyEarningsQueryDto,
   MonthlyEarningsResponseDto,
@@ -420,12 +419,6 @@ export class EarningsController {
     description:
       'Optional native-currency filter; no currency conversion is performed',
   })
-  @ApiQuery({ name: 'year', required: true, type: Number, description: 'Full year, e.g. 2026', example: 2026 })
-  @ApiQuery({ name: 'month', required: true, type: Number, description: 'Month 1-12', example: 9 })
-  @ApiQuery({ name: 'currency', required: false, type: String, description: 'Optional ISO 4217 currency filter', example: 'USD' })
-  @ApiResponse({
-    status: 200,
-    description: 'Monthly summaries, one row per currency',
   @ApiResponse({
     status: 200,
     description:
@@ -436,16 +429,10 @@ export class EarningsController {
   @ApiUnauthorizedResponse({ description: 'Unauthorized' })
   async getMonthlySummary(
     @Req() req: AuthRequest,
-    @Query('year') yearStr: string,
-    @Query('month') monthStr: string,
-    @Query('currency') currency?: string,
     @Query() query: MonthlyEarningsQueryDto,
   ) {
     return this.earningsAggregationService.getMonthlySummary(
       req.user.userId,
-      year,
-      month,
-      currency,
       query.year,
       query.month,
       query.currency,

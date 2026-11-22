@@ -17,7 +17,6 @@ model User {
   provider               String?
   providerId             String?
   name                   String?
-  username               String?        @unique
   bio                    String?
   picture                String?
   emailVerified          DateTime?

@@ -47,7 +47,7 @@ export class BalanceService {
       _sum: { amount: true },
     });
 
-    const totalEarnings = earningsResult._sum.amount ?? 0;
+    const totalEarnings = earningsResult?._sum?.amount ?? 0;
 
     const paidResult = await this.prisma.payout.aggregate({
       where: {
@@ -57,7 +57,7 @@ export class BalanceService {
       _sum: { finalAmount: true },
     });
 
-    const totalPaidOut = paidResult._sum.finalAmount ?? 0;
+    const totalPaidOut = paidResult?._sum?.finalAmount ?? 0;
 
     const pendingResult = await this.prisma.payout.aggregate({
       where: {
@@ -75,7 +75,7 @@ export class BalanceService {
       _sum: { amount: true },
     });
 
-    const totalPending = pendingResult._sum.amount ?? 0;
+    const totalPending = pendingResult?._sum?.amount ?? 0;
 
     const availableBalance = totalEarnings - totalPaidOut - totalPending;
 

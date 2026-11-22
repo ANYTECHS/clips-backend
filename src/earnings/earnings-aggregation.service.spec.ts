@@ -31,7 +31,6 @@ describe('EarningsAggregationService', () => {
             earning: { findMany },
             payout: { findMany: payoutFindMany },
             monthlyEarning: { findMany: monthlyFindMany },
-            payout: { findMany: jest.fn().mockResolvedValue([]) },
           },
         },
         {

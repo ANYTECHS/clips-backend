@@ -25,6 +25,8 @@ import { PayoutLimitsService } from './payout-limits.service';
 import { CurrencyService } from '../common/services/currency.service';
 import { MetricsService } from '../metrics/metrics.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { MailService } from '../auth/mail.service';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 
 const TX_HASH = 'abc123deadbeef';
 const CONFIRMED_AT = new Date('2025-01-15T10:00:00.000Z');
@@ -71,6 +73,8 @@ const mockShutdownService = {
 const payoutCollaborators = [
   PayoutValidationService,
   PayoutProcessingService,
+  { provide: PayoutRetryStrategyService, useValue: {} },
+  { provide: MailService, useValue: { sendEmail: jest.fn().mockResolvedValue(undefined) } },
   { provide: PayoutLimitsService, useValue: { getLimits: jest.fn() } },
   { provide: CurrencyService, useValue: { convert: jest.fn() } },
 ];
@@ -106,7 +110,7 @@ function buildModule(overrides: Record<string, unknown> = {}): Promise<TestingMo
       },
       {
         provide: EarningsService,
-        useValue: {},
+        useValue: { invalidateUserEarningsCache: jest.fn() },
       },
       {
         provide: ConfigService,
@@ -215,7 +219,7 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
           provide: PayoutApprovalService,
           useValue: { resolveInitialStatus: jest.fn(), requiresManualApproval: jest.fn() },
         },
-        { provide: EarningsService, useValue: {} },
+        { provide: EarningsService, useValue: { invalidateUserEarningsCache: jest.fn() } },
         { provide: ConfigService, useValue: { minStellarPayout: 5 } },
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: mockPayoutRetryQueue },
         ...payoutCollaborators,
@@ -367,7 +371,10 @@ describe('PayoutsService.pollPendingStellarPayouts', () => {
 
       expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 4, status: { in: ['pending', 'processing'] } },
+          where: expect.objectContaining({
+            id: 4,
+            status: { in: ['pending', 'processing'] },
+          }),
           data: expect.objectContaining({
             status: 'failed',
             failureReason: 'Stellar transaction failed on Horizon',
