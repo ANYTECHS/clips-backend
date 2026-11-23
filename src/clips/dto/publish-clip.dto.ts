@@ -1,4 +1,5 @@
 import { IsArray, ArrayNotEmpty, IsOptional, IsIn } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   SUPPORTED_PLATFORMS,

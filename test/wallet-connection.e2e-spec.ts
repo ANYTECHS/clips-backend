@@ -1,5 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe, ExecutionContext } from '@nestjs/common';
+import {
+  INestApplication,
+  ValidationPipe,
+  ExecutionContext,
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import request from 'supertest';
 import { WalletsService } from '../src/wallets/wallets.service';
 import { WalletsController } from '../src/wallets/wallets.controller';
@@ -10,21 +16,23 @@ import { WalletOwnershipGuard } from '../src/wallets/guards/wallet-ownership.gua
 import { WalletManagementService } from '../src/wallets/wallet-management.service';
 import { WalletValidationService } from '../src/wallets/wallet-validation.service';
 import { WalletBalanceService } from '../src/wallets/wallet-balance.service';
+import { NftOwnershipService } from '../src/nft/nft-ownership.service';
 
 /**
- * E2E / integration tests for the wallet connection flow.
- *
- * Guards are overridden so we can control authentication state without
- * needing a real JWT or database. This lets us test the full HTTP layer
- * (routing, validation, service logic) in isolation.
+ * Exercises the wallet HTTP flow with authentication, address validation, and
+ * persistence boundaries controlled by test doubles.
  */
 
 const VALID_STELLAR_ADDRESS = 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3';
 const USER_ID = 42;
 
+const walletRecords: Array<Record<string, any>> = [];
+let nextWalletId = 1;
+
 const mockPrisma = {
   wallet: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
     upsert: jest.fn(),
     update: jest.fn(),
   },
@@ -40,6 +48,18 @@ const mockStellarService = {
   validateAddress: jest.fn(),
 };
 
+const mockWalletValidation = {
+  validateAddressForChain: jest.fn((address: string, chain: string) => {
+    if (
+      chain === 'stellar' &&
+      !mockStellarService.validateAddress(address).valid
+    ) {
+      throw new BadRequestException('Invalid Stellar address format');
+    }
+  }),
+  verifySignatureOwnership: jest.fn(),
+};
+
 /** Guard that simulates an authenticated user. */
 class AuthenticatedGuard {
   canActivate(ctx: ExecutionContext) {
@@ -49,10 +69,17 @@ class AuthenticatedGuard {
   }
 }
 
+class OtherAuthenticatedGuard {
+  canActivate(ctx: ExecutionContext) {
+    ctx.switchToHttp().getRequest().user = { userId: USER_ID + 1 };
+    return true;
+  }
+}
+
 /** Guard that simulates an unauthenticated request (returns 401). */
 class UnauthenticatedGuard {
   canActivate() {
-    return false; // NestJS returns 403 by default; we'll use AuthGuard behaviour
+    throw new UnauthorizedException();
   }
 }
 
@@ -67,10 +94,14 @@ describe('Wallet connection flow (E2E)', () => {
       providers: [
         WalletsService,
         WalletManagementService,
-        WalletValidationService,
         WalletBalanceService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: StellarService, useValue: mockStellarService },
+        { provide: WalletValidationService, useValue: mockWalletValidation },
+        {
+          provide: NftOwnershipService,
+          useValue: { getWalletTokenIds: jest.fn() },
+        },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -95,12 +126,69 @@ describe('Wallet connection flow (E2E)', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    walletRecords.splice(0, walletRecords.length);
+    nextWalletId = 1;
+    mockStellarService.validateAddress.mockReturnValue({ valid: true });
+
+    mockPrisma.wallet.findUnique.mockImplementation(async ({ where }) => {
+      if (where.address_chain) {
+        return (
+          walletRecords.find(
+            (wallet) =>
+              wallet.address === where.address_chain.address &&
+              wallet.chain === where.address_chain.chain,
+          ) ?? null
+        );
+      }
+      return walletRecords.find((wallet) => wallet.id === where.id) ?? null;
+    });
+    mockPrisma.wallet.findFirst.mockImplementation(async ({ where }) => {
+      return (
+        walletRecords.find(
+          (wallet) =>
+            wallet.id === where.id &&
+            wallet.userId === where.userId &&
+            wallet.deletedAt === where.deletedAt,
+        ) ?? null
+      );
+    });
+    mockPrisma.wallet.upsert.mockImplementation(
+      async ({ where, update, create }) => {
+        const existing = walletRecords.find(
+          (wallet) =>
+            wallet.address === where.address_chain.address &&
+            wallet.chain === where.address_chain.chain,
+        );
+        if (existing) {
+          Object.assign(existing, update);
+          return existing;
+        }
+
+        const wallet = {
+          id: nextWalletId++,
+          ...create,
+          connectedAt: new Date(),
+          updatedAt: new Date(),
+          deletedAt: null,
+        };
+        walletRecords.push(wallet);
+        return wallet;
+      },
+    );
+    mockPrisma.wallet.update.mockImplementation(async ({ where, data }) => {
+      const wallet = walletRecords.find((item) => item.id === where.id);
+      if (!wallet) return null;
+      Object.assign(wallet, data);
+      return wallet;
+    });
+    mockPrisma.payout.findFirst.mockResolvedValue(null);
+    mockPrisma.clip.findFirst.mockResolvedValue(null);
   });
 
   // ─── POST /wallets/connect ─────────────────────────────────────────────────
 
   describe('POST /wallets/connect', () => {
-    it('returns 401 when JWT guard rejects the request', async () => {
+    it('returns 401 when the request is unauthenticated', async () => {
       const unauthApp = await buildApp(UnauthenticatedGuard);
       try {
         await request(unauthApp.getHttpServer())
@@ -113,7 +201,7 @@ describe('Wallet connection flow (E2E)', () => {
             signature: 'mock-sig',
             signedMessage: 'mock-msg',
           })
-          .expect(403); // NestJS returns 403 when canActivate returns false
+          .expect(401);
       } finally {
         await unauthApp.close();
       }
@@ -125,7 +213,7 @@ describe('Wallet connection flow (E2E)', () => {
       await request(authedApp.getHttpServer())
         .post('/wallets/connect')
         .send({
-          address: 'not-a-valid-address',
+          address: VALID_STELLAR_ADDRESS,
           chain: 'stellar',
           type: 'freighter',
           publicKey: VALID_STELLAR_ADDRESS,
@@ -133,6 +221,10 @@ describe('Wallet connection flow (E2E)', () => {
           signedMessage: 'mock-msg',
         })
         .expect(400);
+
+      expect(mockStellarService.validateAddress).toHaveBeenCalledWith(
+        VALID_STELLAR_ADDRESS,
+      );
     });
 
     it('returns 400 for unsupported chain', async () => {
@@ -155,7 +247,7 @@ describe('Wallet connection flow (E2E)', () => {
         .send({
           address: VALID_STELLAR_ADDRESS,
           chain: 'stellar',
-          type: 'metamask',
+          type: 'not-a-wallet',
           publicKey: VALID_STELLAR_ADDRESS,
           signature: 'mock-sig',
           signedMessage: 'mock-msg',
@@ -165,16 +257,6 @@ describe('Wallet connection flow (E2E)', () => {
 
     it('creates a DB record and returns the wallet on valid input', async () => {
       mockStellarService.validateAddress.mockReturnValue({ valid: true });
-      const createdWallet = {
-        id: 1,
-        userId: USER_ID,
-        address: VALID_STELLAR_ADDRESS,
-        chain: 'stellar',
-        type: 'freighter',
-        deletedAt: null,
-      };
-      mockPrisma.wallet.upsert.mockResolvedValue(createdWallet);
-
       const res = await request(authedApp.getHttpServer())
         .post('/wallets/connect')
         .send({
@@ -188,27 +270,76 @@ describe('Wallet connection flow (E2E)', () => {
         .expect(200);
 
       expect(res.body.id).toBe(1);
-      expect(res.body.address).toBe('GC6X********UHTZF3');
-
-      // Verify the DB upsert was called with the correct userId
-      expect(mockPrisma.wallet.upsert).toHaveBeenCalledWith(
+      expect(res.body.address).toBe('GC6X...UHTZF3');
+      expect(walletRecords).toHaveLength(1);
+      expect(walletRecords[0]).toEqual(
         expect.objectContaining({
-          create: expect.objectContaining({ userId: USER_ID }),
+          userId: USER_ID,
+          address: VALID_STELLAR_ADDRESS,
+          chain: 'stellar',
+          type: 'freighter',
+          deletedAt: null,
+        }),
+      );
+
+      const fetched = await request(authedApp.getHttpServer())
+        .get('/wallets/1')
+        .expect(200);
+      expect(fetched.body).toEqual(
+        expect.objectContaining({
+          id: 1,
+          userId: USER_ID,
+          address: 'GC6X...UHTZF3',
         }),
       );
     });
 
-    it('reactivates a previously disconnected wallet (duplicate prevention via upsert)', async () => {
-      mockStellarService.validateAddress.mockReturnValue({ valid: true });
-      const reactivatedWallet = {
-        id: 2,
-        userId: USER_ID,
+    it('prevents duplicate records and rejects a wallet owned by another user', async () => {
+      const body = {
         address: VALID_STELLAR_ADDRESS,
         chain: 'stellar',
         type: 'freighter',
-        deletedAt: null,
+        publicKey: VALID_STELLAR_ADDRESS,
+        signature: 'mock-sig',
+        signedMessage: 'mock-msg',
       };
-      mockPrisma.wallet.upsert.mockResolvedValue(reactivatedWallet);
+      const first = await request(authedApp.getHttpServer())
+        .post('/wallets/connect')
+        .send(body)
+        .expect(200);
+
+      const repeated = await request(authedApp.getHttpServer())
+        .post('/wallets/connect')
+        .send(body)
+        .expect(200);
+      expect(repeated.body.id).toBe(first.body.id);
+      expect(walletRecords).toHaveLength(1);
+
+      const otherUserApp = await buildApp(OtherAuthenticatedGuard);
+      try {
+        await request(otherUserApp.getHttpServer())
+          .post('/wallets/connect')
+          .send(body)
+          .expect(409);
+      } finally {
+        await otherUserApp.close();
+      }
+      expect(walletRecords).toHaveLength(1);
+    });
+
+    it('reactivates a previously disconnected wallet', async () => {
+      await request(authedApp.getHttpServer())
+        .post('/wallets/connect')
+        .send({
+          address: VALID_STELLAR_ADDRESS,
+          chain: 'stellar',
+          type: 'freighter',
+          publicKey: VALID_STELLAR_ADDRESS,
+          signature: 'mock-sig',
+          signedMessage: 'mock-msg',
+        })
+        .expect(200);
+      walletRecords[0].deletedAt = new Date();
 
       const res = await request(authedApp.getHttpServer())
         .post('/wallets/connect')
@@ -222,12 +353,7 @@ describe('Wallet connection flow (E2E)', () => {
         })
         .expect(200);
 
-      // The upsert update payload must clear deletedAt to reactivate
-      expect(mockPrisma.wallet.upsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          update: expect.objectContaining({ deletedAt: null }),
-        }),
-      );
+      expect(walletRecords).toHaveLength(1);
       expect(res.body.deletedAt).toBeNull();
     });
   });
@@ -235,22 +361,26 @@ describe('Wallet connection flow (E2E)', () => {
   // ─── DELETE /wallets/:id ───────────────────────────────────────────────────
 
   describe('DELETE /wallets/:id', () => {
-    it('returns 403 when JWT guard rejects the request', async () => {
+    it('returns 401 when the request is unauthenticated', async () => {
       const unauthApp = await buildApp(UnauthenticatedGuard);
       try {
-        await request(unauthApp.getHttpServer()).delete('/wallets/1').expect(403);
+        await request(unauthApp.getHttpServer())
+          .delete('/wallets/1')
+          .expect(401);
       } finally {
         await unauthApp.close();
       }
     });
 
     it('returns 404 when wallet does not belong to the user', async () => {
-      mockPrisma.wallet.findUnique.mockResolvedValue({
+      walletRecords.push({
         id: 1,
-        userId: 999, // different user
+        userId: 999,
+        address: VALID_STELLAR_ADDRESS,
+        chain: 'stellar',
+        type: 'freighter',
         deletedAt: null,
       });
-      mockPrisma.payout.findFirst.mockResolvedValue(null);
 
       await request(authedApp.getHttpServer())
         .delete('/wallets/1')
@@ -258,13 +388,14 @@ describe('Wallet connection flow (E2E)', () => {
     });
 
     it('soft-deletes the wallet and returns success', async () => {
-      mockPrisma.wallet.findUnique.mockResolvedValue({
+      walletRecords.push({
         id: 1,
         userId: USER_ID,
+        address: VALID_STELLAR_ADDRESS,
+        chain: 'stellar',
+        type: 'freighter',
         deletedAt: null,
       });
-      mockPrisma.payout.findFirst.mockResolvedValue(null);
-      mockPrisma.wallet.update.mockResolvedValue({ id: 1, deletedAt: new Date() });
 
       const res = await request(authedApp.getHttpServer())
         .delete('/wallets/1')
@@ -272,6 +403,8 @@ describe('Wallet connection flow (E2E)', () => {
 
       expect(res.body.message).toMatch(/disconnected/i);
       expect(res.body.walletId).toBe(1);
+      expect(walletRecords[0].deletedAt).toBeInstanceOf(Date);
+      await request(authedApp.getHttpServer()).get('/wallets/1').expect(404);
     });
   });
 });

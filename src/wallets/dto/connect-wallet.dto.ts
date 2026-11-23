@@ -140,10 +140,16 @@ export class CreateWalletConnectionDto {
 }
 
 export class WalletConnectionResponseDto {
-  @ApiProperty({ example: 'b3f1c2a0-1234-4cde-9f00-abcdef123456' })
-  id: string;
+  @ApiProperty({ example: 1 })
+  id: number;
 
-  @ApiProperty({ example: 'GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN7' })
+  @ApiProperty({ example: 42 })
+  userId: number;
+
+  @ApiProperty({
+    example: 'GC6X...UHTZF3',
+    description: 'Partially masked wallet address',
+  })
   address: string;
 
   @ApiProperty({ enum: SUPPORTED_CHAINS, example: DEFAULT_CHAIN })
@@ -153,5 +159,19 @@ export class WalletConnectionResponseDto {
   type: string;
 
   @ApiProperty({ example: '2026-11-19T12:00:00.000Z', format: 'date-time' })
-  createdAt: string;
+  connectedAt: Date;
+
+  @ApiProperty({ example: '2026-11-19T12:00:00.000Z', format: 'date-time' })
+  updatedAt: Date;
+
+  @ApiProperty({ example: null, nullable: true })
+  deletedAt: Date | null;
+}
+
+export class WalletDisconnectResponseDto {
+  @ApiProperty({ example: 'Wallet disconnected successfully' })
+  message: string;
+
+  @ApiProperty({ example: 1 })
+  walletId: number;
 }

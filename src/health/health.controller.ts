@@ -271,6 +271,10 @@ export class HealthController {
     try {
       const health = await this.queueHealthService.getQueueHealth();
 
+      if (this.gracefulShutdown.isShuttingDown() && health.status === 'healthy') {
+        health.status = 'degraded';
+      }
+
       if (health.status === 'unhealthy') {
         throw new HttpException(health, HttpStatus.SERVICE_UNAVAILABLE);
       }

@@ -1,13 +1,16 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   ArrayMinSize,
   ArrayNotEmpty,
   IsArray,
+  IsEnum,
   IsInt,
+  IsOptional,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { MAX_BULK_PAYOUT_BATCH_SIZE } from '../payouts.constants';
+import { JobPriorityLevel } from '../../queue/job-priority';
 
 export class BulkProcessPayoutsDto {
   @ApiProperty({
@@ -26,6 +29,19 @@ export class BulkProcessPayoutsDto {
   @IsInt({ each: true })
   @Type(() => Number)
   payoutIds: number[];
+
+  @ApiPropertyOptional({
+    description:
+      'Optional priority level for the batch processing jobs. ' +
+      'Supported values: critical, high, normal, low.',
+    enum: JobPriorityLevel,
+    example: JobPriorityLevel.CRITICAL,
+  })
+  @IsOptional()
+  @IsEnum(JobPriorityLevel, {
+    message: 'priority must be one of: critical, high, normal, low',
+  })
+  priority?: JobPriorityLevel;
 }
 
 export class BulkPayoutItemResultDto {

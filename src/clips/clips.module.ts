@@ -22,6 +22,10 @@ import { NFT_MINT_QUEUE } from './nft-mint.queue';
 import { NftMintProcessor } from './nft-mint.processor';
 import { NftMintEnqueueService } from './nft-mint-enqueue.service';
 import { QueueOverflowService } from '../common/queue/queue-overflow.service';
+import { UserPlatformModule } from '../user-platform/user-platform.module';
+import { AyrshareService } from './ayrshare.service';
+import { ClipPostingProcessor } from './clip-posting.processor';
+import { CLIP_POSTING_QUEUE } from './clip-posting.queue';
 
 @Module({
   imports: [

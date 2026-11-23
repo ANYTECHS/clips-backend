@@ -90,18 +90,24 @@ export class QueueOverflowService {
       // Soft delay — add jitter to spread re-activation
       const jitter = Math.floor(overflowDelayMs * 0.2 * (Math.random() * 2 - 1));
       const delayMs = Math.max(0, overflowDelayMs + jitter);
+      const baseDelayMs =
+        typeof baseOptions.delay === 'number' &&
+        Number.isFinite(baseOptions.delay)
+          ? Math.max(0, baseOptions.delay)
+          : 0;
+      const appliedDelayMs = Math.max(baseDelayMs, delayMs);
 
       this.logger.warn(
         `[overflow] Queue "${queue.name}" is at capacity (depth=${depth}/${globalDepthCap}). ` +
-          `Delaying new job by ${delayMs}ms.`,
+          `Delaying new job by ${appliedDelayMs}ms.`,
       );
 
       const job = await (queue as any).add(jobName, data, {
         ...baseOptions,
-        delay: delayMs,
+        delay: appliedDelayMs,
       } as any);
 
-      return { jobId: job.id, delayed: true, delayMs };
+      return { jobId: job.id, delayed: true, delayMs: appliedDelayMs };
     }
 
     // ── Step 3: normal enqueue (within capacity) ─────────────────────────────

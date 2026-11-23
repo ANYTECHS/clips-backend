@@ -17,6 +17,7 @@ import {
   IsSupportedCurrency,
   CURRENCY_API_PROPERTY,
 } from '../../common/validators/decorators';
+import { JobPriorityLevel } from '../../queue/job-priority';
 
 /** @deprecated Use CreatePayoutDto */
 export type RequestPayoutDto = CreatePayoutDto;
@@ -87,9 +88,6 @@ export class CreatePayoutDto {
   @ApiProperty({
     ...CURRENCY_API_PROPERTY,
     description:
-      'ISO 4217 currency code. Supported currencies with default limits: USD ' +
-      'EUR, GBP, XLM, USDC. Currency-specific overrides use ' +
-      'MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> or PAYOUT_LIMITS JSON.',
       'ISO 4217 currency code. Supported: USD, EUR, GBP, XLM, USDC. ' +
       'Payout limits apply per-currency (defaults: MIN_PAYOUT_USD=5, ' +
       'MAX_PAYOUT_USD=10000; override via MIN_PAYOUT_<CCY>/MAX_PAYOUT_<CCY> ' +
@@ -134,6 +132,20 @@ export class CreatePayoutDto {
   @ValidateNested({ each: true })
   @Type(() => PayoutDestinationDto)
   destinations?: PayoutDestinationDto[];
+
+  @ApiPropertyOptional({
+    description:
+      'Optional job priority level for payout processing. ' +
+      'Supported values: critical, high, normal, low. ' +
+      'Note: critical priority requires administrator privileges.',
+    enum: JobPriorityLevel,
+    example: JobPriorityLevel.NORMAL,
+  })
+  @IsOptional()
+  @IsEnum(JobPriorityLevel, {
+    message: 'priority must be one of: critical, high, normal, low',
+  })
+  priority?: JobPriorityLevel;
 }
 
 /** Alias matching Issue #980 task naming. */

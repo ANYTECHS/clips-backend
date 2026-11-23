@@ -11,6 +11,9 @@ import { PayoutApprovalService } from './payout-approval.service';
 import { ConfigService } from '../config/config.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import { CurrencyService } from '../common/services/currency.service';
+import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { MailService } from '../auth/mail.service';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
@@ -48,6 +51,21 @@ describe('PayoutsService receipts', () => {
         { provide: CurrencyService, useValue: {} },
         { provide: PayoutValidationService, useValue: {} },
         { provide: PayoutProcessingService, useValue: {} },
+        {
+          provide: StellarPayoutVerificationService,
+          useValue: { verifyPayoutTransaction: jest.fn() },
+        },
+        {
+          provide: MailService,
+          useValue: {
+            sendPayoutNotification: jest.fn(),
+            sendPayoutReceipt: jest.fn(),
+          },
+        },
+        {
+          provide: PayoutRetryStrategyService,
+          useValue: { shouldRetry: jest.fn() },
+        },
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: { add: jest.fn() } },
       ],
     }).compile();

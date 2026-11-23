@@ -34,7 +34,8 @@ interface Bucket {
   clipIds: Set<number>;
 }
 
-export { startOfUtcDay, previousUtcDay } from '@clipcash/shared';
+import { startOfUtcDay, previousUtcDay } from '@clipcash/shared';
+export { startOfUtcDay, previousUtcDay };
 
 
 /**

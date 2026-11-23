@@ -26,7 +26,7 @@ import { handleFailedEvent } from '../queue/processor-error.handler';
  *
  * Retry configuration (set per-job in ClipPublishService via CLIP_POSTING_JOB_OPTIONS):
  *   attempts : 5   — handles rate-limit windows on social platforms
- *   backoff  : exponential, starting at 2 000 ms
+ *   backoff  : exponential, starting at 5 000 ms
  */
 @Processor(CLIP_POSTING_QUEUE, {
   concurrency: getBullMQWorkerConfig(new ConfigService()).clipPostingConcurrency,
@@ -78,9 +78,32 @@ export class ClipPostingProcessor extends WorkerHost implements OnModuleInit {
         return;
       }
 
+      const existingPosts = await this.prisma.clipPost.findMany({
+        where: { clipId, platform: { in: validPlatforms } },
+        select: { platform: true, status: true },
+      });
+      const publishedPlatforms = new Set(
+        existingPosts
+          .filter((post) => post.status === 'published')
+          .map((post) => post.platform),
+      );
+      const platformsToPost = validPlatforms.filter(
+        (platform) => !publishedPlatforms.has(platform),
+      );
+
+      if (platformsToPost.length === 0) {
+        this.metricsService.recordJobCompletion(jobMetricId, CLIP_POSTING_QUEUE, 'success');
+        return;
+      }
+
       await job.updateProgress(10);
 
       const results = await this.ayrshare.post(mediaUrl, caption ?? '', validPlatforms);
+      const results = await this.ayrshare.post(
+        mediaUrl,
+        caption,
+        platformsToPost,
+      );
 
       await job.updateProgress(80);
 

@@ -21,6 +21,8 @@ export interface ClipPostingJob {
   mediaUrl: string;
   platforms: string[];
   caption?: string;
+  caption: string;
+  platforms: string[];
   hashtags?: string[];
   scheduledAt?: string;
 }
@@ -32,6 +34,8 @@ export interface ClipPostingJob {
  *  - Jobs are never auto-removed so failures remain inspectable in the
  *    dead-letter / queue dashboard.
  */
+export type ClipPostingJobData = ClipPostingJob;
+
 export const CLIP_POSTING_JOB_OPTIONS = {
   attempts: 5,
   backoff: {

@@ -99,7 +99,7 @@ describe('PayoutLimitsService', () => {
     it('throws for unconfigured currency', () => {
       const service = new PayoutLimitsService();
 
-      expect(() => service.resolvePayoutAmount(100, 'GBP')).toThrow(
+      expect(() => service.resolvePayoutAmount(100, 'UNSUPPORTED')).toThrow(
         BadRequestException,
       );
     });

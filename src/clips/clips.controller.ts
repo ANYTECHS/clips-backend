@@ -53,6 +53,11 @@ import type { ClipSortField, SortOrder } from './clips.service';
 import { ClipPublishService } from './clip-publish.service';
 import { PublishClipDto } from './dto/publish-clip.dto';
 import { ClipResponseDto } from './dto/clip-response.dto';
+import { PublishClipDto } from './dto/publish-clip.dto';
+import {
+  ClipPostStatusDto,
+  ClipPostingAcceptedDto,
+} from './dto/clip-post.dto';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto';
 import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto';
 import { UpdateClipRoyaltyDto } from './dto/update-clip-royalty.dto';
@@ -235,6 +240,93 @@ export class ClipsController {
     return clip;
   }
 
+  /**
+   * POST /clips/:id/publish
+   *
+   * Enqueues the clip for asynchronous publishing to connected platforms.
+   */
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary: 'Queue a clip for social-media posting',
+    description:
+      'Posts a clip to the selected connected platforms asynchronously. Poll GET /clips/:id/posts for per-platform status.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Clip ID to publish',
+    type: Number,
+    example: 42,
+  })
+  @ApiBody({ type: PublishClipDto })
+  @ApiResponse({
+    status: 202,
+    description: 'Posting job accepted and queued',
+    type: ClipPostingAcceptedDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid clip ID, platform selection, or scheduled time',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({
+    description: 'Clip does not belong to the requesting user',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiInternalServerErrorResponse({
+    description: 'Could not enqueue the posting job',
+  })
+  publishClip(
+    @Param('id', ParsePositiveIntPipe) clipId: number,
+    @Body() dto: PublishClipDto,
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id);
+    return this.clipPublishService.publish(
+      clipId,
+      userId,
+      dto.targetPlatforms,
+      dto.scheduledAt,
+    );
+  }
+
+  /**
+   * GET /clips/:id/posts
+   *
+   * Returns the per-platform result records for a clip.
+   */
+  @Get(':id/posts')
+  @ApiOperation({
+    summary: 'Get social-media posting status for a clip',
+    description: 'Returns the latest posting status for each selected platform.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'Clip ID',
+    type: Number,
+    example: 42,
+  })
+  @ApiOkResponse({
+    description: 'Per-platform posting status records',
+    type: ClipPostStatusDto,
+    isArray: true,
+  })
+  @ApiBadRequestResponse({ description: 'Clip ID must be a positive integer' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({
+    description: 'Clip does not belong to the requesting user',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiInternalServerErrorResponse({
+    description: 'Could not retrieve posting status',
+  })
+  getClipPostStatus(
+    @Param('id', ParsePositiveIntPipe) clipId: number,
+    @Req() req: Request,
+  ) {
+    const userId = Number((req as any).user?.id);
+    return this.clipPublishService.getPostStatus(clipId, userId);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Bulk operations
   // ─────────────────────────────────────────────────────────────────────────
@@ -315,9 +407,17 @@ export class ClipsController {
       'Cloudinary and updates clipUrl + thumbnail. viralityScore and title are preserved.',
   })
   @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
-  @ApiResponse({ status: 200, description: 'Updated clip record with new clipUrl and thumbnail' })
+  @ApiOkResponse({
+    description:
+      'Updated clip record, including its Cloudinary-hosted clipUrl and thumbnail',
+    type: ClipResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Clip ID must be a positive integer' })
   @ApiNotFoundResponse({ description: 'Clip not found' })
   @ApiForbiddenResponse({ description: 'Clip does not belong to the requesting user' })
+  @ApiInternalServerErrorResponse({
+    description: 'Clip regeneration or Cloudinary upload failed',
+  })
   @ApiResponse({ status: 429, description: 'Too many active jobs' })
   regenerate(@Param('id', ParsePositiveIntPipe) id: number, @Req() req: Request) {
     const userId: number = Number(
