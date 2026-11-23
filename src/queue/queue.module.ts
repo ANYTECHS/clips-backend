@@ -26,8 +26,13 @@ import {
   ANOMALY_DETECTION_QUEUE,
   ANOMALY_DETECTION_QUEUE_PRIORITY,
 } from '../earnings/anomaly-detection.queue';
+import {
+  PAYOUT_RETRY_QUEUE,
+  PAYOUT_RETRY_QUEUE_PRIORITY,
+} from '../payouts/payout-retry.queue';
 
 export const REGISTERED_QUEUE_NAMES = [
+  PAYOUT_RETRY_QUEUE,
   CLIP_GENERATION_QUEUE,
   CLIP_POSTING_QUEUE,
   NFT_MINT_QUEUE,
@@ -46,6 +51,10 @@ export const REGISTERED_QUEUE_NAMES = [
         new QueueConfigService(config).bullOptions,
     }),
     BullModule.registerQueue(
+      {
+        name: PAYOUT_RETRY_QUEUE,
+        defaultJobOptions: { priority: PAYOUT_RETRY_QUEUE_PRIORITY },
+      },
       {
         name: CLIP_GENERATION_QUEUE,
         defaultJobOptions: { priority: CLIP_GENERATION_QUEUE_PRIORITY },

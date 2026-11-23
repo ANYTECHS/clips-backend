@@ -4,6 +4,7 @@ import {
   IsNumber,
   IsOptional,
   IsInt,
+  IsEnum,
   Min,
   Max,
   ValidateIf,
@@ -14,6 +15,7 @@ import {
   IsValidRoyaltyBps,
   CLIP_ROYALTY_BPS_MAX,
 } from '../../common/validators/decorators';
+import { JobPriorityLevel } from '../../queue/job-priority';
 
 /** Default creator royalty: 1000 BPS = 10% */
 export const DEFAULT_CLIP_ROYALTY_BPS = 1000;
@@ -144,4 +146,18 @@ export class CreateClipDto {
   @Type(() => Number)
   @IsValidRoyaltyBps({ max: CLIP_ROYALTY_BPS_MAX })
   royaltyBps?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional priority level for clip generation. ' +
+      'Supported values: critical, high, normal, low. ' +
+      'Note: critical priority requires administrator privileges.',
+    enum: JobPriorityLevel,
+    example: JobPriorityLevel.HIGH,
+  })
+  @IsOptional()
+  @IsEnum(JobPriorityLevel, {
+    message: 'priority must be one of: critical, high, normal, low',
+  })
+  priority?: JobPriorityLevel;
 }
