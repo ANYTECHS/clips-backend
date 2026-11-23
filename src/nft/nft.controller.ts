@@ -138,6 +138,7 @@ import {
   MintStatusNotFoundDto,
 } from './dto/mint-status-response.dto';
 import { MintEnqueueResponseDto } from './dto/mint-enqueue-response.dto';
+import { NftMintJobStatusDto } from './dto/nft-mint-job-status.dto';
 import {
   MetadataValidationResponseDto,
   ValidateNftMetadataDto,
@@ -893,6 +894,7 @@ export class NftController {
       clipId: dto.clipId,
       walletAddress: dto.creatorWallet,
       userId,
+      collectionId: dto.collectionId,
     });
   }
 
@@ -903,27 +905,29 @@ export class NftController {
     summary: 'Get NFT mint job transaction status',
     description:
       'Tracks a BullMQ mint job (returned by enqueue-mint) through pending → confirmed/failed states. ' +
-      'pending covers waiting/active/delayed; confirmed means the mint transaction completed; ' +
+      'pending covers waiting/active/delayed/prioritized; confirmed means the mint transaction completed; ' +
       'failed includes the failure reason.',
   })
-  @ApiParam({ name: 'jobId', description: 'BullMQ job ID returned by enqueue-mint', example: 'nft-mint-clip-42' })
+  @ApiParam({
+    name: 'jobId',
+    description: 'BullMQ job ID returned by enqueue-mint',
+    example: 'nft-mint-clip-42',
+  })
   @ApiResponse({
     status: 200,
     description: 'Mint job status with transaction state',
-    schema: {
-      example: {
-        jobId: 'nft-mint-clip-42',
-        state: 'completed',
-        txState: 'confirmed',
-        attemptsMade: 1,
-      },
-    },
+    type: NftMintJobStatusDto,
   })
   @ApiUnauthorizedResponse({
     description: 'Unauthorized — Bearer JWT required',
   })
   @ApiNotFoundResponse({ description: 'Mint job not found' })
-  async mintJobStatus(@Param('jobId') jobId: string) {
+  @ApiTooManyRequestsResponse({
+    description: 'Too many requests — rate limit exceeded',
+  })
+  async mintJobStatus(
+    @Param('jobId') jobId: string,
+  ): Promise<NftMintJobStatusDto> {
     return this.nftMintEnqueueService.getMintStatus(jobId);
   }
 
