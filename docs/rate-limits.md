@@ -21,6 +21,11 @@ The global limit is 100 requests per minute per client IP. Configure the window 
 | `GET /wallets/:id/balance` | 30 | 60 s |
 | `POST /clips/generate` | 5 active jobs per user | rolling |
 | `POST /clips/:id/regenerate` | 5 active jobs per user | rolling |
+| `POST /videos/upload` | 5 active jobs per user | rolling |
+| `POST /nft/mint` | 5 active jobs per user | rolling |
+| `POST /nft/batch-mint` | 5 active jobs per user | rolling |
+| `POST /nft/prepare-mint` | 5 active jobs per user | rolling |
+| `POST /nft/enqueue-mint` | 5 active jobs per user | rolling |
 
 ## Response When Limit Exceeded
 
@@ -36,6 +41,43 @@ When a rate limit is hit, the API returns `429 Too Many Requests`:
 ```
 
 The `Retry-After` header indicates how many seconds to wait before retrying.
+
+## Queue Job Limits
+
+Clip-generation and NFT-mint jobs are additionally limited **per user** to prevent a
+single account from flooding a processing queue. The counter is stored in Redis under
+the key `queue:ratelimit:<queue>:user:<userId>` and reset automatically when the
+sliding window expires.
+
+When the limit is exceeded the endpoint returns `429 Too Many Requests`, sets the
+`Retry-After` header to the number of seconds until the window resets, and returns a
+body identifying the queue and limit:
+
+```json
+{
+  "statusCode": 429,
+  "message": "Too many active jobs for queue \"clip-generation\". Maximum 5 jobs per user per 3600s window.",
+  "queue": "clip-generation",
+  "limit": 5,
+  "windowSecs": 3600,
+  "retryAfter": 60
+}
+```
+
+If Redis is unavailable the guard fails open (the request is allowed) so a Redis
+outage cannot block all job submissions.
+
+### Queue environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BULLMQ_<QUEUE>_MAX_JOBS_PER_USER` | `5` | Maximum active jobs per user for the queue |
+| `BULLMQ_<QUEUE>_RATE_WINDOW_SECS` | `3600` | Sliding-window length in seconds |
+
+`<QUEUE>` is the queue name uppercased with hyphens replaced by underscores, e.g.
+`clip-generation` → `BULLMQ_CLIP_GENERATION_MAX_JOBS_PER_USER` /
+`BULLMQ_CLIP_GENERATION_RATE_WINDOW_SECS`, and `nft-mint` →
+`BULLMQ_NFT_MINT_MAX_JOBS_PER_USER`.
 
 ## Environment Variables
 

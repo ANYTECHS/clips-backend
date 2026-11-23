@@ -46,10 +46,12 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import {
   QueueRateLimitGuard,
   QueueRateLimit,
+  ApiQueueRateLimitResponse,
 } from '../common/guards/queue-rate-limit.guard';
 import { ClipsService } from './clips.service';
 import type { ClipSortField, SortOrder } from './clips.service';
 import { ClipPublishService } from './clip-publish.service';
+import { PublishClipDto } from './dto/publish-clip.dto';
 import { ClipResponseDto } from './dto/clip-response.dto';
 import type { BulkUpdateClipsDto } from './dto/bulk-update-clips.dto';
 import { BulkDeleteClipsDto } from './dto/bulk-delete-clips.dto';
@@ -99,21 +101,17 @@ export class ClipsController {
       'Returns the BullMQ job ID immediately; processing happens asynchronously.',
   })
   @ApiResponse({
-    status: 201,
+    status: 202,
     description:
-      'Clip generation job queued successfully. Processing is asynchronous; ' +
+      'Clip generation job accepted and queued. Processing is asynchronous; ' +
       'the returned jobId identifies the BullMQ job and does not mean clips are ready.',
     schema: {
       type: 'object',
       properties: {
-        jobId: { type: 'string', example: 'clip-generation-123' },
-        status: { type: 'string', example: 'queued' },
+        jobId: { type: 'string', example: 'clip-job-123' },
+        delayed: { type: 'boolean', example: false },
+        delayMs: { type: 'integer', example: 0 },
       },
-    },
-    status: 202,
-    description: 'Clip generation job accepted and queued for processing',
-    schema: {
-      example: { jobId: 'clip-job-123', delayed: false, delayMs: 0 },
     },
   })
   @ApiBody({ type: GenerateClipsDto })
@@ -122,7 +120,7 @@ export class ClipsController {
     description:
       'Invalid settings: duration out of range (5–180s) or max < min, unsupported style/language, clipCount outside 1–20',
   })
-  @ApiResponse({ status: 429, description: 'Too many active jobs (max 5)' })
+  @ApiQueueRateLimitResponse({ queue: 'clip-generation', maxJobs: 5 })
   generate(@Body() dto: GenerateClipsDto) {
     return this.clipsService.enqueueClip(dto);
   }
@@ -326,6 +324,102 @@ export class ClipsController {
       (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
     );
     return this.clipsService.regenerate(userId, id);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Social publishing — dedicated "clip-posting" queue
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * POST /clips/:id/publish
+   *
+   * Enqueues a posting job on the dedicated `clip-posting` queue. The Ayrshare
+   * I/O runs asynchronously in ClipPostingProcessor, isolated from the
+   * video-processing (clip-generation) workload. Returns the BullMQ jobId
+   * immediately; poll GET /clips/:id/posts for per-platform outcomes.
+   */
+  @Post(':id/publish')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(QueueRateLimitGuard)
+  @QueueRateLimit({ queue: 'clip-posting', maxJobs: 10 })
+  @ApiOperation({
+    summary: 'Publish a clip to social platforms (asynchronous)',
+    description:
+      'Enqueues a posting job on the dedicated clip-posting queue (separate from video ' +
+      'processing so the two workloads never compete). Returns immediately with the BullMQ ' +
+      'jobId; the Ayrshare publishing happens asynchronously. Poll GET /clips/:id/posts for ' +
+      'per-platform outcomes.',
+  })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
+  @ApiBody({ type: PublishClipDto })
+  @ApiResponse({
+    status: 202,
+    description:
+      'Posting job accepted and queued on the clip-posting queue. Processing is ' +
+      'asynchronous; jobId identifies the BullMQ job and does not mean the clip is published yet.',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', example: 'post-42-1730000000000' },
+        platforms: {
+          type: 'array',
+          items: { type: 'string' },
+          example: ['tiktok', 'instagram'],
+        },
+      },
+    },
+  })
+  @ApiBadRequestResponse({
+    description:
+      'Clip has no Cloudinary URL yet, or none of the requested platforms are connected',
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  @ApiQueueRateLimitResponse({ queue: 'clip-posting', maxJobs: 10 })
+  publish(
+    @Param('id', ParsePositiveIntPipe) id: number,
+    @Body() dto: PublishClipDto,
+    @Req() req: Request,
+  ) {
+    const userId: number = Number(
+      (req as any).user?.id ?? (req.headers['x-user-id'] as string) ?? 0,
+    );
+    return this.clipPublishService.publish(id, userId, dto.targetPlatforms);
+  }
+
+  /**
+   * GET /clips/:id/posts
+   *
+   * Returns the per-platform posting status for a clip. Use this to poll the
+   * result of an asynchronous POST /clips/:id/publish request.
+   */
+  @Get(':id/posts')
+  @ApiOperation({
+    summary: 'Get per-platform posting status for a clip',
+    description:
+      'Returns the ClipPost rows for a clip — platform, status (pending | published | ' +
+      'failed), postId and error. Poll this endpoint to observe the outcome of an ' +
+      'asynchronous POST /clips/:id/publish request.',
+  })
+  @ApiParam({ name: 'id', description: 'Positive integer clip ID', type: Number, example: 42 })
+  @ApiOkResponse({
+    description: 'Per-platform posting status for the clip',
+    schema: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          platform: { type: 'string', example: 'tiktok' },
+          status: { type: 'string', example: 'published' },
+          postId: { type: 'string', nullable: true, example: 'tt-123' },
+          error: { type: 'string', nullable: true, example: null },
+          attempts: { type: 'integer', example: 1 },
+        },
+      },
+    },
+  })
+  @ApiNotFoundResponse({ description: 'Clip not found' })
+  getPostStatus(@Param('id', ParsePositiveIntPipe) id: number) {
+    return this.clipPublishService.getPostStatus(id);
   }
 
   /**

@@ -36,21 +36,26 @@ function makeGuard(opts: {
   env?: Record<string, string>;
 }) {
   const calls: string[] = opts.redis?.calls ?? [];
-  const state = { count: opts.redis?.count ?? 0 };
+  const counts = new Map<string, number>();
+  const expires: Array<{ key: string; secs: number }> = [];
+  const seed = opts.redis?.count ?? 0;
   const redisService = {
     isAvailable: () => opts.redis?.isAvailable ?? true,
-    incr: async (_k: string) => {
+    incr: async (k: string) => {
       calls.push('incr');
-      state.count += 1;
-      return state.count;
+      const next = (counts.get(k) ?? seed) + 1;
+      counts.set(k, next);
+      return next;
     },
-    decr: async (_k: string) => {
+    decr: async (k: string) => {
       calls.push('decr');
-      state.count -= 1;
-      return state.count;
+      const next = (counts.get(k) ?? seed) - 1;
+      counts.set(k, next);
+      return next;
     },
-    expire: async (_k: string, _s: number) => {
+    expire: async (k: string, secs: number) => {
       calls.push('expire');
+      expires.push({ key: k, secs });
       return true;
     },
     ttl: async (_k: string) => {
@@ -69,7 +74,7 @@ function makeGuard(opts: {
     reflector as any,
     configService as any,
   );
-  return { guard, calls, reflector };
+  return { guard, calls, expires, counts, reflector };
 }
 
 describe('QueueRateLimitGuard (#900)', () => {
@@ -133,5 +138,71 @@ describe('QueueRateLimitGuard (#900)', () => {
 
   it('uses QUEUE_RATE_LIMIT_KEY metadata key', () => {
     expect(QUEUE_RATE_LIMIT_KEY).toBe('queue_rate_limit');
+  });
+
+  it('sets the window TTL only on the first request for a user', async () => {
+    const { guard, expires } = makeGuard({
+      metadata: { queue: 'clip-generation', maxJobs: 5 },
+      redis: { count: 0 },
+    });
+    const { context } = makeContext({ userId: 1 });
+    await guard.canActivate(context);
+    await guard.canActivate(context);
+    expect(expires).toHaveLength(1);
+    expect(expires[0].secs).toBe(3600); // default window
+  });
+
+  it('resets the window using the configurable windowSecs default', async () => {
+    const { guard, expires } = makeGuard({
+      metadata: { queue: 'clip-generation', maxJobs: 5, windowSecs: 120 },
+      redis: { count: 0 },
+    });
+    const { context } = makeContext({ userId: 1 });
+    await guard.canActivate(context);
+    expect(expires).toHaveLength(1);
+    expect(expires[0].secs).toBe(120);
+  });
+
+  it('honours BULLMQ_{QUEUE}_RATE_WINDOW_SECS env override', async () => {
+    const { guard, expires } = makeGuard({
+      metadata: { queue: 'nft-mint', maxJobs: 5, windowSecs: 3600 },
+      redis: { count: 0 },
+      env: { BULLMQ_NFT_MINT_RATE_WINDOW_SECS: '900' },
+    });
+    const { context } = makeContext({ userId: 1 });
+    await guard.canActivate(context);
+    expect(expires).toHaveLength(1);
+    expect(expires[0].secs).toBe(900);
+  });
+
+  it('allows the request exactly at the limit and rejects the next one', async () => {
+    const { guard } = makeGuard({
+      metadata: { queue: 'clip-generation', maxJobs: 5 },
+      redis: { count: 4 },
+    });
+    const { context } = makeContext({ userId: 3 });
+    await expect(guard.canActivate(context)).resolves.toBe(true); // 5th — allowed
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      status: HttpStatus.TOO_MANY_REQUESTS, // 6th — rejected
+    });
+  });
+
+  it('tracks limits per user (isolation)', async () => {
+    const { guard } = makeGuard({
+      metadata: { queue: 'clip-generation', maxJobs: 5 },
+      redis: { count: 0 },
+    });
+    const userA = makeContext({ userId: 11 });
+    const userB = makeContext({ userId: 22 });
+
+    for (let i = 0; i < 5; i += 1) {
+      await expect(guard.canActivate(userA.context)).resolves.toBe(true);
+    }
+    await expect(guard.canActivate(userA.context)).rejects.toMatchObject({
+      status: HttpStatus.TOO_MANY_REQUESTS,
+    });
+
+    // A different user keeps an independent counter.
+    await expect(guard.canActivate(userB.context)).resolves.toBe(true);
   });
 });

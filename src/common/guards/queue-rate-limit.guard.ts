@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { ApiTooManyRequestsResponse } from '@nestjs/swagger';
 import { RedisService } from '../../redis/redis.service';
 
 export const QUEUE_RATE_LIMIT_KEY = 'queue_rate_limit';
@@ -48,6 +49,55 @@ export interface QueueRateLimitOptions {
  */
 export const QueueRateLimit = (options: QueueRateLimitOptions) =>
   Reflect.metadata(QUEUE_RATE_LIMIT_KEY, options);
+
+/**
+ * Swagger helper that documents the `429 Too Many Requests` response emitted
+ * by {@link QueueRateLimitGuard}.
+ *
+ * Documents:
+ *  - the `Retry-After` response header (seconds until the window resets), and
+ *  - a concrete error-body example including `queue`, `limit`, `windowSecs`
+ *    and `retryAfter` (issue #900).
+ *
+ * Usage — place alongside the guard + decorator on the affected handler:
+ *   @UseGuards(QueueRateLimitGuard)
+ *   @QueueRateLimit({ queue: 'clip-generation', maxJobs: 5 })
+ *   @ApiQueueRateLimitResponse({ queue: 'clip-generation', maxJobs: 5 })
+ */
+export const ApiQueueRateLimitResponse = (options: {
+  queue: string;
+  maxJobs?: number;
+  windowSecs?: number;
+}) =>
+  ApiTooManyRequestsResponse({
+    description:
+      'Too Many Requests — the user has reached the maximum number of active ' +
+      `jobs allowed for the "${options.queue}" queue within the rate-limit window. ` +
+      'Inspect the `Retry-After` header for the number of seconds to wait.',
+    headers: {
+      'Retry-After': {
+        description: 'Seconds to wait before retrying this request.',
+        schema: { type: 'integer', example: 60 },
+      },
+    },
+    schema: {
+      type: 'object',
+      properties: {
+        statusCode: { type: 'integer', example: 429 },
+        message: {
+          type: 'string',
+          example:
+            `Too many active jobs for queue "${options.queue}". ` +
+            `Maximum ${options.maxJobs ?? 5} jobs per user per ${options.windowSecs ?? 3600}s window.`,
+        },
+        queue: { type: 'string', example: options.queue },
+        limit: { type: 'integer', example: options.maxJobs ?? 5 },
+        windowSecs: { type: 'integer', example: options.windowSecs ?? 3600 },
+        retryAfter: { type: 'integer', example: 60 },
+      },
+      required: ['statusCode', 'message'],
+    },
+  });
 
 /**
  * QueueRateLimitGuard

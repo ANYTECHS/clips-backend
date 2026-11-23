@@ -16,12 +16,15 @@ const mockMetricsService = {
   recordJobFailure: jest.fn(),
 };
 
+const mockShutdownService = { register: jest.fn() };
+
 function makeProcessor() {
   return new ClipPostingProcessor(
     mockPrisma as any,
     mockAyrshare as any,
     mockUserPlatformService as any,
     mockMetricsService as any,
+    mockShutdownService as any,
   );
 }
 
@@ -114,12 +117,12 @@ describe('ClipPostingProcessor.process', () => {
     ]);
 
     const processor = makeProcessor();
-    // Last attempt — no retries left — should not throw
+    // Last attempt — no retries left — job fails permanently (UnrecoverableError)
     const job = makeJob({ platforms: ['tiktok'] });
     (job as any).attemptsMade = 4; // 5th attempt (0-indexed), no retries left
     (job as any).opts = { attempts: 5 };
 
-    await processor.process(job);
+    await expect(processor.process(job)).rejects.toThrow(/no retries remain/i);
 
     expect(mockPrisma.clipPost.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({

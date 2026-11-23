@@ -80,7 +80,7 @@ export class ClipPostingProcessor extends WorkerHost implements OnModuleInit {
 
       await job.updateProgress(10);
 
-      const results = await this.ayrshare.post(mediaUrl, caption, validPlatforms);
+      const results = await this.ayrshare.post(mediaUrl, caption ?? '', validPlatforms);
 
       await job.updateProgress(80);
 

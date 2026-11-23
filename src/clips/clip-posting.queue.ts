@@ -11,20 +11,32 @@ export const CLIP_POSTING_JOB = 'post-clip';
  */
 export const CLIP_POSTING_QUEUE_PRIORITY = 3;
 
-export interface ClipPostingJobData {
+/**
+ * Data carried by every clip-posting job.
+ * `mediaUrl` is the Cloudinary URL of the clip to publish.
+ */
+export interface ClipPostingJob {
   clipId: number;
-  platforms: string[];
   userId: number;
+  mediaUrl: string;
+  platforms: string[];
   caption?: string;
   hashtags?: string[];
   scheduledAt?: string;
 }
 
+/**
+ * Retry policy for posting jobs, applied per-job by ClipPublishService.
+ *  - 5 attempts with exponential backoff starting at 2 000 ms absorbs the
+ *    transient rate-limit windows that social platforms enforce.
+ *  - Jobs are never auto-removed so failures remain inspectable in the
+ *    dead-letter / queue dashboard.
+ */
 export const CLIP_POSTING_JOB_OPTIONS = {
-  attempts: 3,
+  attempts: 5,
   backoff: {
     type: 'exponential' as const,
-    delay: 5000,
+    delay: 2000,
   },
   removeOnComplete: false,
   removeOnFail: false,

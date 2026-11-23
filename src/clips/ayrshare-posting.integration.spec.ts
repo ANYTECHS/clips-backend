@@ -14,6 +14,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AyrshareService } from './ayrshare.service';
 import { UserPlatformService } from '../user-platform/user-platform.service';
 import { MetricsService } from '../metrics/metrics.service';
+import { GracefulShutdownService } from '../common/shutdown/graceful-shutdown.service';
 import type { Job } from 'bullmq';
 import type { ClipPostingJob } from './clip-posting.queue';
 
@@ -32,6 +33,8 @@ const mockMetrics = {
   recordJobCompletion: jest.fn(),
   recordJobFailure: jest.fn(),
 };
+
+const mockShutdownService = { register: jest.fn() };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +74,7 @@ describe('Ayrshare posting queue — integration', () => {
         { provide: AyrshareService, useValue: mockAyrshare },
         { provide: UserPlatformService, useValue: mockUserPlatformService },
         { provide: MetricsService, useValue: mockMetrics },
+        { provide: GracefulShutdownService, useValue: mockShutdownService },
       ],
     }).compile();
 
@@ -163,14 +167,14 @@ describe('Ayrshare posting queue — integration', () => {
 
   // ── Final attempt — no more retries ───────────────────────────────────────
 
-  it('does not throw on final attempt even when platforms fail', async () => {
+  it('fails permanently (UnrecoverableError) on the final attempt when platforms fail', async () => {
     mockUserPlatformService.findAll.mockResolvedValue([{ platform: 'tiktok' }]);
     mockAyrshare.post.mockResolvedValue([
       { platform: 'tiktok', success: false, error: 'account suspended' },
     ]);
 
     const job = makeJob({ platforms: ['tiktok'] }, { attemptsMade: 4, opts: { attempts: 5 } } as any);
-    await expect(processor.process(job)).resolves.toBeUndefined();
+    await expect(processor.process(job)).rejects.toThrow(/no retries remain/i);
 
     expect(mockPrisma.clipPost.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({

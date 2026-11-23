@@ -30,6 +30,7 @@ import type { Request } from 'express';
 import {
   QueueRateLimitGuard,
   QueueRateLimit,
+  ApiQueueRateLimitResponse,
 } from '../common/guards/queue-rate-limit.guard';
 import { VideoUploadService } from './video-upload.service';
 import { Auth } from '../auth/decorators/auth.decorator';
@@ -116,10 +117,7 @@ export class VideoUploadController {
       'File exceeds the configured upload limit (VIDEO_UPLOAD_MAX_SIZE_MB, default 500 MB)',
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiTooManyRequestsResponse({
-    description:
-      'Too many active clip-generation jobs for this user. Retry after the number of seconds in the Retry-After header.',
-  })
+  @ApiQueueRateLimitResponse({ queue: 'clip-generation', maxJobs: 5 })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
