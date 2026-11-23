@@ -32,7 +32,11 @@ import { Throttle } from '@nestjs/throttler';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { WalletsService, DisconnectResult } from './wallets.service';
 import { WalletBalanceService } from './wallet-balance.service';
-import { CreateWalletConnectionDto } from './dto/connect-wallet.dto';
+import {
+  CreateWalletConnectionDto,
+  WalletConnectionResponseDto,
+  WalletDisconnectResponseDto,
+} from './dto/connect-wallet.dto';
 import { SUPPORTED_CHAINS } from './chain.constants';
 import { WalletNftsQueryDto } from './dto/wallet-nfts-query.dto';
 import { WalletOwnershipGuard } from './guards/wallet-ownership.guard';
@@ -98,22 +102,12 @@ export class WalletsController {
       'Includes chain information (stellar | solana | base) and provider type.',
   })
   @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Wallet details',
-    schema: {
-      type: 'object',
-      properties: {
-        id: { type: 'number' },
-        address: { type: 'string', example: 'GABF...KJ93XD' },
-        chain: { type: 'string', enum: [...SUPPORTED_CHAINS] },
-        type: { type: 'string', example: 'freighter' },
-        connectedAt: { type: 'string', format: 'date-time' },
-      },
-    },
+    type: WalletConnectionResponseDto,
   })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 404, description: 'Wallet not found' })
+  @ApiNotFoundResponse({ description: 'Wallet not found' })
   async getWallet(
     @Param('id', ParseIntPipe) id: number,
     @Req() req: AuthRequest,
@@ -188,16 +182,9 @@ export class WalletsController {
       'Soft-deletes the wallet (sets deletedAt). Blocked if pending payouts or active NFTs still depend on the wallet.',
   })
   @ApiParam({ name: 'id', description: 'Wallet ID', type: 'number' })
-  @ApiResponse({
-    status: 200,
+  @ApiOkResponse({
     description: 'Wallet disconnected successfully',
-    schema: {
-      type: 'object',
-      properties: {
-        message: { type: 'string', example: 'Wallet disconnected successfully' },
-        walletId: { type: 'number', example: 1 },
-      },
-    },
+    type: WalletDisconnectResponseDto,
   })
   @ApiBadRequestResponse({
     description: 'Cannot disconnect - pending payouts or active NFTs exist',
@@ -227,38 +214,12 @@ export class WalletsController {
       'Connect or update a wallet for the authenticated user. ' +
       'Supports Stellar (freighter, lobstr, albedo), Solana (phantom, solflare, backpack), ' +
       'and Base/EVM (metamask, coinbase, walletconnect) wallets. ' +
-      'If a wallet with the same address+chain already exists it is re-activated. ' +
+      'If the wallet is already connected to this user, it is re-activated; ' +
+      'a wallet owned by another user is rejected. ' +
       'Wallet authentication: the client signs `signedMessage` with the wallet key and the server ' +
       'verifies `signature` against `publicKey` before linking. EVM wallets (MetaMask, Coinbase, ' +
       'WalletConnect — including BNB Smart Chain accounts) use the `base` chain value. ' +
       'Requires a Bearer JWT.',
-  })
-  @ApiBody({
-    type: CreateWalletConnectionDto,
-    examples: {
-      stellar: {
-        summary: 'Stellar wallet (Freighter)',
-        value: {
-          address: 'GC6XJ3NVJ3Q5ZZQF2Y7J7JQ3WJ5KX4Y2JQ3Y7Z5Q3WJ5KX4Y2JQ3Y7Z5',
-          chain: 'stellar',
-          type: 'freighter',
-          publicKey: 'GC6XJ3NVJ3Q5ZZQF2Y7J7JQ3WJ5KX4Y2JQ3Y7Z5Q3WJ5KX4Y2JQ3Y7Z5',
-          signature: 'base64-encoded-ed25519-signature',
-          signedMessage: 'ClipCash wallet verification: 1727222400',
-        },
-      },
-      evm: {
-        summary: 'EVM / BNB wallet (MetaMask)',
-        value: {
-          address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
-          chain: 'base',
-          type: 'metamask',
-          publicKey: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
-          signature: '0x-hex-encoded-personal-sign-signature',
-          signedMessage: 'ClipCash wallet verification: 1727222400',
-        },
-      },
-    },
   })
   @ApiBody({
     type: CreateWalletConnectionDto,
@@ -269,6 +230,9 @@ export class WalletsController {
           address: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
           chain: 'stellar',
           type: 'freighter',
+          publicKey: 'GC6XOTK6L6LGBKIWH3IRUZPVUY4COGEMW4J5YINOSPKO27YKTUUHTZF3',
+          signature: 'base64-encoded-ed25519-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
         },
       },
       solana: {
@@ -277,11 +241,31 @@ export class WalletsController {
           address: '7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV1',
           chain: 'solana',
           type: 'phantom',
+          publicKey: '7EcDhSYGxXyscszYEp35KHN8vvw3svAuLKTzXwCFLtV1',
+          signature: 'base64-encoded-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
+        },
+      },
+      evm: {
+        summary: 'Connect an EVM / Base wallet',
+        value: {
+          address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          chain: 'base',
+          type: 'metamask',
+          publicKey: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F',
+          signature: '0x-hex-encoded-signature',
+          signedMessage: 'ClipCash wallet verification: 1727222400',
         },
       },
     },
   })
-  @ApiResponse({ status: 200, description: 'Wallet connected successfully' })
+  @ApiOkResponse({
+    description: 'Wallet connected successfully',
+    type: WalletConnectionResponseDto,
+  })
+  @ApiConflictResponse({
+    description: 'Wallet is already connected to another user',
+  })
   @ApiBadRequestResponse({
     description: 'Invalid wallet data or signature verification failed',
     schema: {

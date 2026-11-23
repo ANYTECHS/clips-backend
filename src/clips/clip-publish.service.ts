@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -48,13 +49,34 @@ export class ClipPublishService {
     clipId: number,
     userId: number,
     targetPlatforms: string[],
-  ): Promise<{ jobId: string; platforms: string[] }> {
-    const clip = await this.prisma.clip.findUnique({ where: { id: clipId } });
+    scheduledAt?: string,
+  ): Promise<{
+    clipId: number;
+    jobId: string;
+    status: 'queued';
+    platforms: string[];
+  }> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      include: { video: { select: { userId: true } } },
+    });
     if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException(`You do not own clip ${clipId}`);
+    }
     if (!clip.clipUrl) {
       throw new BadRequestException(
         'Clip has no Cloudinary URL. Upload the clip before publishing.',
       );
+    }
+    const scheduleDelay = scheduledAt
+      ? Date.parse(scheduledAt) - Date.now()
+      : undefined;
+    if (
+      scheduleDelay !== undefined &&
+      (!Number.isFinite(scheduleDelay) || scheduleDelay <= 0)
+    ) {
+      throw new BadRequestException('scheduledAt must be a future date');
     }
 
     // Resolve which of the requested platforms the user has connected
@@ -95,17 +117,20 @@ export class ClipPublishService {
       mediaUrl: clip.clipUrl,
       caption,
       platforms: validPlatforms,
+      ...(scheduledAt && { scheduledAt }),
     };
 
     const rateLimits = getBullMQRateLimitConfig(this.configService);
+    const jobOptions: Record<string, unknown> = {
+      ...CLIP_POSTING_JOB_OPTIONS,
+      jobId: `post-${clipId}-${Date.now()}`,
+    };
+    if (scheduleDelay !== undefined) jobOptions.delay = scheduleDelay;
     const result = await this.queueOverflowService.enqueue({
       queue: this.postingQueue as Queue<any>,
       jobName: 'post-clip',
       data: jobPayload,
-      baseOptions: {
-        ...CLIP_POSTING_JOB_OPTIONS,
-        jobId: `post-${clipId}-${Date.now()}`,
-      } as Record<string, unknown>,
+      baseOptions: jobOptions,
       rateLimitConfig: rateLimits.clipPosting,
     });
 
@@ -120,14 +145,28 @@ export class ClipPublishService {
       );
     }
 
-    return { jobId: String(result.jobId), platforms: validPlatforms };
+    return {
+      clipId,
+      jobId: String(result.jobId),
+      status: 'queued',
+      platforms: validPlatforms,
+    };
   }
 
   /**
    * GET /clips/:id/posts
    * Returns per-platform post status for a clip.
    */
-  async getPostStatus(clipId: number): Promise<any[]> {
+  async getPostStatus(clipId: number, userId: number): Promise<any[]> {
+    const clip = await this.prisma.clip.findUnique({
+      where: { id: clipId },
+      select: { id: true, video: { select: { userId: true } } },
+    });
+    if (!clip) throw new NotFoundException(`Clip ${clipId} not found`);
+    if (clip.video.userId !== userId) {
+      throw new ForbiddenException(`You do not own clip ${clipId}`);
+    }
+
     return this.prisma.clipPost.findMany({
       where: { clipId },
       orderBy: { createdAt: 'desc' },

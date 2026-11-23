@@ -1,7 +1,7 @@
-import { Logger, OnModuleInit } from '@nestjs/common';
+import { Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
-import { Job } from 'bullmq';
+import { Processor, WorkerHost, OnWorkerEvent, InjectQueue } from '@nestjs/bullmq';
+import { Job, Queue } from 'bullmq';
 import { NFT_MINT_QUEUE } from './nft-mint.queue';
 import { NftMintService } from './nft-mint.service';
 import { MetricsService } from '../metrics/metrics.service';
@@ -13,6 +13,7 @@ export interface NftMintJob {
   clipId: number;
   walletAddress: string;
   userId: number;
+  collectionId?: string;
 }
 
 @Processor(NFT_MINT_QUEUE, {
@@ -25,23 +26,33 @@ export class NftMintProcessor extends WorkerHost implements OnModuleInit {
     private readonly nftMintService: NftMintService,
     private readonly metricsService: MetricsService,
     private readonly shutdownService: GracefulShutdownService,
+    @Optional()
+    @InjectQueue(NFT_MINT_QUEUE)
+    private readonly queue?: Queue,
   ) {
     super();
   }
 
   onModuleInit(): void {
     this.shutdownService.register(this.worker);
+    if (this.queue) {
+      this.shutdownService.registerQueue(this.queue);
+    }
   }
 
   async process(job: Job<NftMintJob>): Promise<{ xdr: string; clipId: number }> {
-    const { clipId, walletAddress } = job.data;
+    const { clipId, walletAddress, collectionId } = job.data;
     this.logger.log(`Processing NFT mint job ${job.id} for clip ${clipId}`);
 
     const jobMetricId = `${NFT_MINT_QUEUE}:${job.id}`;
     this.metricsService.recordJobStart(jobMetricId);
 
     try {
-      const result = await this.nftMintService.prepareMintTx(clipId, walletAddress);
+      const result = await this.nftMintService.prepareMintTx(
+        clipId,
+        walletAddress,
+        ...(collectionId !== undefined ? [collectionId] : []),
+      );
       this.metricsService.recordJobCompletion(jobMetricId, NFT_MINT_QUEUE, 'success');
       return { xdr: result.xdr, clipId };
     } catch (error) {

@@ -44,6 +44,7 @@ const clip = {
   clipUrl: 'https://res.cloudinary.com/demo/video/upload/clip.mp4',
   caption: 'Test clip',
   title: 'Test',
+  video: { userId: 1 },
 };
 
 beforeEach(() => {
@@ -57,20 +58,40 @@ describe('ClipPublishService.publish', () => {
   it('throws NotFoundException when clip does not exist', async () => {
     mockPrisma.clip.findUnique.mockResolvedValue(null);
     const svc = makeService();
-    await expect(svc.publish(99, 1, ['tiktok'])).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.publish(99, 1, ['tiktok'])).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('prevents users from posting clips they do not own', async () => {
+    mockPrisma.clip.findUnique.mockResolvedValue({
+      ...clip,
+      video: { userId: 2 },
+    });
+    const svc = makeService();
+    await expect(svc.publish(1, 1, ['tiktok'])).rejects.toThrow(
+      'You do not own clip 1',
+    );
+    expect(mockPostingQueue.add).not.toHaveBeenCalled();
   });
 
   it('throws BadRequestException when clip has no clipUrl', async () => {
     mockPrisma.clip.findUnique.mockResolvedValue({ ...clip, clipUrl: null });
     const svc = makeService();
-    await expect(svc.publish(1, 1, ['tiktok'])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.publish(1, 1, ['tiktok'])).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('throws BadRequestException when no requested platforms are connected', async () => {
     mockPrisma.clip.findUnique.mockResolvedValue(clip);
-    mockUserPlatformService.findAll.mockResolvedValue([{ platform: 'instagram' }]);
+    mockUserPlatformService.findAll.mockResolvedValue([
+      { platform: 'instagram' },
+    ]);
     const svc = makeService();
-    await expect(svc.publish(1, 1, ['tiktok'])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.publish(1, 1, ['tiktok'])).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('creates pending ClipPost rows and enqueues a posting job', async () => {
@@ -126,7 +147,10 @@ describe('ClipPublishService.publish', () => {
   });
 
   it('uses clip caption over title when both are present', async () => {
-    mockPrisma.clip.findUnique.mockResolvedValue({ ...clip, caption: 'Custom caption' });
+    mockPrisma.clip.findUnique.mockResolvedValue({
+      ...clip,
+      caption: 'Custom caption',
+    });
     mockUserPlatformService.findAll.mockResolvedValue([{ platform: 'tiktok' }]);
 
     const svc = makeService();
@@ -143,10 +167,11 @@ describe('ClipPublishService.publish', () => {
 describe('ClipPublishService.getPostStatus', () => {
   it('returns ClipPost records ordered by createdAt desc', async () => {
     const posts = [{ id: 1, platform: 'tiktok', status: 'published' }];
+    mockPrisma.clip.findUnique.mockResolvedValue(clip);
     mockPrisma.clipPost.findMany.mockResolvedValue(posts);
 
     const svc = makeService();
-    const result = await svc.getPostStatus(1);
+    const result = await svc.getPostStatus(1, 1);
 
     expect(mockPrisma.clipPost.findMany).toHaveBeenCalledWith({
       where: { clipId: 1 },

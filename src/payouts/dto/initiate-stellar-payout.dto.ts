@@ -1,6 +1,7 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsNumber, Min } from 'class-validator';
+import { IsEnum, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
+import { JobPriorityLevel } from '../../queue/job-priority';
 
 export class InitiateStellarPayoutDto {
   @ApiProperty({
@@ -24,4 +25,18 @@ export class InitiateStellarPayoutDto {
   )
   @Min(0.01)
   amount: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional job priority level for payout processing. ' +
+      'Supported values: critical, high, normal, low. ' +
+      'Note: critical priority requires administrator privileges.',
+    enum: JobPriorityLevel,
+    example: JobPriorityLevel.HIGH,
+  })
+  @IsOptional()
+  @IsEnum(JobPriorityLevel, {
+    message: 'priority must be one of: critical, high, normal, low',
+  })
+  priority?: JobPriorityLevel;
 }
