@@ -39,6 +39,7 @@ import type { Request } from 'express';
 import {
   QueueRateLimitGuard,
   QueueRateLimit,
+  ApiQueueRateLimitResponse,
 } from '../common/guards/queue-rate-limit.guard';
 import { ParseStellarAddressPipe } from '../common/pipes';
 

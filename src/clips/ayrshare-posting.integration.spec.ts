@@ -5,6 +5,7 @@
  *  - Mocks the Ayrshare SDK and processes jobs end-to-end
  *  - Handles multi-platform posting (success + partial failure)
  *  - Persists results to the DB via Prisma
+ *  - Retries on failure and gives up gracefully on final attempt
  *  - Retries on failure and marks exhausted jobs permanently failed
  */
 
@@ -22,6 +23,7 @@ import type { ClipPostingJob } from './clip-posting.queue';
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 const mockPrisma = {
+  clipPost: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
   clip: { findUnique: jest.fn() },
   clipPost: {
     findMany: jest.fn(),
@@ -41,6 +43,7 @@ const mockMetrics = {
   recordJobFailure: jest.fn(),
 };
 
+const mockShutdownService = { register: jest.fn() };
 const mockShutdown = { register: jest.fn() };
 const mockPostingQueue = { add: jest.fn() };
 const mockQueueOverflow = { enqueue: jest.fn() };
@@ -129,6 +132,7 @@ describe('Ayrshare posting queue — integration', () => {
         { provide: AyrshareService, useValue: mockAyrshare },
         { provide: UserPlatformService, useValue: mockUserPlatformService },
         { provide: MetricsService, useValue: mockMetrics },
+        { provide: GracefulShutdownService, useValue: mockShutdownService },
         { provide: GracefulShutdownService, useValue: mockShutdown },
       ],
     }).compile();
@@ -274,6 +278,7 @@ describe('Ayrshare posting queue — integration', () => {
     expect(mockPrisma.clipPost.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { clipId: 42, platform: 'instagram' },
+        data: expect.objectContaining({ status: 'failed', error: 'rate limited' }),
         data: expect.objectContaining({
           status: 'failed',
           error: 'rate limited',
@@ -284,12 +289,19 @@ describe('Ayrshare posting queue — integration', () => {
 
   // ── Final attempt — no more retries ───────────────────────────────────────
 
+  it('fails permanently (UnrecoverableError) on the final attempt when platforms fail', async () => {
   it('throws an unrecoverable error on the final attempt', async () => {
     mockUserPlatformService.findAll.mockResolvedValue([{ platform: 'tiktok' }]);
     mockAyrshare.post.mockResolvedValue([
       { platform: 'tiktok', success: false, error: 'account suspended' },
     ]);
 
+    const job = makeJob({ platforms: ['tiktok'] }, { attemptsMade: 4, opts: { attempts: 5 } } as any);
+    await expect(processor.process(job)).rejects.toThrow(/no retries remain/i);
+
+    expect(mockPrisma.clipPost.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ status: 'failed', error: 'account suspended' }),
     const job = makeJob({ platforms: ['tiktok'] }, {
       attemptsMade: 4,
       opts: { attempts: 5 },

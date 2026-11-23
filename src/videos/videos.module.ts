@@ -3,6 +3,7 @@ import { VideosController } from './videos.controller';
 import { VideoUploadController } from './video-upload.controller';
 import { ClipsModule } from '../clips/clips.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { RedisModule } from '../redis/redis.module';
 import { VideoUploadService } from './video-upload.service';
 import { VideoProcessingService } from './video-processing.service';
 import { VideoProgressGatewayModule } from './video-progress-gateway.module';
@@ -14,6 +15,7 @@ import { registerQueue } from '../common';
   imports: [
     ClipsModule,
     PrismaModule,
+    RedisModule,
     VideoProgressGatewayModule,
     registerQueue(CLIP_GENERATION_QUEUE),
   ],

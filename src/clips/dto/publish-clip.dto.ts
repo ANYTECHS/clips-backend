@@ -1,3 +1,4 @@
+import { IsArray, ArrayNotEmpty, IsOptional, IsIn } from 'class-validator';
 import { ArrayNotEmpty, IsArray, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
@@ -26,6 +27,10 @@ export class PublishClipDto {
   @IsArray()
   @ArrayNotEmpty()
   @IsValidPlatforms()
+  @IsIn(SUPPORTED_PLATFORMS, {
+    each: true,
+    message: `Each platform must be one of: ${SUPPORTED_PLATFORMS.join(', ')}`,
+  })
   targetPlatforms: string[];
 
   @ApiPropertyOptional({
