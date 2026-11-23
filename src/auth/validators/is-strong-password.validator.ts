@@ -3,7 +3,7 @@ import {
   ValidatorConstraintInterface,
   ValidationArguments,
 } from 'class-validator';
-import * as zxcvbn from 'zxcvbn';
+import zxcvbn from 'zxcvbn';
 
 export interface PasswordStrengthError {
   score: number;

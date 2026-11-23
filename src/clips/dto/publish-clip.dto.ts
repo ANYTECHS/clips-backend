@@ -1,4 +1,4 @@
-import { IsArray, ArrayNotEmpty, IsOptional } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   SUPPORTED_PLATFORMS,
@@ -12,8 +12,6 @@ import {
   SCHEDULE_MAX_HORIZON_DAYS,
   SCHEDULE_MIN_LEAD_MS,
 } from '../../common/validators/is-valid-schedule.validator';
-import { IsArray, ArrayNotEmpty, IsIn } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
 
 export { SUPPORTED_PLATFORMS };
 export type { SupportedPlatform };
@@ -28,12 +26,6 @@ export class PublishClipDto {
   @IsArray()
   @ArrayNotEmpty()
   @IsValidPlatforms()
-  @IsArray({ message: 'targetPlatforms must be an array of platform names' })
-  @ArrayNotEmpty({ message: 'Select at least one platform to publish to' })
-  @IsIn(SUPPORTED_PLATFORMS, {
-    each: true,
-    message: `Each platform must be one of: ${SUPPORTED_PLATFORMS.join(', ')}`,
-  })
   targetPlatforms: string[];
 
   @ApiPropertyOptional({

@@ -11,17 +11,20 @@ export const CLIP_POSTING_JOB = 'post-clip';
  */
 export const CLIP_POSTING_QUEUE_PRIORITY = 3;
 
-export interface ClipPostingJobData {
+export interface ClipPostingJob {
   clipId: number;
-  platforms: string[];
   userId: number;
-  caption?: string;
+  mediaUrl: string;
+  caption: string;
+  platforms: string[];
   hashtags?: string[];
   scheduledAt?: string;
 }
 
+export type ClipPostingJobData = ClipPostingJob;
+
 export const CLIP_POSTING_JOB_OPTIONS = {
-  attempts: 3,
+  attempts: 5,
   backoff: {
     type: 'exponential' as const,
     delay: 5000,

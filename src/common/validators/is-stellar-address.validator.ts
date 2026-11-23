@@ -40,6 +40,7 @@ export function IsStellarAddress(
     },
     validationOptions,
   );
+}
 import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
