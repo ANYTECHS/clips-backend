@@ -207,7 +207,7 @@ export class LeaderboardService {
       _sum: { amount: true },
     });
 
-    const userEarnings = earningsResult._sum.amount ?? 0;
+    const userEarnings = earningsResult?._sum?.amount ?? 0;
 
     if (!user.showOnLeaderboard || userEarnings === 0) {
       return {

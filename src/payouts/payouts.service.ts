@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -776,7 +777,7 @@ export class PayoutsService {
     }
 
     if (payout.status !== PAYOUT_STATUSES.COMPLETED) {
-      throw new BadRequestException(
+      throw new ConflictException(
         'Receipt is only available for completed payouts',
       );
     }
@@ -786,7 +787,7 @@ export class PayoutsService {
     });
 
     if (!receipt) {
-      throw new NotFoundException('Receipt not found for this payout');
+      throw new ConflictException('Receipt not found for this payout');
     }
 
     return this.payoutReceiptService.getReceiptPdf(payoutId, {

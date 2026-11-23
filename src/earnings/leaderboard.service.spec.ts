@@ -151,7 +151,9 @@ describe('LeaderboardService', () => {
       await service.getLeaderboard({ page: 2, limit: 50 });
 
       expect(prisma.$queryRaw).toHaveBeenCalledWith(
-        expect.stringContaining('OFFSET 50'),
+        expect.anything(),
+        50,
+        50,
       );
     });
 
@@ -165,7 +167,7 @@ describe('LeaderboardService', () => {
       await service.getLeaderboard({ limit: 999 });
 
       const call = prisma.$queryRaw.mock.calls[0];
-      expect(call[0].toString()).toMatch(/LIMIT 100/);
+      expect(call[1]).toBe(100);
     });
 
     it('anonymizes user data when requested', async () => {

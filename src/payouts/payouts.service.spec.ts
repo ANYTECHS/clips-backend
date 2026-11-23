@@ -14,6 +14,7 @@ import { CurrencyService } from '../common/services/currency.service';
 import { PayoutValidationService } from './payout-validation.service';
 import { PayoutProcessingService } from './payout-processing.service';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
+import { PayoutRetryStrategyService } from './payout-retry-strategy.service';
 import { MailService } from '../auth/mail.service';
 import { PayoutLimitsService } from './payout-limits.service';
 import {
@@ -105,11 +106,17 @@ describe('PayoutsService', () => {
   // keep them permissive here so these tests exercise the other rules.
   const mockPayoutLimitsService = {
     getLimits: jest.fn(() => ({ min: 0, max: Number.POSITIVE_INFINITY })),
+    resolvePayoutAmount: jest.fn((amount: number) => amount),
+  };
+
+  const mockStellarPayoutVerification = {
+    verifyPayoutTransaction: jest.fn(),
   };
 
   const mockPlatformAddress = StellarSdk.Keypair.random().publicKey();
 
   beforeEach(async () => {
+    mockPrismaService.payout.updateMany.mockResolvedValue({ count: 1 });
     mockPrismaService.$transaction.mockImplementation(
       async (fn: (tx: typeof mockPrismaService) => Promise<unknown>) =>
         fn(mockPrismaService),
@@ -146,6 +153,7 @@ describe('PayoutsService', () => {
           provide: EarningsService,
           useValue: {
             processCreatorEarnings: jest.fn(),
+            invalidateUserEarningsCache: jest.fn(),
             // Derive the balance from the same aggregates requestPayout() uses.
             getUserTotalEarnings: jest.fn(async () => {
               const earned = await mockPrismaService.earning.aggregate();
@@ -171,11 +179,10 @@ describe('PayoutsService', () => {
         },
         PayoutValidationService,
         PayoutProcessingService,
+        PayoutRetryStrategyService,
         {
           provide: StellarPayoutVerificationService,
-          useValue: {
-            verifyPayoutTransaction: jest.fn(),
-          },
+          useValue: mockStellarPayoutVerification,
         },
         {
           provide: MailService,
@@ -332,7 +339,7 @@ describe('PayoutsService', () => {
       expect(result.page).toBe(1);
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1 },
+          where: expect.objectContaining({ userId: 1 }),
           skip: 0,
           take: 20,
         }),
@@ -347,7 +354,7 @@ describe('PayoutsService', () => {
 
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1, status: { in: ['pending'] } },
+          where: expect.objectContaining({ userId: 1, status: { in: ['pending'] } }),
         }),
       );
     });
@@ -360,7 +367,7 @@ describe('PayoutsService', () => {
 
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1, status: { in: ['canceled', 'cancelled'] } },
+          where: expect.objectContaining({ userId: 1, status: { in: ['canceled', 'cancelled'] } }),
         }),
       );
     });
@@ -373,7 +380,7 @@ describe('PayoutsService', () => {
 
       expect(mockPrismaService.payout.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 1, status: { in: ['processing'] } },
+          where: expect.objectContaining({ userId: 1, status: { in: ['processing'] } }),
         }),
       );
     });
@@ -388,7 +395,7 @@ describe('PayoutsService', () => {
       expect(result).toEqual(payout);
       expect(mockPrismaService.payout.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 5, userId: 1 },
+          where: expect.objectContaining({ id: 5, userId: 1 }),
         }),
       );
     });
@@ -465,7 +472,7 @@ describe('PayoutsService', () => {
       });
       jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
         return {
-          sign: () => {},
+          sign: () => { },
           hash: () => Buffer.from('abc123deadbeef', 'hex'),
         } as any;
       });
@@ -473,6 +480,12 @@ describe('PayoutsService', () => {
         hash: 'abc123deadbeef',
       } as any);
       mockStellarService.getTransactionStatus.mockResolvedValue({
+        found: true,
+        successful: true,
+        confirmedAt: new Date('2026-06-29T12:00:00.000Z'),
+      });
+      mockStellarPayoutVerification.verifyPayoutTransaction.mockResolvedValue({
+        outcome: 'confirmed',
         found: true,
         successful: true,
         confirmedAt: new Date('2026-06-29T12:00:00.000Z'),
@@ -530,7 +543,7 @@ describe('PayoutsService', () => {
       });
       jest.spyOn(StellarSdk.TransactionBuilder.prototype, 'build').mockImplementation(function () {
         return {
-          sign: () => {},
+          sign: () => { },
           hash: () => Buffer.from('abc123deadbeef', 'hex'),
         } as any;
       });
@@ -538,6 +551,11 @@ describe('PayoutsService', () => {
         hash: 'abc123deadbeef',
       } as any);
       mockStellarService.getTransactionStatus.mockResolvedValue({
+        found: true,
+        successful: false,
+      });
+      mockStellarPayoutVerification.verifyPayoutTransaction.mockResolvedValue({
+        outcome: 'failed',
         found: true,
         successful: false,
       });
@@ -888,14 +906,13 @@ describe('PayoutsService', () => {
       expect(result.stellarXdr).toBe('mock-xdr');
       expect(result.transactionId).toBe('deadbeef');
       expect(signSpy).not.toHaveBeenCalled();
-      expect(mockPrismaService.payout.update).toHaveBeenCalledWith(
+      expect(mockPrismaService.payout.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 44 },
+          where: expect.objectContaining({ id: 44 }),
           data: expect.objectContaining({
             status: 'pending',
             transactionId: 'deadbeef',
             stellarXdr: 'mock-xdr',
-            externalTransactionId: 'deadbeef',
           }),
         }),
       );

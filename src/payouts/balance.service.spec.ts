@@ -46,7 +46,7 @@ describe('BalanceService', () => {
     it('calculates available balance correctly', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -116,7 +116,7 @@ describe('BalanceService', () => {
     it('excludes soft-deleted earnings from total', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
 
       await service.getAvailableBalance(1);
@@ -126,14 +126,14 @@ describe('BalanceService', () => {
           clip: { video: { userId: 1 } },
           deletedAt: null,
         },
-        _sum: { amountInBaseCurrency: true },
+        _sum: { amount: true },
       });
     });
 
     it('includes only completed payouts in paid total', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -155,7 +155,7 @@ describe('BalanceService', () => {
     it('includes pending payouts in pending total', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -168,8 +168,8 @@ describe('BalanceService', () => {
       await service.getAvailableBalance(1);
 
       const [, pendingCall] = prisma.payout.aggregate.mock.calls;
-      expect(pendingCall[0].where.status).toContain('pending');
-      expect(pendingCall[0].where.status).toContain('processing');
+      expect(pendingCall[0].where.status.in).toContain('pending');
+      expect(pendingCall[0].where.status.in).toContain('processing');
     });
   });
 
@@ -193,7 +193,7 @@ describe('BalanceService', () => {
     it('rejects amount exceeding available balance', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -211,7 +211,7 @@ describe('BalanceService', () => {
     it('accepts valid amount within balance', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -229,7 +229,7 @@ describe('BalanceService', () => {
     it('validates amount against limits', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -250,7 +250,7 @@ describe('BalanceService', () => {
     it('includes balance breakdown in error message', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -283,7 +283,7 @@ describe('BalanceService', () => {
     it('creates payout with reserved amount', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -318,7 +318,7 @@ describe('BalanceService', () => {
     it('creates stellar payout when walletId provided', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -367,7 +367,7 @@ describe('BalanceService', () => {
     it('uses transaction for reservation', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -393,7 +393,7 @@ describe('BalanceService', () => {
     it('returns true when total requested fits in balance', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -411,7 +411,7 @@ describe('BalanceService', () => {
     it('returns false when total requested exceeds balance', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -429,7 +429,7 @@ describe('BalanceService', () => {
     it('handles empty amounts array', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -457,7 +457,7 @@ describe('BalanceService', () => {
 
       // First check: get balance
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -484,7 +484,7 @@ describe('BalanceService', () => {
 
       // Second check: get updated balance
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -503,7 +503,7 @@ describe('BalanceService', () => {
     it('Scenario: User attempts to withdraw more than available balance', async () => {
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -529,7 +529,7 @@ describe('BalanceService', () => {
 
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({
@@ -553,7 +553,7 @@ describe('BalanceService', () => {
 
       prisma.user.findUnique.mockResolvedValue({ id: 1 });
       prisma.earning.aggregate.mockResolvedValue({
-        _sum: { amountInBaseCurrency: 500 },
+        _sum: { amount: 500, amountInBaseCurrency: 500 },
       });
       prisma.payout.aggregate
         .mockResolvedValueOnce({

@@ -10,6 +10,7 @@ import { PayoutProcessingService } from './payout-processing.service';
 import { PAYOUT_RETRY_QUEUE } from './payout-retry.queue';
 import { StellarPayoutVerificationService } from './stellar-payout-verification.service';
 import { STELLAR_CONFIRMATION_MAX_POLLS } from './stellar-confirmation.queue';
+import { EarningsService } from '../earnings/earnings.service';
 
 describe('PayoutProcessingService Stellar confirmation tracking', () => {
   let service: PayoutProcessingService;
@@ -58,6 +59,12 @@ describe('PayoutProcessingService Stellar confirmation tracking', () => {
         {
           provide: StellarPayoutVerificationService,
           useValue: verification,
+        },
+        {
+          provide: EarningsService,
+          useValue: {
+            invalidateUserEarningsCache: jest.fn().mockResolvedValue(undefined),
+          },
         },
         { provide: getQueueToken(PAYOUT_RETRY_QUEUE), useValue: retryQueue },
       ],
