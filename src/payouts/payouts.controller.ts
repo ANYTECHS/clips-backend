@@ -33,6 +33,7 @@ import { Auth } from '../auth/decorators/auth.decorator';
 import { CreatePayoutDto } from './dto/request-payout.dto';
 import { InitiateStellarPayoutDto } from './dto/initiate-stellar-payout.dto';
 import { CreatePayoutRequestDto } from './dto/create-payout-request.dto';
+import { PartialPayoutRequestDto } from './dto/partial-payout-request.dto';
 import { ListPayoutsQueryDto } from './dto/list-payouts-query.dto';
 import { PayoutReceiptDto } from './dto/receipt-responses.dto';
 import {
@@ -236,7 +237,7 @@ export class PayoutsController {
       'below approval threshold → approved, above → under_review.',
   })
   @ApiBody({
-    type: CreatePayoutRequestDto,
+    type: PartialPayoutRequestDto,
     examples: {
       stellarPartial: {
         summary: 'Withdraw $200 to Stellar wallet',
@@ -295,7 +296,7 @@ export class PayoutsController {
   })
   async requestPartialPayout(
     @Req() req: RequestWithUser,
-    @Body() dto: CreatePayoutRequestDto,
+    @Body() dto: PartialPayoutRequestDto,
   ) {
     // Validate amount first
     await this.balanceService.validatePayoutAmount(
@@ -326,7 +327,7 @@ export class PayoutsController {
       'inside a database transaction. Duplicate open requests are rejected with 409 Conflict.',
   })
   @ApiBody({
-    type: CreatePayoutDto,
+    type: CreatePayoutRequestDto,
     examples: {
       stellar: {
         summary: 'Single Stellar payout',
@@ -452,7 +453,7 @@ export class PayoutsController {
 
   async requestPayout(
     @Req() req: RequestWithUser,
-    @Body() dto: CreatePayoutDto,
+    @Body() dto: CreatePayoutRequestDto,
   ) {
     return this.payoutsService.requestPayoutWithDetails(
       req.user.userId,

@@ -22,6 +22,7 @@ const MEMORY_ALERT_THRESHOLD_BYTES = 1 * 1024 * 1024 * 1024;
 export class QueueCollectorService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(QueueCollectorService.name);
   private readonly registeredQueues: Map<string, Queue> = new Map();
+  private readonly lastCompletedCounts: Map<string, { count: number; timestamp: number }> = new Map();
 
   constructor(
     private readonly queueMetrics: QueueMetricsService,
@@ -126,6 +127,33 @@ export class QueueCollectorService implements OnModuleInit, OnModuleDestroy {
           );
 
           this.queueMetrics.recordQueueCounts(queueName, counts);
+
+          const waiting = counts.waiting ?? 0;
+          const active = counts.active ?? 0;
+          const completed = counts.completed ?? 0;
+          const failed = counts.failed ?? 0;
+          const delayed = counts.delayed ?? 0;
+          const prioritized = counts.prioritized ?? 0;
+          const totalJobs = waiting + active + completed + failed + delayed + prioritized;
+          const queueDepth = waiting + delayed;
+          const totalProcessed = completed + failed;
+          const failureRate = totalProcessed > 0 ? failed / totalProcessed : 0;
+
+          this.queueMetrics.recordActiveJobs(queueName, active);
+          this.queueMetrics.recordTotalJobs(queueName, totalJobs);
+          this.queueMetrics.recordQueueDepth(queueName, queueDepth);
+          this.queueMetrics.recordFailureRate(queueName, failureRate);
+
+          const now = Date.now();
+          const last = this.lastCompletedCounts.get(queueName);
+          if (last) {
+            const elapsedMinutes = (now - last.timestamp) / 60000;
+            if (elapsedMinutes > 0) {
+              const deltaCompleted = Math.max(0, completed - last.count);
+              this.queueMetrics.recordThroughput(queueName, deltaCompleted / elapsedMinutes);
+            }
+          }
+          this.lastCompletedCounts.set(queueName, { count: completed, timestamp: now });
 
           // Aggregate retry counts and failure reasons from the last 100 failed jobs
           const failedJobs = await queue.getFailed(0, 100);

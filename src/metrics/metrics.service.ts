@@ -64,11 +64,17 @@ export class MetricsService {
   private registerQueueMetrics(): void {
     const queueMetricsData = this.queueMetrics.getMetrics();
     this.registry.registerMetric(queueMetricsData.jobCount);
+    this.registry.registerMetric(queueMetricsData.activeJobs);
+    this.registry.registerMetric(queueMetricsData.queueDepth);
+    this.registry.registerMetric(queueMetricsData.totalJobs);
+    this.registry.registerMetric(queueMetricsData.failureRate);
+    this.registry.registerMetric(queueMetricsData.jobThroughput);
     this.registry.registerMetric(queueMetricsData.jobDuration);
     this.registry.registerMetric(queueMetricsData.jobFailures);
     this.registry.registerMetric(queueMetricsData.jobCompletions);
     this.registry.registerMetric(queueMetricsData.jobRetryRate);
     this.registry.registerMetric(queueMetricsData.jobFailureReasons);
+    this.registry.registerMetric(queueMetricsData.workerMemoryUsage);
   }
 
   incrementClipsGenerated(status: 'success' | 'failure'): void {

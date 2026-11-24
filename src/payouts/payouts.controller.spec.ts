@@ -186,6 +186,39 @@ describe('PayoutsController', () => {
     it('propagates BadRequestException when split percentages do not sum to 100', async () => {
       payoutsService.requestPayoutWithDetails.mockRejectedValue(
         new BadRequestException('Destination percentages must sum to 100. Received: 90'),
+  describe('requestPayout', () => {
+    it('creates a single payout request and returns payoutId with pending status', async () => {
+      const mockResponse = {
+        payoutId: 'payout_123',
+        status: 'pending',
+        id: 123,
+        amount: 50,
+        currency: 'USD',
+        method: 'stellar',
+      };
+      payoutsService.requestPayoutWithDetails.mockResolvedValue(mockResponse);
+
+      const req = { user: { userId: 5 } } as any;
+      const dto = {
+        amount: 50,
+        currency: 'USD',
+        method: 'stellar' as const,
+      };
+
+      const result = await controller.requestPayout(req, dto);
+
+      expect(payoutsService.requestPayoutWithDetails).toHaveBeenCalledWith(
+        5,
+        50,
+        'USD',
+        'stellar',
+      );
+      expect(result).toEqual(mockResponse);
+    });
+
+    it('propagates ConflictException on duplicate pending payout request', async () => {
+      payoutsService.requestPayoutWithDetails.mockRejectedValue(
+        new ConflictException('A payout request is already pending for this user'),
       );
 
       const req = { user: { userId: 5 } } as any;
@@ -206,6 +239,19 @@ describe('PayoutsController', () => {
     it('propagates BadRequestException on insufficient balance for split payout', async () => {
       payoutsService.requestPayoutWithDetails.mockRejectedValue(
         new BadRequestException('Insufficient balance. Available: 80 USD'),
+        amount: 50,
+        currency: 'USD',
+        method: 'stellar' as const,
+      };
+
+      await expect(controller.requestPayout(req, dto)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('propagates BadRequestException on insufficient balance', async () => {
+      payoutsService.requestPayoutWithDetails.mockRejectedValue(
+        new BadRequestException('Insufficient balance. Available: 20 USD'),
       );
 
       const req = { user: { userId: 5 } } as any;
@@ -219,6 +265,12 @@ describe('PayoutsController', () => {
       };
 
       await expect(controller.requestSplitPayout(req, dto)).rejects.toThrow(
+        amount: 50,
+        currency: 'USD',
+        method: 'stellar' as const,
+      };
+
+      await expect(controller.requestPayout(req, dto)).rejects.toThrow(
         BadRequestException,
       );
     });

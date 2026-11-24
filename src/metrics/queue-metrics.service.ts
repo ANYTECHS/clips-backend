@@ -3,18 +3,21 @@ import {
   Counter,
   Gauge,
   Histogram,
-  Registry,
 } from 'prom-client';
 
 /**
- * QueueMetricsService collects and exposes BullMQ queue metrics.
+ * QueueMetricsService collects and exposes BullMQ queue metrics (Issue #1274).
  *
  * Metrics tracked:
- *   - Job counts by queue and state (waiting, active, completed, failed)
+ *   - Job counts by queue and state (waiting, active, completed, failed, delayed, prioritized)
  *   - Job processing time (duration histogram)
- *   - Job failure rate
- *   - Job completion time by queue
- *   - Worker memory usage (rss, heap total, heap used)
+ *   - Job failure rate (ratio 0.0 to 1.0)
+ *   - Job throughput (completed jobs per minute)
+ *   - Queue depth (waiting + delayed jobs)
+ *   - Active job count
+ *   - Total job count
+ *   - Job completions and failures
+ *   - Worker memory usage (rss, heap total, heap used, external)
  */
 @Injectable()
 export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +28,41 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
     name: 'clipcash_queue_job_count',
     help: 'Current number of jobs in queue by state',
     labelNames: ['queue', 'state'],
+  });
+
+  // Gauge: active jobs currently being processed
+  private readonly activeJobs = new Gauge({
+    name: 'clipcash_queue_active_jobs',
+    help: 'Number of active jobs currently being processed by workers',
+    labelNames: ['queue'],
+  });
+
+  // Gauge: queue depth (waiting + delayed jobs)
+  private readonly queueDepth = new Gauge({
+    name: 'clipcash_queue_depth',
+    help: 'Total queue depth (waiting and delayed jobs) awaiting execution',
+    labelNames: ['queue'],
+  });
+
+  // Gauge: total cumulative jobs across all states
+  private readonly totalJobs = new Gauge({
+    name: 'clipcash_queue_total_jobs',
+    help: 'Total cumulative jobs in queue across all states',
+    labelNames: ['queue'],
+  });
+
+  // Gauge: job failure rate ratio
+  private readonly failureRate = new Gauge({
+    name: 'clipcash_queue_failure_rate',
+    help: 'Job failure rate ratio (failed / (completed + failed)) by queue (0.0 to 1.0)',
+    labelNames: ['queue'],
+  });
+
+  // Gauge: job throughput (completed jobs per minute)
+  private readonly jobThroughput = new Gauge({
+    name: 'clipcash_queue_job_throughput_per_minute',
+    help: 'Job throughput measured in completed jobs per minute',
+    labelNames: ['queue'],
   });
 
   // Histogram: job processing duration (from start to completion)
@@ -70,6 +108,13 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
     labelNames: ['queue', 'job_type'],
   });
 
+  // Gauge: worker process memory usage
+  private readonly workerMemoryUsage = new Gauge({
+    name: 'clipcash_queue_worker_memory_bytes',
+    help: 'Worker process memory usage in bytes',
+    labelNames: ['type'],
+  });
+
   // Map to track job start times for duration calculation
   private readonly jobStartTimes = new Map<string, number>();
 
@@ -90,7 +135,7 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
    * Called periodically to update gauge metrics.
    *
    * @param queue Queue name
-   * @param counts Job counts by state (waiting, active, completed, failed, delayed)
+   * @param counts Job counts by state (waiting, active, completed, failed, delayed, prioritized)
    */
   recordQueueCounts(
     queue: string,
@@ -103,12 +148,71 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
       prioritized?: number;
     },
   ): void {
-    this.jobCount.set({ queue, state: 'waiting' }, counts.waiting ?? 0);
-    this.jobCount.set({ queue, state: 'active' }, counts.active ?? 0);
-    this.jobCount.set({ queue, state: 'completed' }, counts.completed ?? 0);
-    this.jobCount.set({ queue, state: 'failed' }, counts.failed ?? 0);
-    this.jobCount.set({ queue, state: 'delayed' }, counts.delayed ?? 0);
-    this.jobCount.set({ queue, state: 'prioritized' }, counts.prioritized ?? 0);
+    const waiting = counts.waiting ?? 0;
+    const active = counts.active ?? 0;
+    const completed = counts.completed ?? 0;
+    const failed = counts.failed ?? 0;
+    const delayed = counts.delayed ?? 0;
+    const prioritized = counts.prioritized ?? 0;
+
+    this.jobCount.set({ queue, state: 'waiting' }, waiting);
+    this.jobCount.set({ queue, state: 'active' }, active);
+    this.jobCount.set({ queue, state: 'completed' }, completed);
+    this.jobCount.set({ queue, state: 'failed' }, failed);
+    this.jobCount.set({ queue, state: 'delayed' }, delayed);
+    this.jobCount.set({ queue, state: 'prioritized' }, prioritized);
+
+    this.activeJobs.set({ queue }, active);
+    this.queueDepth.set({ queue }, waiting + delayed);
+    this.totalJobs.set({ queue }, waiting + active + completed + failed + delayed + prioritized);
+
+    const totalProcessed = completed + failed;
+    this.failureRate.set({ queue }, totalProcessed > 0 ? failed / totalProcessed : 0);
+  }
+
+  /**
+   * Record active jobs count explicitly.
+   */
+  recordActiveJobs(queue: string, count: number): void {
+    this.activeJobs.set({ queue }, count);
+  }
+
+  /**
+   * Record queue depth (waiting + delayed jobs) explicitly.
+   */
+  recordQueueDepth(queue: string, depth: number): void {
+    this.queueDepth.set({ queue }, depth);
+  }
+
+  /**
+   * Record total jobs count explicitly.
+   */
+  recordTotalJobs(queue: string, count: number): void {
+    this.totalJobs.set({ queue }, count);
+  }
+
+  /**
+   * Record failure rate ratio explicitly.
+   */
+  recordFailureRate(queue: string, rate: number): void {
+    this.failureRate.set({ queue }, Math.max(0, Math.min(1, rate)));
+  }
+
+  /**
+   * Record throughput (jobs completed per minute).
+   */
+  recordThroughput(queue: string, throughputPerMinute: number): void {
+    this.jobThroughput.set({ queue }, Math.max(0, throughputPerMinute));
+  }
+
+  /**
+   * Record worker process memory usage.
+   */
+  recordWorkerMemoryUsage(usage: NodeJS.MemoryUsage): void {
+    this.workerMemoryUsage.set({ type: 'rss' }, usage.rss);
+    this.workerMemoryUsage.set({ type: 'heapTotal' }, usage.heapTotal);
+    this.workerMemoryUsage.set({ type: 'heapUsed' }, usage.heapUsed);
+    this.workerMemoryUsage.set({ type: 'external' }, usage.external);
   }
 
   /**
@@ -187,25 +291,37 @@ export class QueueMetricsService implements OnModuleInit, OnModuleDestroy {
    * Get all metrics registered in this service.
    * Returns the metrics in Prometheus format.
    *
-   * @returns Prometheus-formatted metrics string
+   * @returns Prometheus-formatted metrics objects
    */
   getMetrics(): {
     jobCount: Gauge;
+    activeJobs: Gauge;
+    queueDepth: Gauge;
+    totalJobs: Gauge;
+    failureRate: Gauge;
+    jobThroughput: Gauge;
     jobDuration: Histogram;
     jobFailures: Counter;
     jobCompletions: Counter;
     jobRetryRate: Gauge;
     jobFailureReasons: Gauge;
     jobsCleaned: Counter;
+    workerMemoryUsage: Gauge;
   } {
     return {
       jobCount: this.jobCount,
+      activeJobs: this.activeJobs,
+      queueDepth: this.queueDepth,
+      totalJobs: this.totalJobs,
+      failureRate: this.failureRate,
+      jobThroughput: this.jobThroughput,
       jobDuration: this.jobDuration,
       jobFailures: this.jobFailures,
       jobCompletions: this.jobCompletions,
       jobRetryRate: this.jobRetryRate,
       jobFailureReasons: this.jobFailureReasons,
       jobsCleaned: this.jobsCleaned,
+      workerMemoryUsage: this.workerMemoryUsage,
     };
   }
 
