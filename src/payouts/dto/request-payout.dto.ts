@@ -148,5 +148,6 @@ export class CreatePayoutDto {
   priority?: JobPriorityLevel;
 }
 
-/** Alias matching Issue #980 task naming. */
+/** Alias matching Issue #980 / #1278 task naming. */
 export { CreatePayoutDto as CreatePayoutRequestBodyDto };
+export { CreatePayoutRequestDto } from './create-payout-request.dto';
