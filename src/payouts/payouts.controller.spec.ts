@@ -1,3 +1,4 @@
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PayoutsController } from './payouts.controller';
 import { PayoutsService } from './payouts.service';
@@ -14,6 +15,7 @@ describe('PayoutsController', () => {
     payoutsService = {
       getPayouts: jest.fn(),
       getPayoutById: jest.fn(),
+      requestPayoutWithDetails: jest.fn(),
     };
     balanceService = {
       getAvailableBalance: jest.fn(),
@@ -104,6 +106,121 @@ describe('PayoutsController', () => {
 
       expect(payoutsService.getPayoutById).toHaveBeenCalledWith(5, 10);
       expect(result).toEqual(mockPayout);
+    });
+  });
+
+  describe('split payout endpoints (Issue #1279)', () => {
+    const mockSplitResponse = {
+      payouts: [
+        {
+          payoutId: 'payout_124',
+          status: 'pending',
+          id: 124,
+          amount: 70,
+          currency: 'USD',
+          method: 'fiat',
+        },
+        {
+          payoutId: 'payout_125',
+          status: 'pending',
+          id: 125,
+          amount: 30,
+          currency: 'USD',
+          method: 'stellar',
+        },
+      ],
+      totalAmount: 100,
+      currency: 'USD',
+    };
+
+    it('passes destinations to requestPayoutWithDetails in requestPayout', async () => {
+      payoutsService.requestPayoutWithDetails.mockResolvedValue(mockSplitResponse);
+
+      const req = { user: { userId: 5 } } as any;
+      const dto = {
+        amount: 100,
+        currency: 'USD',
+        destinations: [
+          { method: 'fiat' as const, percentage: 70 },
+          { method: 'stellar' as const, percentage: 30 },
+        ],
+      };
+
+      const result = await controller.requestPayout(req, dto);
+
+      expect(payoutsService.requestPayoutWithDetails).toHaveBeenCalledWith(
+        5,
+        100,
+        'USD',
+        undefined,
+        dto.destinations,
+      );
+      expect(result).toEqual(mockSplitResponse);
+    });
+
+    it('passes destinations to requestPayoutWithDetails in requestSplitPayout', async () => {
+      payoutsService.requestPayoutWithDetails.mockResolvedValue(mockSplitResponse);
+
+      const req = { user: { userId: 5 } } as any;
+      const dto = {
+        amount: 100,
+        currency: 'USD',
+        destinations: [
+          { method: 'fiat' as const, percentage: 70 },
+          { method: 'stellar' as const, percentage: 30 },
+        ],
+      };
+
+      const result = await controller.requestSplitPayout(req, dto);
+
+      expect(payoutsService.requestPayoutWithDetails).toHaveBeenCalledWith(
+        5,
+        100,
+        'USD',
+        undefined,
+        dto.destinations,
+      );
+      expect(result).toEqual(mockSplitResponse);
+    });
+
+    it('propagates BadRequestException when split percentages do not sum to 100', async () => {
+      payoutsService.requestPayoutWithDetails.mockRejectedValue(
+        new BadRequestException('Destination percentages must sum to 100. Received: 90'),
+      );
+
+      const req = { user: { userId: 5 } } as any;
+      const dto = {
+        amount: 100,
+        currency: 'USD',
+        destinations: [
+          { method: 'fiat' as const, percentage: 60 },
+          { method: 'stellar' as const, percentage: 30 },
+        ],
+      };
+
+      await expect(controller.requestSplitPayout(req, dto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('propagates BadRequestException on insufficient balance for split payout', async () => {
+      payoutsService.requestPayoutWithDetails.mockRejectedValue(
+        new BadRequestException('Insufficient balance. Available: 80 USD'),
+      );
+
+      const req = { user: { userId: 5 } } as any;
+      const dto = {
+        amount: 100,
+        currency: 'USD',
+        destinations: [
+          { method: 'fiat' as const, percentage: 70 },
+          { method: 'stellar' as const, percentage: 30 },
+        ],
+      };
+
+      await expect(controller.requestSplitPayout(req, dto)).rejects.toThrow(
+        BadRequestException,
+      );
     });
   });
 });

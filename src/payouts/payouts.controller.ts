@@ -459,6 +459,7 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
+      dto.destinations,
     );
   }
 
@@ -503,6 +504,7 @@ export class PayoutsController {
       dto.amount,
       dto.currency,
       dto.method,
+      dto.destinations,
     );
   }
 
