@@ -20,6 +20,11 @@ const mockMetrics = () => ({
   recordAvgRetryCount: jest.fn(),
   recordFailureReasonCount: jest.fn(),
   recordWorkerMemoryUsage: jest.fn(),
+  recordActiveJobs: jest.fn(),
+  recordTotalJobs: jest.fn(),
+  recordQueueDepth: jest.fn(),
+  recordFailureRate: jest.fn(),
+  recordThroughput: jest.fn(),
 });
 
 describe('QueueCollectorService', () => {
@@ -117,5 +122,35 @@ describe('QueueCollectorService', () => {
   it('returns registered queue names', async () => {
     await build([]);
     expect(service.getRegisteredQueues()).toContain('clip-generation');
+  });
+
+  it('records queue depth, active jobs, total jobs, and failure rate', async () => {
+    await build([
+      { attemptsMade: 1, failedReason: 'error 1' },
+      { attemptsMade: 2, failedReason: 'error 2' },
+    ]);
+    await service.collectMetrics();
+
+    expect(metrics.recordQueueDepth).toHaveBeenCalledWith('clip-generation', 1);
+    expect(metrics.recordActiveJobs).toHaveBeenCalledWith('clip-generation', 0);
+    expect(metrics.recordTotalJobs).toHaveBeenCalledWith('clip-generation', 8); // waiting 1 + completed 5 + failed 2
+    // totalProcessed = 5 + 2 = 7; failureRate = 2 / 7 ~ 0.2857
+    expect(metrics.recordFailureRate).toHaveBeenCalledWith(
+      'clip-generation',
+      expect.closeTo(2 / 7, 4),
+    );
+  });
+
+  it('records worker memory usage on each collection run', async () => {
+    await build([]);
+    await service.collectMetrics();
+
+    expect(metrics.recordWorkerMemoryUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rss: expect.any(Number),
+        heapTotal: expect.any(Number),
+        heapUsed: expect.any(Number),
+      }),
+    );
   });
 });
