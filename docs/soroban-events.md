@@ -157,6 +157,12 @@ Real-time clip-generation progress is pushed over the Socket.IO gateway on the `
 | `clip.completed` | `{ jobId, videoId, clipId?, clipUrl?, thumbnail?, status }`                                                                                                                     |
 | `clip.failed`    | `{ jobId, videoId, reason, attemptsMade }`                                                                                                                                     |
 
+`clip.progress` uses the same stage vocabulary as `GET /jobs/:jobId/progress`:
+`video_download`, `ai_analysis`, `ffmpeg_processing`, `upload`, and `done`.
+The worker stores each update in BullMQ as `{ percent, stage, step }`; `stage`
+is canonical and `step` is retained as a compatibility alias. Failed writes to
+the progress store are logged and do not fail clip processing.
+
 `ffmpeg_cut` remains accepted as a backwards-compatible alias for `ffmpeg_processing` in older payloads. Soroban contract events are **not** pushed over this gateway — subscribe to `/clips` for generation progress only, and read contract events from the REST routes above.
 
 Example `clip.progress` payload:

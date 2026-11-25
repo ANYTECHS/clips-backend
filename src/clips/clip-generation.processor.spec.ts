@@ -207,20 +207,49 @@ describe('ClipGenerationProcessor', () => {
       );
       expect(job.updateProgress).toHaveBeenNthCalledWith(1, {
         percent: 10,
+        stage: 'video_download',
         step: 'video_download',
       });
       expect(job.updateProgress).toHaveBeenNthCalledWith(2, {
-        percent: 60,
+        percent: 45,
+        stage: 'ffmpeg_processing',
         step: 'ffmpeg_processing',
       });
       expect(job.updateProgress).toHaveBeenNthCalledWith(3, {
-        percent: 80,
-        step: 'upload',
+        percent: 60,
+        stage: 'ffmpeg_processing',
+        step: 'ffmpeg_processing',
       });
       expect(job.updateProgress).toHaveBeenNthCalledWith(4, {
+        percent: 80,
+        stage: 'upload',
+        step: 'upload',
+      });
+      expect(job.updateProgress).toHaveBeenNthCalledWith(5, {
+        percent: 90,
+        stage: 'upload',
+        step: 'upload',
+      });
+      expect(job.updateProgress).toHaveBeenNthCalledWith(6, {
         percent: 100,
+        stage: 'done',
         step: 'done',
       });
+    });
+
+    it('continues processing when a progress update fails', async () => {
+      const { processor, cloudinaryService } = makeProcessor();
+      const job = makeJob({
+        updateProgress: jest
+          .fn()
+          .mockRejectedValueOnce(new Error('Redis unavailable'))
+          .mockResolvedValue(undefined),
+      });
+
+      const result = await processor.process(job);
+
+      expect(result.status).toBe('success');
+      expect(cloudinaryService.uploadVideoFromBuffer).toHaveBeenCalled();
     });
 
     it('returns a Clip with viralityScore populated', async () => {
@@ -341,6 +370,7 @@ describe('ClipGenerationProcessor', () => {
       expect(result.status).toBe('upload_processed');
       expect(job.updateProgress).toHaveBeenNthCalledWith(2, {
         percent: 30,
+        stage: 'ai_analysis',
         step: 'ai_analysis',
       });
     });
@@ -374,6 +404,31 @@ describe('ClipGenerationProcessor', () => {
       expect(clipsGateway.emitCompleted).toHaveBeenCalledWith(
         '1',
         expect.objectContaining({ clipUrl: clip.clipUrl }),
+      );
+    });
+  });
+
+  describe('onProgress() — WebSocket payload', () => {
+    it('emits a consistent progress/stage payload for the current video job', () => {
+      const { processor, clipsGateway } = makeProcessor();
+      const job = makeJob();
+
+      processor.onProgress(job, {
+        percent: 45,
+        stage: 'ffmpeg_processing',
+        step: 'ffmpeg_processing',
+      });
+
+      expect(clipsGateway.emitProgress).toHaveBeenCalledWith(
+        '1',
+        expect.objectContaining({
+          jobId: 'job-1',
+          videoId: 'video-1',
+          percent: 45,
+          progress: 45,
+          stage: 'ffmpeg_processing',
+          step: 'ffmpeg_processing',
+        }),
       );
     });
   });

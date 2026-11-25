@@ -93,6 +93,15 @@ export class JobsController {
     status: 200,
     description: 'Current job progress response, including failed-job states',
     type: JobProgressResponseDto,
+    example: {
+      jobId: 'clip-123',
+      progress: 65,
+      stage: 'ffmpeg_processing',
+      queue: 'clip-generation',
+      state: 'active',
+      attemptsMade: 1,
+      maxAttempts: 3,
+    },
   })
   @ApiResponse({ status: 400, description: 'Unsupported queue type' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })

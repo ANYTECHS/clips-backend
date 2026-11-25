@@ -42,7 +42,9 @@ export class JobProgressResponseDto {
   progress: number;
 
   @ApiProperty({
-    description: 'Current processing stage label.',
+    description:
+      'Current processing stage: video_download, ai_analysis, ffmpeg_processing, upload, or done. ' +
+      'The stage is stored with BullMQ progress and may not correspond to a percentage threshold.',
     enum: JOB_PROGRESS_STAGES,
     example: 'ffmpeg_processing',
   })

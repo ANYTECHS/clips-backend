@@ -65,6 +65,8 @@ export interface ClipProcessingResult {
 const PROGRESS = {
   VIDEO_DOWNLOAD: 10,
   AI_ANALYSIS: 30,
+  AI_ANALYSIS_COMPLETE: 40,
+  FFMPEG_START: 45,
   FFMPEG_CUT: 60,
   UPLOAD: 80,
   DONE: 100,
@@ -85,12 +87,12 @@ const UPLOAD_RETRY_BASE_DELAY_MS = 1000;
  *   attempts : 5   — 1 initial attempt + 4 automatic retries
  *   backoff  : exponential, starting at 2 000 ms
  *
- * Progress WebSocket events are emitted at each key step:
- *   10%  → video_download  (source accessible)
- *   30%  → ai_analysis     (viral moments detected — upload-type jobs only)
- *   60%  → ffmpeg_cut      (clip file written)
- *   80%  → upload          (Cloudinary upload started)
- *  100%  → done            (DB updated, all done)
+ * Progress is persisted in BullMQ and emitted over WebSocket at key transitions:
+ *   10%  → video_download    (source available to the worker)
+ *   30–40% → ai_analysis     (analysis started/completed — upload-type jobs)
+ *   45–60% → ffmpeg_processing (cut started/completed)
+ *   80–90% → upload          (Cloudinary upload started/completed)
+ *  100%  → done              (processing complete)
  */
 @Processor(CLIP_GENERATION_QUEUE, {
   concurrency: getBullMQWorkerConfig(new ConfigService()).clipGenerationConcurrency,
@@ -199,6 +201,11 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         return this.buildUploadFailedClip(data, clipId, actualDuration, viralityScore, uploadResult.error);
       }
 
+      await this.safeUpdateProgress(job, {
+        percent: 90,
+        step: 'upload',
+      });
+
       // ── Step 4: cleanup and completion ─────────────────────────────────
       // Only delete local file after successful Cloudinary upload
       await this.cloudinaryService.deleteLocalFile(data.outputPath);
@@ -257,9 +264,12 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         throw new Error('Aborted');
       }
 
-      const videoService = this.clipsService['videoService'] as VideoService;
-      const moments = await videoService.detectViralTimestamps(Number(videoId));
+      const moments = await this.videoService.detectViralTimestamps(Number(videoId));
       this.logger.log(`Detected ${moments.length} viral moments for video ${videoId}`);
+      await this.safeUpdateProgress(job, {
+        percent: PROGRESS.AI_ANALYSIS_COMPLETE,
+        step: 'ai_analysis',
+      });
 
       // ── Step 3: cleanup temp file ──────────────────────────────────────
       await this.safeDeleteLocalFile(inputPath);
@@ -400,6 +410,10 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     data: ClipGenerationJob,
     controller: AbortController,
   ): Promise<{ actualDuration: number; viralityScore: number }> {
+    await this.safeUpdateProgress(job, {
+      percent: PROGRESS.FFMPEG_START,
+      step: 'ffmpeg_processing',
+    });
     await cutClip({
       inputPath: data.inputPath,
       outputPath: data.outputPath,
@@ -654,7 +668,7 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
         : progress;
     const stepRaw =
       typeof progress === 'object' && progress !== null
-        ? ((progress as any).step ?? 'ffmpeg_processing')
+        ? ((progress as any).stage ?? (progress as any).step ?? 'ffmpeg_processing')
         : undefined;
     const normalizedStep = this.normalizeStep(stepRaw ?? this.stepFromPercent(Number(rawPercent)));
     const percent = Math.max(0, Math.min(100, Math.round(Number(rawPercent) || 0)));
@@ -677,7 +691,13 @@ export class ClipGenerationProcessor extends WorkerHost implements OnModuleInit 
     payload: { percent: number; step: ClipProgressStep },
   ): Promise<void> {
     try {
-      await job.updateProgress(payload);
+      // BullMQ persists progress in Redis. Keep both names for compatibility
+      // with older consumers while making `stage` the canonical contract.
+      await job.updateProgress({
+        percent: payload.percent,
+        stage: this.normalizeStep(payload.step),
+        step: payload.step,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn(
