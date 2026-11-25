@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { ClipsController } from './clips.controller';
 import { ClipsService } from './clips.service';
 import { CloudinaryService } from './cloudinary.service';
@@ -17,18 +18,19 @@ import { NftMetadataService } from '../nft/nft-metadata.service';
 import { RoyaltyConfigurationService } from '../nft/royalty-configuration.service';
 import { registerQueue } from '../common';
 import { CLIP_GENERATION_QUEUE } from './clip-generation.queue';
+import { ClipsGateway } from './clips.gateway';
 import { CLIP_POSTING_QUEUE } from './clip-posting.queue';
 import { NFT_MINT_QUEUE } from './nft-mint.queue';
 import { NftMintProcessor } from './nft-mint.processor';
 import { NftMintEnqueueService } from './nft-mint-enqueue.service';
 import { QueueOverflowService } from '../common/queue/queue-overflow.service';
-import { UserPlatformModule } from '../user-platform/user-platform.module';
-import { AyrshareService } from './ayrshare.service';
-import { ClipPostingProcessor } from './clip-posting.processor';
-import { CLIP_POSTING_QUEUE } from './clip-posting.queue';
 
 @Module({
   imports: [
+    JwtModule.register({
+      secret: process.env.JWT_SECRET,
+      signOptions: { expiresIn: '1h' },
+    }),
     PrismaModule,
     StellarModule,
     RedisModule,
@@ -42,6 +44,7 @@ import { CLIP_POSTING_QUEUE } from './clip-posting.queue';
   controllers: [ClipsController],
   providers: [
     ClipsService,
+    ClipsGateway,
     CloudinaryService,
     ClipPublishService,
     AyrshareService,
@@ -54,6 +57,12 @@ import { CLIP_POSTING_QUEUE } from './clip-posting.queue';
     RoyaltyConfigurationService,
     QueueOverflowService,
   ],
-  exports: [ClipsService, CloudinaryService, NftMintService, NftMintEnqueueService],
+  exports: [
+    ClipsService,
+    ClipsGateway,
+    CloudinaryService,
+    NftMintService,
+    NftMintEnqueueService,
+  ],
 })
 export class ClipsModule {}

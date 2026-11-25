@@ -9,7 +9,11 @@ import { Job, Queue } from 'bullmq';
 import { CLIP_GENERATION_QUEUE } from '../clips/clip-generation.queue';
 import { CLIP_POSTING_QUEUE } from '../clips/clip-posting.queue';
 import { NFT_MINT_QUEUE } from '../clips/nft-mint.queue';
-import { JobProgressResponseDto } from './dto/job-progress-response.dto';
+import {
+  JOB_PROGRESS_STAGES,
+  JobProgressResponseDto,
+  JobProgressStage,
+} from './dto/job-progress-response.dto';
 
 const SUPPORTED_QUEUES = [
   CLIP_GENERATION_QUEUE,
@@ -123,16 +127,27 @@ export class JobsService {
 
   private normalizeProgress(rawProgress: number | object): {
     percent: number;
-    stage: 'video_download' | 'ai_analysis' | 'ffmpeg_cut' | 'upload' | 'done';
+    stage: JobProgressStage;
   } {
+    const progressObject =
+      typeof rawProgress === 'object' && rawProgress !== null
+        ? (rawProgress as Record<string, unknown>)
+        : undefined;
     const numericProgress =
       typeof rawProgress === 'number'
         ? rawProgress
-        : typeof rawProgress === 'object' && rawProgress !== null
-          ? Number((rawProgress as Record<string, unknown>).percent ?? 0)
+        : progressObject
+          ? Number(progressObject.percent ?? 0)
           : 0;
 
     const percent = Math.max(0, Math.min(100, Math.round(Number(numericProgress) || 0)));
+    const explicitStage = progressObject?.stage ?? progressObject?.step;
+    if (typeof explicitStage === 'string') {
+      const stage = explicitStage === 'ffmpeg_cut' ? 'ffmpeg_processing' : explicitStage;
+      if (JOB_PROGRESS_STAGES.includes(stage as JobProgressStage)) {
+        return { percent, stage: stage as JobProgressStage };
+      }
+    }
 
     if (percent <= 10) return { percent, stage: 'video_download' };
     if (percent <= 30) return { percent, stage: 'ai_analysis' };

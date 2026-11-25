@@ -402,6 +402,31 @@ Enqueue a clip generation job.
 
 ---
 
+#### `GET /jobs/:jobId/progress`
+
+Returns the latest persisted BullMQ progress for a queued job. Optionally pass
+`type` to select a queue; otherwise supported queues are searched.
+
+**Response `200`:**
+
+```json
+{
+  "jobId": "clip-123",
+  "progress": 65,
+  "stage": "ffmpeg_processing",
+  "queue": "clip-generation",
+  "state": "active"
+}
+```
+
+`stage` is one of `video_download`, `ai_analysis`, `ffmpeg_processing`,
+`upload`, or `done`. Progress is an integer from 0 to 100. `ffmpeg_cut` is
+accepted as a legacy stored value and returned as `ffmpeg_processing`.
+
+**Response `404`:** Job not found in the searched queue(s).
+
+---
+
 #### `POST /clips/bulk-update`
 
 Bulk update `selected`, `postStatus`, `caption`, or `royaltyBps` for multiple clips.
