@@ -37,7 +37,10 @@ interface RequestWithUser extends Request {
 @ApiTags('Payouts')
 @ApiBearerAuth('access-token')
 @ApiUnauthorizedResponse({ description: 'Unauthorized - missing or invalid token' })
-@ApiForbiddenResponse({ description: 'Forbidden - can only access own payout methods' })
+@ApiForbiddenResponse({
+  description:
+    "Forbidden - access denied by authorization policy. Another user's or unknown method ID returns 404.",
+})
 @ApiInternalServerErrorResponse({ description: 'Internal server error' })
 @Controller('payout-methods')
 @Auth()
@@ -75,10 +78,9 @@ export class PayoutMethodController {
   @ApiOperation({ summary: 'Get the default payout method' })
   @ApiResponse({
     status: 200,
-    description: 'Default payout method',
+    description: 'Default payout method, or null if none is configured',
     type: PayoutMethodResponseDto,
   })
-  @ApiNotFoundResponse({ description: 'No default payout method found' })
   async getDefault(@Req() req: RequestWithUser) {
     return this.payoutMethodService.getDefaultMethod(req.user.userId);
   }
@@ -88,9 +90,11 @@ export class PayoutMethodController {
   @ApiParam({ name: 'id', description: 'Payout method ID', example: 1 })
   @ApiResponse({
     status: 200,
-    description: 'Payout method details',
+    description:
+      'Masked payout method; sensitive bank details are never returned',
     type: PayoutMethodResponseDto,
   })
+  @ApiBadRequestResponse({ description: 'Invalid payout method ID' })
   @ApiNotFoundResponse({ description: 'Payout method not found' })
   async findOne(
     @Req() req: RequestWithUser,
@@ -105,8 +109,12 @@ export class PayoutMethodController {
   @ApiBody({ type: UpdatePayoutMethodDto })
   @ApiResponse({
     status: 200,
-    description: 'Payout method updated successfully',
+    description:
+      'Payout method updated; sensitive bank details are never returned',
     type: PayoutMethodResponseDto,
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid payout method ID, input, or validation error',
   })
   @ApiNotFoundResponse({ description: 'Payout method not found' })
   async update(
@@ -124,6 +132,7 @@ export class PayoutMethodController {
     status: 200,
     description: 'Payout method deleted successfully',
   })
+  @ApiBadRequestResponse({ description: 'Invalid payout method ID' })
   @ApiNotFoundResponse({ description: 'Payout method not found' })
   async remove(
     @Req() req: RequestWithUser,

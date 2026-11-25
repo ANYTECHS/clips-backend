@@ -45,6 +45,37 @@ describe('AppLoggerService', () => {
     expect(parsed.userId).toBe(1);
   });
 
+  it('redacts payout destination details, including nested fields', () => {
+    const sensitiveValues = {
+      accountNumber: '1234567890',
+      routingNumber: '021000021',
+      swiftCode: 'CHASUS33',
+      iban: 'GB29NWBK60161331926819',
+      accountHolderName: 'John Doe',
+      bankName: 'Chase Bank',
+      lastFourDigits: '7890',
+    };
+
+    service.log('payout method updated', {
+      payoutMethod: sensitiveValues,
+    });
+
+    const raw = stdoutSpy.mock.calls[0][0] as string;
+    const parsed = JSON.parse(raw);
+    expect(parsed.payoutMethod).toEqual({
+      accountNumber: '[REDACTED]',
+      routingNumber: '[REDACTED]',
+      swiftCode: '[REDACTED]',
+      iban: '[REDACTED]',
+      accountHolderName: '[REDACTED]',
+      bankName: '[REDACTED]',
+      lastFourDigits: '[REDACTED]',
+    });
+    for (const value of Object.values(sensitiveValues)) {
+      expect(raw).not.toContain(value);
+    }
+  });
+
   it('includes requestId when provided', () => {
     service.log('request handled', { requestId: 'req-uuid-123' });
     const raw = stdoutSpy.mock.calls[0][0] as string;

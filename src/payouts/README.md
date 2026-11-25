@@ -36,9 +36,12 @@ Manages encrypted fiat payout methods (bank accounts).
 
 **Security:**
 - All sensitive fields are encrypted using AES-256-GCM
-- Only last 4 digits stored in plaintext
-- Sensitive data never exposed in API responses
-- Decryption only happens when processing actual payouts
+- The final four digits are retained in plaintext for display
+- Public API responses expose only the last four digits; encrypted fields and
+  decrypted values are never returned
+- Decryption is available only through the internal service method and requires
+  the owning user's ID
+- Application logs redact payout destination fields
 
 #### `FeeService`
 Calculates payout fees based on method and amount.
@@ -180,13 +183,14 @@ const methods = await this.payoutMethodService.findAll(userId);
 ### Updating a Payout Method
 
 ```typescript
-// Can only update non-sensitive fields
+// Non-sensitive fields can be updated without changing destination details
 const updated = await this.payoutMethodService.update(methodId, userId, {
   bankName: 'Updated Bank Name',
   isDefault: true,  // This will unset other defaults
 });
 
-// To change account number, must create new method
+// Sensitive destination fields can also be rotated through update();
+// responses remain masked.
 ```
 
 ## Security Best Practices
