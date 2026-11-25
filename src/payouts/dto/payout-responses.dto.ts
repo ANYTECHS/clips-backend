@@ -1,5 +1,4 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Exclude } from 'class-transformer';
 import {
   PAYOUT_STATUS_SWAGGER_DESCRIPTION,
   PAYOUT_STATUS_VALUES,
@@ -281,7 +280,10 @@ export class PayoutMethodResponseDto {
   @ApiProperty({ example: 'USD' })
   currency: string;
 
-  @ApiPropertyOptional({ example: '1234' })
+  @ApiPropertyOptional({
+    example: '1234',
+    description: 'Only the final four digits of the account number or IBAN',
+  })
   lastFourDigits?: string | null;
 
   @ApiProperty({ example: '2026-08-24T12:00:00.000Z' })
@@ -289,18 +291,6 @@ export class PayoutMethodResponseDto {
 
   @ApiProperty({ example: '2026-08-24T12:00:00.000Z' })
   updatedAt: Date;
-
-  @Exclude()
-  encryptedAccountNumber?: string | null;
-
-  @Exclude()
-  encryptedRoutingNumber?: string | null;
-
-  @Exclude()
-  encryptedSwiftCode?: string | null;
-
-  @Exclude()
-  encryptedIban?: string | null;
 }
 
 export class OnChainTransactionStateDto {

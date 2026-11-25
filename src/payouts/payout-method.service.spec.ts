@@ -294,7 +294,27 @@ describe('PayoutMethodService', () => {
         where: { id: methodId, userId, deletedAt: null },
       });
       expect(result).not.toHaveProperty('encryptedAccountNumber');
+      expect(result).not.toHaveProperty('accountNumber');
+      expect(result).not.toHaveProperty('routingNumber');
+      expect(result).not.toHaveProperty('swiftCode');
+      expect(result).not.toHaveProperty('iban');
       expect(result.lastFourDigits).toBe('7890');
+      expect(encryptionService.decrypt).not.toHaveBeenCalled();
+    });
+
+    it("should not return another user's payout method", async () => {
+      const requestingUserId = 1;
+      const methodId = 10;
+
+      mockPrismaService.payoutMethod.findFirst.mockResolvedValue(null);
+
+      await expect(service.findOne(methodId, requestingUserId)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(prismaService.payoutMethod.findFirst).toHaveBeenCalledWith({
+        where: { id: methodId, userId: requestingUserId, deletedAt: null },
+      });
     });
 
     it('should throw NotFoundException if method does not exist', async () => {
